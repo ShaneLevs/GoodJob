@@ -1,0 +1,919 @@
+/*
+ * 自绘壳层用的语义变量。真实值由 components/ThemeVars.tsx 从 antd design token
+ * 注入到 :root（深色算法切换时自动跟着变）；下面这套只是首帧兜底，不要在这里
+ * 再手写第二套深色值。
+ */
+:root {
+  --font-base: 13px;
+  --shell-bg: #f2f2f3;
+  --surface-bg: #ffffff;
+  --panel-bg: rgba(0, 0, 0, 0.012);
+  --nav-bg: #f7f7f8;
+  --hairline: rgba(0, 0, 0, 0.06);
+  --surface-shadow:
+    0 6px 18px rgba(15, 15, 15, 0.06),
+    0 1px 3px rgba(15, 15, 15, 0.05);
+  --text-strong: #1f2328;
+  --text-body: rgba(0, 0, 0, 0.72);
+  --text-muted: rgba(0, 0, 0, 0.45);
+  --text-faint: rgba(0, 0, 0, 0.35);
+  --subtle-bg: rgba(0, 0, 0, 0.035);
+  --hover-bg: rgba(0, 0, 0, 0.045);
+  --active-bg: rgba(0, 0, 0, 0.07);
+  --focus-ring: rgba(0, 0, 0, 0.18);
+  --scroll-thumb: rgba(0, 0, 0, 0.12);
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  overflow: hidden;
+  background: var(--shell-bg);
+  color: var(--text-strong);
+  font-family:
+    -apple-system, BlinkMacSystemFont, "PingFang SC", "Helvetica Neue", "Microsoft YaHei",
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/*
+ * 顶栏规范：左（侧栏）、中（对话）、右（工作台）三列共用同一条 48px 顶栏，
+ * 横向内边距统一 8px。48 而不是 40，是因为 macOS 的交通灯（hiddenInset）圆心在 y=24，
+ * 顶栏内容垂直居中后正好与那三个按钮同一水平线；40px 会让图标高出 4px。
+ */
+:root {
+  --topbar-height: 48px;
+  --topbar-gutter: 8px;
+  /* hiddenInset 窗口顶部这条原生 titlebar 是可拖的，CSS 拖拽带要从它下面开始。 */
+  --titlebar-native-height: 28px;
+}
+
+/* Window dragging: the app runs with titleBarStyle: "hiddenInset". */
+.drag {
+  -webkit-app-region: drag;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--scroll-thumb);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* ---------- shell ---------- */
+
+/*
+ * 外壳：窗口底色是浅灰，中间对话区与右侧工作台各是一张白色圆角卡片浮在上面，
+ * 左侧栏保持无底色，靠"卡片 vs 背景"把三栏区分开。
+ */
+.app-shell {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+  background: var(--shell-bg);
+}
+
+/*
+ * 顶栏不占布局高度，浮在卡片之上：卡片顶边可以是窗口顶部。
+ * 容器本身不接收指针事件，只有按钮和左侧拖拽带接收。
+ */
+.topbar {
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: var(--topbar-height);
+  z-index: 20;
+  pointer-events: none;
+}
+
+/* 拖拽带只覆盖侧边栏那一列：铺满整条会让卡片顶部的标签页、消息无法点击。 */
+.topbar-drag {
+  position: absolute;
+  /*
+   * 顶上留出 28px 给 hiddenInset 窗口的原生 titlebar 拖拽条（AppKit 自己处理）。
+   * 两套拖拽重叠在同一次按下鼠标上时，会各开一个«移动会话»，多出来的那个松手时
+   * 在终端里打一行 "Warning: Window move completed without beginning"。错开就不重叠了。
+   */
+  inset: var(--titlebar-native-height) auto 0 0;
+  width: 248px;
+  pointer-events: auto;
+}
+
+.topbar-button {
+  position: absolute;
+  top: calc((var(--topbar-height) - 32px) / 2);
+  pointer-events: auto;
+  -webkit-app-region: no-drag;
+  transition:
+    background-color 140ms ease,
+    color 140ms ease;
+}
+
+/* 让开交通灯（hiddenInset 绘制在窗口左上角）。 */
+.topbar-button-lead {
+  left: calc(8px + 76px);
+}
+
+/* 锚定窗口右边缘：不随分栏、也不随侧栏开合移动。 */
+.topbar-button-tail {
+  right: var(--topbar-gutter);
+}
+
+.app-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  gap: 8px;
+  padding: 8px 8px 8px 0;
+}
+
+.app-main {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+.app-splitter {
+  height: 100%;
+}
+
+/* 只在程序化开合时给面板宽度加过渡；拖拽时必须即时跟手，所以靠 .app-splitter-anim 开关。
+   时长与 App.tsx 的 WORKBENCH_ANIM_MS 保持一致，曲线与左侧栏收起同一条。 */
+.app-splitter-anim .ant-splitter-panel {
+  transition: flex-basis 220ms cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+/* 收起态的 4px 内边距回收也带上过渡，避免动画一开始卡片边缘跳一下。 */
+.app-splitter-anim > .ant-splitter-panel > .pane-slot {
+  transition: padding 220ms cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+/* antd 给面板设了 overflow: auto；我们内容都自己裁，避免出现 1px 级别的抖动滚动条。 */
+.app-splitter > .ant-splitter-panel {
+  overflow: hidden;
+}
+
+/*
+ * 收起动画期间面板会被压到很窄。给卡片一个最小宽度让它保持原布局、由面板裁掉右侧，
+ * 而不是把标题和提示文字挤成竖排——这样看起来才是"面板滑出去"。
+ */
+.app-splitter > .ant-splitter-panel:last-child .workbench {
+  min-width: 320px;
+}
+
+/* 卡片插槽：让卡片在分栏面板里满高、且不撑破面板。 */
+.pane-slot {
+  height: 100%;
+  display: flex;
+  min-width: 0;
+}
+
+/* 两张卡片之间的 8px 间隙：居中在对半分栏线上，两侧各让 4px；
+   分割条本身不占布局宽度（antd 用零宽 + 覆盖的热区），所以间隙得自己让出来。 */
+.app-splitter > .ant-splitter-panel:first-child > .pane-slot {
+  padding-right: 4px;
+}
+
+.app-splitter > .ant-splitter-panel:last-child > .pane-slot {
+  padding-left: 4px;
+}
+
+/*
+ * 收起态（放在上面两条之后，同特异性下靠顺序生效）：
+ * 1. 分割条仍留在窗口右边缘（16px 拖拽热区 + 悬停把手），可那一栏已经是 0 宽，
+ *    拖着也拉不出东西，只会让人误以为还有内容；
+ * 2. 对话卡片补回那 4px 内边距，右边缘仍贴着 8px 的窗口留白。
+ */
+.app-splitter-collapsed > .ant-splitter-bar {
+  display: none;
+}
+
+.app-splitter-collapsed > .ant-splitter-panel:first-child > .pane-slot {
+  padding-right: 0;
+}
+
+
+
+/* ---------- sidebar ---------- */
+
+/* The slot animates the width; the sidebar itself keeps its natural size so the
+   collapse stays smooth instead of reflowing every child. */
+.sidebar-slot {
+  flex: 0 0 248px;
+  width: 248px;
+  min-width: 0;
+  overflow: hidden;
+  transition:
+    flex-basis 220ms cubic-bezier(0.22, 0.61, 0.36, 1),
+    width 220ms cubic-bezier(0.22, 0.61, 0.36, 1),
+    opacity 160ms ease;
+}
+
+.sidebar-slot-collapsed {
+  flex-basis: 0;
+  width: 0;
+  opacity: 0;
+}
+
+.sidebar {
+  width: 248px;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+/*
+ * 面板开合按钮（左栏 / 右栏）共用：32×32 点击热区 + 16px 图标。
+ * antd 的 size="small" 只有 24px 高，图标又是 1em = 14px；无文字图标按钮在 40px 顶栏里
+ * 偏小、容易点不中。选择器前面带 .ant-btn 是为了压过 antd 自带的 .ant-btn-sm /
+ * .ant-btn-icon-only（单类选择器），不依赖样式注入顺序。
+ */
+.ant-btn.topbar-button,
+.ant-btn.sidebar-settings {
+  width: 32px;
+  min-width: 32px;
+  height: 32px;
+  padding: 0;
+  font-size: 16px;
+  border-radius: 8px;
+  color: var(--text-muted);
+}
+
+/* 文字成品logo：不加图形标，靠字重与字距做出标记感。版本号在设置抽屉里看。 */
+.sidebar-brand {
+  padding: 52px 20px 14px;
+  font-size: 22px;
+  font-weight: 800;
+  line-height: 1.2;
+  letter-spacing: -0.6px;
+  color: var(--text-strong);
+  user-select: none;
+}
+
+.sidebar-section {
+  padding: 6px 20px 4px;
+  font-size: calc(var(--font-base) - 2px);
+  color: var(--text-faint);
+}
+
+.sidebar-menu {
+  background: transparent;
+  border-inline-end: 0 !important;
+}
+
+.sidebar-spacer {
+  flex: 1;
+}
+
+.sidebar-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px;
+  border-top: 1px solid var(--hairline);
+}
+
+/* 工作区切换：靠左，名字过长时省略而不是把设置按钮挤走。 */
+.sidebar-workspace {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+  height: 32px;
+  padding: 0 8px;
+  font-size: calc(var(--font-base) - 1px);
+  color: var(--text-body);
+}
+
+.sidebar-workspace-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebar-workspace-caret {
+  flex: none;
+  font-size: 10px;
+  color: var(--text-faint);
+}
+
+/* ---------- chat ---------- */
+
+.chat-column {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-width: 0;
+  background: var(--surface-bg);
+  border: 1px solid var(--hairline);
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: var(--surface-shadow);
+}
+
+.chat-empty {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 0 28px;
+}
+
+.chat-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  /* 顶部留白：浮层按钮/交通灯那一带不压内容。 */
+  padding: 44px 20px 8px;
+}
+
+.chat-composer {
+  width: 100%;
+  max-width: 640px;
+}
+
+.chat-composer-inline {
+  margin: 0;
+}
+
+.chat-composer-docked {
+  max-width: none;
+  padding: 6px 20px 0;
+}
+
+/* ---------- workbench ---------- */
+
+.workbench {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-width: 0;
+  background: var(--surface-bg);
+  border: 1px solid var(--hairline);
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: var(--surface-shadow);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sidebar-slot,
+  .app-splitter-anim .ant-splitter-panel {
+    transition: none;
+  }
+}
+
+.workbench-tabs {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.workbench-tabs > .ant-tabs-nav {
+  margin: 0;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--hairline);
+}
+
+/* antd 6 renamed the pane wrapper (body-holder/body); keep the legacy names too. */
+.workbench-tabs > .ant-tabs-body-holder,
+.workbench-tabs > .ant-tabs-content-holder {
+  flex: 1;
+  min-height: 0;
+}
+
+.workbench-tabs .ant-tabs-body,
+.workbench-tabs .ant-tabs-content,
+.workbench-tabs .ant-tabs-tabpane {
+  height: 100%;
+}
+
+.browser-toolbar {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.browser-title {
+  padding: 3px 12px;
+  font-size: calc(var(--font-base) - 2px);
+  border-top: 1px solid var(--hairline);
+}
+
+.pane-placeholder {
+  display: grid;
+  place-items: center;
+  height: 100%;
+  padding: 24px;
+}
+
+.pane-placeholder-text {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  max-width: 300px;
+}
+
+/* ---------- workbench empty state ---------- */
+
+.pane-empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  padding: 24px 20px;
+  overflow-y: auto;
+  /* 收起动画中面板会被压得很窄，没有这行标题就会在面板内部挤出横向滚动条。 */
+  overflow-x: hidden;
+}
+
+/* 右栏不再由用户创建标签：这里只说明 Agent 会往里面放什么。 */
+.pane-empty-copy {
+  max-width: 340px;
+  text-align: center;
+}
+
+.pane-empty-title {
+  margin: 0 0 6px !important;
+  font-size: calc(var(--font-base) + 6px) !important;
+  font-weight: 600;
+}
+
+.pane-empty-hint {
+  display: block;
+  font-size: calc(var(--font-base) - 1px);
+  line-height: 1.7;
+}
+
+/* 一行一个：面板宽度本来就窄，两列会把提示文字挤成竖排。 */
+.pane-preview-list {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 6px;
+  width: 100%;
+  max-width: 360px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.pane-preview-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 9px 12px;
+  border-radius: 10px;
+  background: var(--subtle-bg);
+}
+
+.pane-preview-icon {
+  display: inline-flex;
+  padding-top: 1px;
+  font-size: 17px;
+  color: var(--text-muted);
+}
+
+.pane-preview-label {
+  font-size: var(--font-base);
+  font-weight: 500;
+  color: var(--text-body);
+}
+
+.pane-preview-hint {
+  margin-top: 2px;
+  font-size: calc(var(--font-base) - 2px);
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+.workbench-tab-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* ---------- settings ---------- */
+
+/* 无标题栏、无页脚：左导航 + 右内容铺满整个弹窗。 */
+.settings-modal .ant-modal-content {
+  padding: 0;
+  overflow: hidden;
+}
+
+.settings-body {
+  display: flex;
+  height: min(86vh, 720px);
+  min-height: 440px;
+}
+
+/* ----- 左导航 ----- */
+
+.settings-nav {
+  width: 240px;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 10px 8px 8px;
+  border-right: 1px solid var(--hairline);
+  background: var(--nav-bg);
+}
+
+.settings-back {
+  justify-content: flex-start;
+  gap: 8px;
+  height: 34px;
+  padding: 0 10px;
+  font-size: calc(var(--font-base) - 1px);
+  color: var(--text-muted);
+}
+
+.settings-back:hover {
+  color: var(--text-strong) !important;
+}
+
+.settings-nav-group {
+  padding: 16px 10px 6px;
+  font-size: calc(var(--font-base) - 2px);
+  color: var(--text-faint);
+}
+
+.settings-nav-menu {
+  border-inline-end: none !important;
+  background: transparent;
+}
+
+.settings-nav-menu .ant-menu-item {
+  height: 36px;
+  line-height: 36px;
+  margin-inline: 0;
+  width: 100%;
+  font-size: var(--font-base);
+}
+
+.settings-nav-account {
+  margin-top: auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px 6px;
+  min-width: 0;
+}
+
+.settings-avatar {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: var(--active-bg);
+  font-size: calc(var(--font-base) - 2px);
+  font-weight: 600;
+  color: var(--text-body);
+}
+
+.settings-account-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: calc(var(--font-base) - 1px);
+  color: var(--text-body);
+}
+
+/* ----- 右内容 ----- */
+
+.settings-content {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: row;
+}
+
+.settings-page {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  padding: 22px 36px 36px;
+  overflow-y: auto;
+}
+
+/* 模型设置自带左右两栏，标题单独占一行，不需要额外内边距。 */
+.settings-page-flush {
+  display: flex;
+  flex-direction: column;
+  padding: 22px 24px 0;
+  overflow: hidden;
+}
+
+.settings-page-title {
+  margin: 0 0 26px;
+  font-size: calc(var(--font-base) + 11px);
+  font-weight: 700;
+  letter-spacing: -0.4px;
+  color: var(--text-strong);
+}
+
+.settings-group + .settings-group {
+  margin-top: 28px;
+}
+
+.settings-group-title {
+  margin: 0 0 4px;
+  font-size: var(--font-base);
+  font-weight: 600;
+  color: var(--text-strong);
+}
+
+.settings-group-desc {
+  margin: 0 0 12px;
+  font-size: calc(var(--font-base) - 1px);
+  color: var(--text-muted);
+}
+
+/* 行式卡片：一行一个设置项，行间发丝线。 */
+.settings-card {
+  border: 1px solid var(--hairline);
+  border-radius: 12px;
+  background: var(--surface-bg);
+  overflow: hidden;
+}
+
+.settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 18px 20px;
+}
+
+.settings-row + .settings-row {
+  border-top: 1px solid var(--hairline);
+}
+
+.settings-row-main {
+  min-width: 0;
+}
+
+.settings-row-label {
+  font-size: var(--font-base);
+  font-weight: 600;
+  color: var(--text-strong);
+}
+
+.settings-row-desc {
+  margin-top: 4px;
+  font-size: calc(var(--font-base) - 1px);
+  color: var(--text-muted);
+}
+
+.settings-row-control {
+  flex: none;
+}
+
+.settings-theme-select {
+  width: 190px;
+}
+
+.settings-size-input {
+  width: 122px;
+}
+
+.settings-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.settings-loading {
+  padding: 32px;
+}
+
+/* ----- 模型设置：供应商列表 + 详情 ----- */
+
+.settings-models-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  border-top: 1px solid var(--hairline);
+  margin: 0 -24px;
+}
+
+.settings-side {
+  width: 208px;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-right: 1px solid var(--hairline);
+  background: var(--panel-bg);
+}
+
+.settings-side-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  height: 44px;
+  padding: 0 8px 0 16px;
+}
+
+.settings-side-label {
+  font-size: calc(var(--font-base) - 1px);
+}
+
+.settings-provider-list {
+  flex: 1;
+  min-height: 0;
+  padding: 4px 8px 10px;
+  overflow-y: auto;
+}
+
+.settings-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.settings-provider-detail {
+  flex: 1;
+  min-height: 0;
+  padding: 16px 24px 20px;
+  overflow-y: auto;
+}
+
+.settings-provider-empty {
+  padding-top: 56px;
+}
+
+/* 供应商列表项：平铺的菜单行，不画边框。 */
+.settings-provider {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  font-size: var(--font-base);
+  color: var(--text-body);
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background-color 120ms ease;
+}
+
+.settings-provider:hover {
+  background: var(--hover-bg);
+}
+
+.settings-provider:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
+.settings-provider-active,
+.settings-provider-active:hover {
+  color: var(--text-strong);
+  font-weight: 500;
+  background: var(--active-bg);
+}
+
+.settings-provider-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-status {
+  width: 7px;
+  height: 7px;
+  flex: none;
+  border-radius: 50%;
+}
+
+.settings-status-on {
+  background: var(--status-on);
+}
+
+.settings-status-warn {
+  background: var(--status-warn);
+}
+
+.settings-status-off {
+  background: var(--status-off);
+}
+
+.settings-form .ant-form-item {
+  margin-bottom: 14px;
+}
+
+/* 详情表单沿用「行式卡片」的样子，和外观页保持同一套视觉语言。 */
+.settings-form-card {
+  padding: 16px 20px 18px;
+  border: 1px solid var(--hairline);
+  border-radius: 12px;
+  background: var(--surface-bg);
+}
+
+.settings-provider-head {
+  padding-bottom: 6px;
+}
+
+.settings-provider-title {
+  flex: 1;
+  min-width: 0;
+  padding-inline: 0 !important;
+  font-size: calc(var(--font-base) + 3px);
+  font-weight: 600;
+}
+
+.settings-hint {
+  display: block;
+  margin-top: 6px;
+  font-size: calc(var(--font-base) - 1px);
+}
+
+.settings-key-input {
+  flex: 1;
+}
+
+.settings-models-head {
+  margin: 4px 0 8px;
+}
+
+.settings-model-list {
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.settings-model-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  font-size: var(--font-base);
+}
+
+.settings-model-row + .settings-model-row {
+  border-top: 1px solid var(--hairline);
+}
+
+.settings-model-name {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: calc(var(--font-base) - 0.5px);
+  max-width: 300px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-model-tag {
+  margin-inline-end: 0 !important;
+  padding: 0 6px;
+  font-size: calc(var(--font-base) - 2px);
+  line-height: 18px;
+  color: var(--text-muted);
+  background: var(--subtle-bg);
+  border: none;
+  border-radius: 4px;
+}
+
+.settings-model-spacer {
+  flex: 1;
+}
+

@@ -1,0 +1,35 @@
+# macOS
+.DS_Store
+
+# Node / frontend
+node_modules/
+out/
+dist/
+dist-ssr/
+*.local
+pnpm-debug.log*
+npm-debug.log*
+yarn-error.log*
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+
+# Electron packaging
+release/
+
+# Local data (never commit)
+data/
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+logs/
+*.log
+docs/
+
+# Local scratch
+.tmp/
+.pi/

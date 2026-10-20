@@ -1,0 +1,21 @@
+appId: com.goodjob.desktop
+productName: GoodJob
+directories:
+  buildResources: build
+  output: release
+files:
+  - out/**/*
+  - package.json
+asarUnpack:
+  - resources/**
+mac:
+  target:
+    - dmg
+    - zip
+  category: public.app-category.productivity
+  # Unsigned local builds: swap for a Developer ID identity before shipping.
+  identity: null
+  hardenedRuntime: true
+  gatekeeperAssess: false
+dmg:
+  artifactName: ${productName}-${version}-${arch}.${ext}

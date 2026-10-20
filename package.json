@@ -1,0 +1,40 @@
+{
+  "name": "goodjob",
+  "version": "0.1.0",
+  "description": "GoodJob — 带内嵌浏览器的求职助手桌面端",
+  "author": "GoodJob",
+  "private": true,
+  "type": "module",
+  "main": "./out/main/index.js",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "start": "electron-vite preview",
+    "typecheck": "tsc -p tsconfig.node.json --noEmit && tsc -p tsconfig.web.json --noEmit",
+    "dist:mac": "electron-vite build && electron-builder --mac",
+    "dist:dir": "electron-vite build && electron-builder --dir"
+  },
+  "dependencies": {
+    "@ai-sdk/anthropic": "^4.0.82",
+    "@ai-sdk/google": "^4.0.99",
+    "@ai-sdk/openai": "^4.0.96",
+    "ai": "^7.0.143",
+    "zod": "^4.1.8"
+  },
+  "devDependencies": {
+    "@ant-design/icons": "^6.3.4",
+    "@ant-design/x": "^2.9.0",
+    "@types/node": "^24.10.0",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.1.2",
+    "antd": "^6.6.6",
+    "electron": "^44.9.0",
+    "electron-builder": "^26.15.3",
+    "electron-vite": "^6.0.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "typescript": "^5.9.3",
+    "vite": "^8.3.4"
+  }
+}
