@@ -13,7 +13,7 @@ const DEV_CSP = [
 const PROD_CSP = [
   "default-src 'self'",
   "script-src 'self'",
-  // antd ships CSS-in-JS and injects <style> tags at runtime.
+  // Radix 的浮层靠 inline style 定位，Tailwind 产物则是同源样式表。
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data: blob:",
   "font-src 'self' data:",

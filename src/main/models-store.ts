@@ -112,7 +112,7 @@ export class ModelsStore {
         id: provider.id.trim() === "" ? randomUUID() : provider.id,
         name: provider.name.trim(),
         protocol: normalizeProtocol(provider.protocol),
-        baseURL: normalizeBaseURL(provider.baseURL, provider.protocol),
+        baseURL: normalizeBaseURL(provider.baseURL),
         enabled: provider.enabled,
         models: normalizeModels(provider.models),
         apiKeyEncrypted: this.nextKey(provider, previous ?? null),
@@ -132,6 +132,32 @@ export class ModelsStore {
       version: VERSION,
       defaultModel,
       providers,
+    };
+    writeJsonFile(this.workspace.models, this.doc);
+    return this.toPublic();
+  }
+
+  /**
+   * 对话侧模型选择器写入默认模型：只改 `defaultModel`，供应商清单和 Key 原样保留。
+   * 指向不存在的供应商 / 未启用的模型时不做任何修改，避免把配置写坏。
+   */
+  selectDefault(selection: ModelSelection | null): ModelsConfig {
+    if (selection !== null) {
+      const provider = this.doc.providers.find(
+        (item) => item.id === selection.providerId && item.enabled,
+      );
+      const model = provider?.models.find(
+        (item) => item.id === selection.modelId && item.enabled,
+      );
+      if (provider === undefined || model === undefined) return this.toPublic();
+    }
+
+    this.doc = {
+      ...this.doc,
+      defaultModel:
+        selection === null
+          ? null
+          : { providerId: selection.providerId, modelId: selection.modelId },
     };
     writeJsonFile(this.workspace.models, this.doc);
     return this.toPublic();
@@ -258,7 +284,7 @@ function readProvider(input: unknown): StoredProvider | null {
     id,
     name: typeof input.name === "string" ? input.name : "未命名供应商",
     protocol,
-    baseURL: typeof input.baseURL === "string" ? normalizeBaseURL(input.baseURL, protocol) : "",
+    baseURL: typeof input.baseURL === "string" ? normalizeBaseURL(input.baseURL) : "",
     enabled: input.enabled !== false,
     models: Array.isArray(input.models)
       ? normalizeModels(
@@ -326,18 +352,16 @@ function normalizeProtocol(input: unknown): ProviderProtocol {
     : "openai-chat";
 }
 
-function normalizeBaseURL(value: string, protocol: ProviderProtocol): string {
-  const trimmed = value.trim().replace(/\/+$/, "");
-  if (trimmed !== "") return trimmed;
-  return DEFAULT_BASE_URLS[protocol];
+/**
+ * 只去空格和尾斜杠，不替用户补默认地址。
+ *
+ * 设置页是边改边存的：新增供应商时 Base URL 往往还空着，如果这里补一个默认地址，
+ * 那份「半成品」就会以另一个地址落盘，用户回头看到的是自己没填过的域名。
+ * 空地址的供应商在业界就是「还没配置好」，侧栏状态点会提示，不应该妨碍保存。
+ */
+function normalizeBaseURL(value: string): string {
+  return value.trim().replace(/\/+$/, "");
 }
-
-const DEFAULT_BASE_URLS: Record<ProviderProtocol, string> = {
-  "openai-chat": "https://api.openai.com/v1",
-  "openai-responses": "https://api.openai.com/v1",
-  "anthropic-messages": "https://api.anthropic.com/v1",
-  "google-generative-ai": "https://generativelanguage.googleapis.com/v1beta",
-};
 
 function requiresApiKey(baseURL: string): boolean {
   let host = "";

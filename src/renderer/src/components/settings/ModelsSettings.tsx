@@ -1,24 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { DeleteOutlined, EditOutlined, PlusOutlined } from "@ant-design/icons";
 import {
-  App as AntdApp,
-  Button,
-  Dropdown,
-  Empty,
-  Flex,
-  Form,
-  Input,
-  InputNumber,
-  Modal,
-  Popconfirm,
-  Select,
-  Switch,
-  Tag,
-  Tooltip,
-  Typography,
-} from "antd";
-import type { MenuProps } from "antd";
+  CircleAlert,
+  Pencil,
+  Plus,
+  Settings2,
+  Trash2,
+} from "lucide-react";
 
 import type {
   ModelEntry,
@@ -27,6 +15,53 @@ import type {
   ProviderDraft,
   PublicProvider,
 } from "@shared/types";
+
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
+  Empty,
+  EmptyContent,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from "@/components/ui/empty";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
+import { cn } from "@/lib/utils";
 
 import { PROTOCOL_OPTIONS, PROVIDER_PRESETS, type PresetModel } from "./presets";
 
@@ -46,8 +81,6 @@ interface ProviderEdit extends ProviderConfig {
 }
 
 export function ModelsSettings({ models, onSaved }: ModelsSettingsProps) {
-  const { message } = AntdApp.useApp();
-
   const [providers, setProviders] = useState<ProviderEdit[]>(() => models.providers.map(toEdit));
   const [selectedId, setSelectedId] = useState<string | null>(
     () => models.providers[0]?.id ?? null,
@@ -56,13 +89,20 @@ export function ModelsSettings({ models, onSaved }: ModelsSettingsProps) {
     providerId: string;
     model: ModelEntry | null;
   } | null>(null);
+  /** 自动保存的状态：改动是边改边存的，用户得看得见。 */
+  const [saveState, setSaveState] = useState<"idle" | "saving" | "saved">("idle");
+  const [error, setError] = useState<string | null>(null);
 
   const provider = providers.find((item) => item.id === selectedId) ?? null;
 
   /*
    * 实时保存：本地 draft 先落 state（输入才不卡），停手 AUTOSAVE_MS 后落盘。
-   * 落盘结果只回填"服务端才能知道"的字段（hasApiKey、已存 Key 的 settling），
+   * 落盘结果只回填"主进程才知道"的字段（hasApiKey、已存 Key 的结算），
    * 不回写整份 providers，否则用户正在输入的框会被打断。
+   *
+   * 注意：这里**不做**“配置不完整就不保存”的校验。新增供应商时 Base URL 和模型
+   * 往往还空着，拦下来只会让用户以为“设置根本不保存”——退出设置就丢了。
+   * 半成品照常落盘，能不能用交给左侧状态点提示。
    */
   const providersRef = useRef(providers);
   providersRef.current = providers;
@@ -70,12 +110,14 @@ export function ModelsSettings({ models, onSaved }: ModelsSettingsProps) {
   const mountedRef = useRef(true);
 
   const persist = useCallback(async (): Promise<void> => {
-    if (validate(providersRef.current) !== null) return;
+    if (mountedRef.current) setSaveState("saving");
     try {
       const next = await window.goodjob.models.save({
         providers: providersRef.current.map(toDraft),
       });
       if (!mountedRef.current) return;
+      setSaveState("saved");
+      setError(null);
       setProviders((prev) =>
         prev.map((item) => {
           const saved = next.providers.find((entry) => entry.id === item.id);
@@ -85,14 +127,16 @@ export function ModelsSettings({ models, onSaved }: ModelsSettingsProps) {
         }),
       );
       onSaved(next);
-    } catch (error) {
+    } catch (caught) {
       if (mountedRef.current) {
-        void message.error(error instanceof Error ? error.message : "保存失败");
+        setSaveState("idle");
+        setError(caught instanceof Error ? caught.message : "保存失败");
       }
     }
-  }, [message, onSaved]);
+  }, [onSaved]);
 
   const scheduleSave = useCallback((): void => {
+    setSaveState("saving");
     if (timerRef.current !== null) window.clearTimeout(timerRef.current);
     timerRef.current = window.setTimeout(() => {
       timerRef.current = null;
@@ -111,8 +155,6 @@ export function ModelsSettings({ models, onSaved }: ModelsSettingsProps) {
       if (timerRef.current === null) return;
       window.clearTimeout(timerRef.current);
       timerRef.current = null;
-      // 半截的非法输入（比如 Base URL 刚被清空）不落盘，保留上一次的有效状态。
-      if (validate(providersRef.current) !== null) return;
       void window.goodjob.models
         .save({ providers: providersRef.current.map(toDraft) })
         .then((next) => onSavedRef.current(next));
@@ -121,14 +163,8 @@ export function ModelsSettings({ models, onSaved }: ModelsSettingsProps) {
   );
 
   const patchProvider = (id: string, patch: Partial<ProviderEdit>): void => {
-    setProviders((prev) =>
-      prev.map((item) => (item.id === id ? { ...item, ...patch } : item)),
-    );
+    setProviders((prev) => prev.map((item) => (item.id === id ? { ...item, ...patch } : item)));
     scheduleSave();
-  };
-
-  const patchModel = (providerId: string, models2: ModelEntry[]): void => {
-    patchProvider(providerId, { models: models2 });
   };
 
   const addProvider = (presetKey: string): void => {
@@ -159,81 +195,117 @@ export function ModelsSettings({ models, onSaved }: ModelsSettingsProps) {
     scheduleSave();
   };
 
-  const addProviderMenu: MenuProps = {
-    items: PROVIDER_PRESETS.map((preset) => ({ key: preset.key, label: preset.label })),
-    onClick: ({ key }) => addProvider(key),
-  };
-
   return (
-    <div className="settings-page settings-page-flush">
-      <h1 className="settings-page-title">模型设置</h1>
-
-      <div className="settings-models-body">
-      <div className="settings-side">
-        <div className="settings-side-head">
-          <Typography.Text type="secondary" className="settings-side-label">
-            供应商
-          </Typography.Text>
-          <Dropdown menu={addProviderMenu} trigger={["click"]} placement="bottomRight">
-            <Tooltip title="添加供应商">
-              <Button type="text" size="small" icon={<PlusOutlined />} aria-label="添加供应商" />
-            </Tooltip>
-          </Dropdown>
-        </div>
-
-        <div className="settings-provider-list">
-          {providers.map((item) => {
-            const status = providerStatus(item);
-            return (
-              <button
-                key={item.id}
-                type="button"
-                className={`settings-provider${item.id === selectedId ? " settings-provider-active" : ""}`}
-                onClick={() => setSelectedId(item.id)}
-              >
-                <span className="settings-provider-name">{item.name || "未命名供应商"}</span>
-                <Tooltip title={status.label}>
-                  <span className={`settings-status settings-status-${status.tone}`} />
-                </Tooltip>
-              </button>
-            );
-          })}
-        </div>
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div className="flex shrink-0 items-center justify-between gap-3 px-6 pt-6 pb-4">
+        <h1 className="text-lg font-semibold tracking-tight">模型设置</h1>
+        <span className="text-xs text-muted-foreground">
+          {saveState === "saving" ? "保存中…" : saveState === "saved" ? "已保存" : "改动自动保存"}
+        </span>
       </div>
 
-      <div className="settings-main">
-        <div className="settings-provider-detail">
+      {error !== null && (
+        <div className="mx-6 mb-3 flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+          <CircleAlert className="mt-0.5 size-3.5 shrink-0" />
+          <span className="min-w-0 break-words">{error}</span>
+        </div>
+      )}
+
+      <div className="flex min-h-0 flex-1 border-t">
+        <div className="flex w-52 shrink-0 flex-col border-r bg-muted/30">
+          <div className="flex h-10 items-center justify-between pr-2 pl-4">
+            <span className="text-xs text-muted-foreground">供应商</span>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="icon-xs" aria-label="添加供应商">
+                  <Plus />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-48">
+                {PROVIDER_PRESETS.map((preset) => (
+                  <DropdownMenuItem key={preset.key} onSelect={() => addProvider(preset.key)}>
+                    {preset.label}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+
+          <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
+            {providers.map((item) => {
+              const status = providerStatus(item);
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => setSelectedId(item.id)}
+                  className={cn(
+                    "flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm transition-colors",
+                    item.id === selectedId
+                      ? "bg-accent font-medium text-accent-foreground"
+                      : "text-muted-foreground hover:bg-accent/50",
+                  )}
+                >
+                  <span className="truncate">{item.name || "未命名供应商"}</span>
+                  <span
+                    className={cn(
+                      "ml-auto size-1.5 shrink-0 rounded-full",
+                      status.tone === "on" && "bg-emerald-500",
+                      status.tone === "warn" && "bg-amber-500",
+                      status.tone === "off" && "bg-muted-foreground/40",
+                    )}
+                    title={status.label}
+                  />
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="min-h-0 flex-1 overflow-y-auto p-5">
           {providers.length === 0 ? (
-            <div className="settings-provider-empty">
-              <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="还没有供应商">
-                <Dropdown menu={addProviderMenu} trigger={["click"]}>
-                  <Button type="primary" icon={<PlusOutlined />}>
-                    添加供应商
-                  </Button>
-                </Dropdown>
-              </Empty>
-            </div>
+            <Empty className="pt-10">
+              <EmptyHeader>
+                <EmptyMedia variant="icon">
+                  <Settings2 />
+                </EmptyMedia>
+                <EmptyTitle>还没有供应商</EmptyTitle>
+                <EmptyDescription>
+                  模型请求要发给某个供应商。先添加一个，再填它的 Base URL 和模型。
+                </EmptyDescription>
+              </EmptyHeader>
+              <EmptyContent>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button size="sm">
+                      <Plus />
+                      添加供应商
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent>
+                    {PROVIDER_PRESETS.map((preset) => (
+                      <DropdownMenuItem key={preset.key} onSelect={() => addProvider(preset.key)}>
+                        {preset.label}
+                      </DropdownMenuItem>
+                    ))}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </EmptyContent>
+            </Empty>
           ) : provider === null ? (
-            <Empty
-              image={Empty.PRESENTED_IMAGE_SIMPLE}
-              description="选择一个供应商"
-              style={{ margin: "48px 0" }}
-            />
+            <p className="pt-10 text-center text-sm text-muted-foreground">选择一个供应商</p>
           ) : (
             <ProviderForm
               key={provider.id}
               provider={provider}
               canStoreKey={models.canStoreKey}
               onChange={(patch) => patchProvider(provider.id, patch)}
-              onModelsChange={(models2) => patchModel(provider.id, models2)}
               onRemove={() => removeProvider(provider.id)}
               onAddModel={() => setEditingModel({ providerId: provider.id, model: null })}
               onEditModel={(model) => setEditingModel({ providerId: provider.id, model })}
             />
           )}
         </div>
-      </div>
-
       </div>
 
       <ModelEditor
@@ -244,11 +316,11 @@ export function ModelsSettings({ models, onSaved }: ModelsSettingsProps) {
           if (editingModel === null) return;
           const target = providers.find((item) => item.id === editingModel.providerId);
           if (target === undefined) return;
-          const exists = target.models.some(
+          const duplicate = target.models.some(
             (item) => item.id === entry.id && item.id !== editingModel.model?.id,
           );
-          if (exists) {
-            void message.error("这个供应商里已经有同名模型了");
+          if (duplicate) {
+            setError("这个供应商里已经有同 ID 的模型了。");
             return;
           }
           const next =
@@ -257,7 +329,7 @@ export function ModelsSettings({ models, onSaved }: ModelsSettingsProps) {
               : target.models.map((item) =>
                   item.id === editingModel.model?.id ? entry : item,
                 );
-          patchModel(editingModel.providerId, next);
+          patchProvider(editingModel.providerId, { models: next });
           setEditingModel(null);
         }}
       />
@@ -269,7 +341,6 @@ interface ProviderFormProps {
   provider: ProviderEdit;
   canStoreKey: boolean;
   onChange: (patch: Partial<ProviderEdit>) => void;
-  onModelsChange: (models: ModelEntry[]) => void;
   onRemove: () => void;
   onAddModel: () => void;
   onEditModel: (model: ModelEntry) => void;
@@ -279,7 +350,6 @@ function ProviderForm({
   provider,
   canStoreKey,
   onChange,
-  onModelsChange,
   onRemove,
   onAddModel,
   onEditModel,
@@ -287,71 +357,72 @@ function ProviderForm({
   const pendingKey = provider.apiKey;
 
   return (
-    <Form layout="vertical" className="settings-form settings-form-card">
-      <Flex align="center" gap={12} className="settings-provider-head">
+    <div className="flex flex-col gap-5">
+      <div className="flex items-center gap-2">
         <Input
-          className="settings-provider-title"
-          variant="borderless"
           value={provider.name}
           placeholder="供应商名称"
+          className="h-8 flex-1 border-transparent px-1 text-base font-semibold shadow-none focus-visible:border-input"
           onChange={(event) => onChange({ name: event.target.value })}
         />
-        <Tooltip title={provider.enabled ? "停用这个供应商" : "启用这个供应商"}>
-          <Switch
-            checked={provider.enabled}
-            onChange={(checked) => onChange({ enabled: checked })}
-          />
-        </Tooltip>
-        <Popconfirm
+        <Switch
+          checked={provider.enabled}
+          aria-label="启用这个供应商"
+          onCheckedChange={(checked) => onChange({ enabled: checked })}
+        />
+        <DeleteButton
+          label="删除供应商"
           title="删除这个供应商？"
           description="它的模型和已保存的 API Key 会一起删除。"
-          okText="删除"
-          okButtonProps={{ danger: true }}
-          cancelText="取消"
           onConfirm={onRemove}
-        >
-          <Button type="text" danger icon={<DeleteOutlined />} aria-label="删除供应商" />
-        </Popconfirm>
-      </Flex>
+        />
+      </div>
 
-      <Form.Item label="Base URL" required style={{ marginBottom: 16 }}>
+      <div className="flex flex-col gap-1.5">
+        <Label htmlFor="provider-base-url" className="text-xs text-muted-foreground">
+          Base URL
+        </Label>
         <Input
+          id="provider-base-url"
           spellCheck={false}
           value={provider.baseURL}
           placeholder="https://api.openai.com/v1"
           onChange={(event) => onChange({ baseURL: event.target.value })}
         />
-      </Form.Item>
+      </div>
 
-      <Form.Item label="API 格式" style={{ marginBottom: 16 }}>
+      <div className="flex flex-col gap-1.5">
+        <Label className="text-xs text-muted-foreground">API 格式</Label>
         <Select
           value={provider.protocol}
-          options={PROTOCOL_OPTIONS.map((option) => ({
-            value: option.value,
-            label: option.label,
-          }))}
-          optionRender={(option) => {
-            const hint = PROTOCOL_OPTIONS.find((item) => item.value === option.value)?.hint;
-            return (
-              <Flex vertical>
-                <span>{option.label}</span>
-                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                  {hint}
-                </Typography.Text>
-              </Flex>
-            );
-          }}
-          onChange={(value) => onChange({ protocol: value })}
-        />
-      </Form.Item>
+          onValueChange={(value) => onChange({ protocol: value as ProviderConfig["protocol"] })}
+        >
+          <SelectTrigger className="w-full" aria-label="API 格式">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {PROTOCOL_OPTIONS.map((option) => (
+              <SelectItem key={option.value} value={option.value}>
+                <span className="flex flex-col items-start">
+                  <span className="text-sm">{option.label}</span>
+                  <span className="text-xs text-muted-foreground">{option.hint}</span>
+                </span>
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
 
-      <Form.Item label="API Key" style={{ marginBottom: 16 }}>
-        <Flex gap={8}>
-          <Input.Password
-            className="settings-key-input"
+      <div className="flex flex-col gap-1.5">
+        <Label htmlFor="provider-key" className="text-xs text-muted-foreground">
+          API Key
+        </Label>
+        <div className="flex items-center gap-2">
+          <Input
+            id="provider-key"
+            type="password"
             autoComplete="off"
             spellCheck={false}
-            visibilityToggle
             disabled={!canStoreKey}
             value={pendingKey ?? ""}
             placeholder={
@@ -364,97 +435,123 @@ function ProviderForm({
             onChange={(event) => onChange({ apiKey: event.target.value })}
           />
           {provider.hasApiKey && (
-            <Button onClick={() => onChange({ apiKey: null })}>清除</Button>
+            <Button variant="outline" size="sm" onClick={() => onChange({ apiKey: null })}>
+              清除
+            </Button>
           )}
-        </Flex>
-        <Typography.Text
-          type={canStoreKey ? "secondary" : "warning"}
-          className="settings-hint"
-        >
+        </div>
+        <p className={cn("text-xs", canStoreKey ? "text-muted-foreground" : "text-amber-600")}>
           {canStoreKey
-            ? "使用本地模型时可以留空。"
+            ? "钥匙串加密后存在当前工作区，渲染层拿不到明文。使用本地模型时可以留空。"
             : "当前系统无法保存 API Key，使用本地模型时可以直接留空。"}
-        </Typography.Text>
-      </Form.Item>
+        </p>
+      </div>
 
-      <Flex justify="space-between" align="center" className="settings-models-head">
-        <Typography.Text strong>模型列表</Typography.Text>
-        <Button size="small" icon={<PlusOutlined />} onClick={onAddModel}>
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-sm font-medium">模型列表</span>
+        <Button variant="outline" size="sm" onClick={onAddModel}>
+          <Plus />
           添加模型
         </Button>
-      </Flex>
+      </div>
 
       {provider.models.length === 0 ? (
-        <Empty
-          image={Empty.PRESENTED_IMAGE_SIMPLE}
-          description="还没有模型，先添加一个"
-          style={{ margin: "16px 0" }}
-        />
+        <div className="rounded-lg border border-dashed px-3 py-6 text-center text-xs text-muted-foreground">
+          还没有模型，先添加一个
+        </div>
       ) : (
-        <div className="settings-model-list">
+        <div className="divide-y rounded-lg border">
           {provider.models.map((model) => (
-            <div key={model.id} className="settings-model-row">
-              <span className="settings-model-name" title={model.name || model.id}>
+            <div key={model.id} className="flex items-center gap-2 px-3 py-2">
+              <span className="min-w-0 flex-1 truncate font-mono text-xs" title={model.id}>
                 {model.name || model.id}
               </span>
               {model.contextWindow !== undefined && (
-                <Tag className="settings-model-tag">{formatContext(model.contextWindow)}</Tag>
+                <Badge variant="secondary" className="text-[10px]">
+                  {formatContext(model.contextWindow)}
+                </Badge>
               )}
-              {model.vision === true && <Tag className="settings-model-tag">视觉</Tag>}
-              {model.reasoning === true && <Tag className="settings-model-tag">推理</Tag>}
-              <span className="settings-model-spacer" />
+              {model.vision === true && (
+                <Badge variant="secondary" className="text-[10px]">
+                  视觉
+                </Badge>
+              )}
+              {model.reasoning === true && (
+                <Badge variant="secondary" className="text-[10px]">
+                  推理
+                </Badge>
+              )}
               <Switch
-                size="small"
+                size="sm"
                 checked={model.enabled}
-                onChange={(checked) =>
-                  onModelsChange(
-                    provider.models.map((item) =>
+                aria-label={`启用 ${model.id}`}
+                onCheckedChange={(checked) =>
+                  onChange({
+                    models: provider.models.map((item) =>
                       item.id === model.id ? { ...item, enabled: checked } : item,
                     ),
-                  )
+                  })
                 }
               />
-              <Tooltip title="编辑">
-                <Button
-                  type="text"
-                  size="small"
-                  aria-label="编辑模型"
-                  icon={<EditOutlined />}
-                  onClick={() => onEditModel(model)}
-                />
-              </Tooltip>
-              <Popconfirm
-                title="删除这个模型？"
-                okText="删除"
-                okButtonProps={{ danger: true }}
-                cancelText="取消"
-                onConfirm={() =>
-                  onModelsChange(provider.models.filter((item) => item.id !== model.id))
-                }
+              <Button
+                variant="ghost"
+                size="icon-xs"
+                aria-label="编辑模型"
+                onClick={() => onEditModel(model)}
               >
-                <Button
-                  type="text"
-                  size="small"
-                  danger
-                  aria-label="删除模型"
-                  icon={<DeleteOutlined />}
-                />
-              </Popconfirm>
+                <Pencil />
+              </Button>
+              <DeleteButton
+                label="删除模型"
+                title="删除这个模型？"
+                description="只从当前供应商里移除，不影响其他配置。"
+                onConfirm={() =>
+                  onChange({ models: provider.models.filter((item) => item.id !== model.id) })
+                }
+              />
             </div>
           ))}
         </div>
       )}
-    </Form>
+    </div>
   );
 }
 
-interface ModelFormValues {
-  id: string;
-  name?: string;
-  contextWindow?: number | null;
-  vision?: boolean;
-  reasoning?: boolean;
-  enabled?: boolean;
+function DeleteButton({
+  label,
+  title,
+  description,
+  onConfirm,
+}: {
+  label: string;
+  title: string;
+  description: string;
+  onConfirm: () => void;
+}) {
+  return (
+    <AlertDialog>
+      <AlertDialogTrigger asChild>
+        <Button variant="ghost" size="icon-xs" className="text-muted-foreground" aria-label={label}>
+          <Trash2 />
+        </Button>
+      </AlertDialogTrigger>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>{title}</AlertDialogTitle>
+          <AlertDialogDescription>{description}</AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>取消</AlertDialogCancel>
+          <AlertDialogAction
+            className="bg-destructive text-white hover:bg-destructive/90"
+            onClick={onConfirm}
+          >
+            删除
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
 }
 
 interface ModelEditorProps {
@@ -465,66 +562,117 @@ interface ModelEditorProps {
 }
 
 function ModelEditor({ open, model, onCancel, onSubmit }: ModelEditorProps) {
-  const [form] = Form.useForm<ModelFormValues>();
+  const [id, setId] = useState("");
+  const [name, setName] = useState("");
+  const [contextWindow, setContextWindow] = useState("");
+  const [vision, setVision] = useState(false);
+  const [reasoning, setReasoning] = useState(false);
+  const [enabled, setEnabled] = useState(true);
 
+  // 每次打开都用当前模型重置表单。
   useEffect(() => {
     if (!open) return;
-    form.setFieldsValue({
-      id: model?.id ?? "",
-      name: model?.name ?? "",
-      contextWindow: model?.contextWindow ?? null,
-      vision: model?.vision === true,
-      reasoning: model?.reasoning === true,
-      enabled: model?.enabled !== false,
+    setId(model?.id ?? "");
+    setName(model?.name ?? "");
+    setContextWindow(model?.contextWindow === undefined ? "" : String(model.contextWindow));
+    setVision(model?.vision === true);
+    setReasoning(model?.reasoning === true);
+    setEnabled(model?.enabled !== false);
+  }, [open, model]);
+
+  const submit = (): void => {
+    const trimmedId = id.trim();
+    if (trimmedId === "") return;
+    const tokens = Number(contextWindow);
+    onSubmit({
+      id: trimmedId,
+      name: name.trim() === "" ? trimmedId : name.trim(),
+      enabled,
+      contextWindow: Number.isFinite(tokens) && tokens > 0 ? Math.round(tokens) : undefined,
+      vision,
+      reasoning,
     });
-  }, [open, model, form]);
+  };
 
   return (
-    <Modal open={open} title={model === null ? "添加模型" : "编辑模型"} onCancel={onCancel} onOk={() => form.submit()} okText="保存" cancelText="取消" destroyOnHidden width={440}>
-      <Form
-        form={form}
-        layout="vertical"
-        onFinish={(values) =>
-          onSubmit({
-            id: values.id.trim(),
-            name: (values.name ?? "").trim() === "" ? values.id.trim() : (values.name ?? "").trim(),
-            enabled: values.enabled !== false,
-            contextWindow:
-              typeof values.contextWindow === "number" && values.contextWindow > 0
-                ? values.contextWindow
-                : undefined,
-            vision: values.vision === true,
-            reasoning: values.reasoning === true,
-          })
-        }
-      >
-        <Form.Item
-          label="模型 ID"
-          name="id"
-          extra="请求里 model 字段的值，例如 gpt-4o、claude-sonnet-4-5。"
-          rules={[{ required: true, message: "请填写模型 ID" }]}
-        >
-          <Input spellCheck={false} placeholder="模型 ID" />
-        </Form.Item>
-        <Form.Item label="显示名称" name="name" extra="留空则与模型 ID 相同。">
-          <Input spellCheck={false} placeholder="可选" />
-        </Form.Item>
-        <Form.Item label="上下文窗口" name="contextWindow" extra="只用于界面标记，单位 token。">
-          <InputNumber min={1} step={1000} style={{ width: "100%" }} placeholder="例如 128000" />
-        </Form.Item>
-        <Flex gap={24}>
-          <Form.Item label="视觉输入" name="vision" valuePropName="checked">
-            <Switch size="small" />
-          </Form.Item>
-          <Form.Item label="推理模型" name="reasoning" valuePropName="checked">
-            <Switch size="small" />
-          </Form.Item>
-          <Form.Item label="启用" name="enabled" valuePropName="checked">
-            <Switch size="small" />
-          </Form.Item>
-        </Flex>
-      </Form>
-    </Modal>
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        if (!next) onCancel();
+      }}
+    >
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>{model === null ? "添加模型" : "编辑模型"}</DialogTitle>
+          <DialogDescription>模型 ID 会作为请求里的 `model` 字段发给供应商。</DialogDescription>
+        </DialogHeader>
+
+        <div className="flex flex-col gap-4">
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="model-id" className="text-xs text-muted-foreground">
+              模型 ID
+            </Label>
+            <Input
+              id="model-id"
+              spellCheck={false}
+              value={id}
+              placeholder="例如 gpt-4o、claude-sonnet-4-5"
+              onChange={(event) => setId(event.target.value)}
+            />
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="model-name" className="text-xs text-muted-foreground">
+              显示名称（可选）
+            </Label>
+            <Input
+              id="model-name"
+              spellCheck={false}
+              value={name}
+              placeholder="留空则与模型 ID 相同"
+              onChange={(event) => setName(event.target.value)}
+            />
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="model-context" className="text-xs text-muted-foreground">
+              上下文窗口（token，可选）
+            </Label>
+            <Input
+              id="model-context"
+              inputMode="numeric"
+              value={contextWindow}
+              placeholder="例如 128000"
+              onChange={(event) => setContextWindow(event.target.value)}
+            />
+          </div>
+
+          <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
+            <label className="flex items-center gap-2 text-xs text-muted-foreground">
+              <Switch size="sm" checked={vision} onCheckedChange={setVision} />
+              视觉输入
+            </label>
+            <label className="flex items-center gap-2 text-xs text-muted-foreground">
+              <Switch size="sm" checked={reasoning} onCheckedChange={setReasoning} />
+              推理模型
+            </label>
+            <label className="flex items-center gap-2 text-xs text-muted-foreground">
+              <Switch size="sm" checked={enabled} onCheckedChange={setEnabled} />
+              启用
+            </label>
+          </div>
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={onCancel}>
+            取消
+          </Button>
+          <Button disabled={id.trim() === ""} onClick={submit}>
+            保存
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -558,8 +706,9 @@ function formatContext(tokens: number): string {
   return String(tokens);
 }
 
-/** Hosts whose official endpoint always rejects a keyless request. */
-const OFFICIAL_HOSTS = /(^|\.)(openai\.com|anthropic\.com|googleapis\.com|deepseek\.com|openrouter\.ai)$/i;
+/** 官方端点一定会校验 Key；其他地址按自建/中转处理。 */
+const OFFICIAL_HOSTS =
+  /(^|\.)(openai\.com|anthropic\.com|googleapis\.com|deepseek\.com|openrouter\.ai)$/i;
 
 function providerStatus(provider: ProviderEdit): { tone: "on" | "warn" | "off"; label: string } {
   if (!provider.enabled) return { tone: "off", label: "已停用" };
@@ -580,30 +729,5 @@ function safeHost(baseURL: string): string {
     return new URL(baseURL).hostname;
   } catch {
     return "";
-  }
-}
-
-function validate(providers: ProviderEdit[]): string | null {
-  for (const provider of providers) {
-    if (provider.name.trim() === "") return "请填写供应商名称。";
-    if (provider.baseURL.trim() === "") return `供应商「${provider.name}」还没有填 Base URL。`;
-    if (!isHttpUrl(provider.baseURL)) return `供应商「${provider.name}」的 Base URL 不是合法地址。`;
-    if (provider.models.length === 0) return `供应商「${provider.name}」至少需要一个模型。`;
-    const ids = new Set<string>();
-    for (const model of provider.models) {
-      if (model.id.trim() === "") return `供应商「${provider.name}」里有模型缺少 ID。`;
-      if (ids.has(model.id)) return `供应商「${provider.name}」里有重复的模型 ID：${model.id}`;
-      ids.add(model.id);
-    }
-  }
-  return null;
-}
-
-function isHttpUrl(value: string): boolean {
-  try {
-    const url = new URL(value.trim());
-    return url.protocol === "http:" || url.protocol === "https:";
-  } catch {
-    return false;
   }
 }

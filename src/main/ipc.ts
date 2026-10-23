@@ -4,6 +4,7 @@ import {
   IPC,
   type AppearanceSettings,
   type ChatMessage,
+  type ModelSelection,
   type ModelsDraft,
   type Rect,
 } from "@shared/types";
@@ -59,6 +60,9 @@ export function registerIpc(deps: IpcDeps): void {
 
   ipcMain.handle(IPC.modelsGet, () => models.toPublic());
   ipcMain.handle(IPC.modelsSave, (_event, draft: ModelsDraft) => models.save(draft));
+  ipcMain.handle(IPC.modelsSelect, (_event, selection: ModelSelection | null) =>
+    models.selectDefault(selection),
+  );
 
   ipcMain.handle(IPC.appearanceGet, () => preferences.appearance);
   ipcMain.handle(IPC.appearanceSave, (_event, patch: Partial<AppearanceSettings>) =>

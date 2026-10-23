@@ -1,16 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 
-import {
-  ArrowLeftOutlined,
-  ArrowRightOutlined,
-  BugOutlined,
-  HomeOutlined,
-  ReloadOutlined,
-  StopOutlined,
-} from "@ant-design/icons";
-import { Button, Flex, Input, Space, Tooltip, Typography } from "antd";
+import { ArrowLeft, ArrowRight, Bug, Home, RotateCw, Square } from "lucide-react";
 
 import type { BrowserState } from "@shared/types";
+
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 const HOME = "https://www.bing.com";
 
@@ -25,7 +21,7 @@ const INITIAL_STATE: BrowserState = {
 interface BrowserPanelProps {
   /** Only the visible tab may own the native view. */
   active: boolean;
-  /** Anything that opens an antd overlay must suspend the view or it paints on top. */
+  /** 任何浮层（dialog / dropdown）打开时必须挂起原生视图，否则它会盖在浮层上面。 */
   suspended: boolean;
 }
 
@@ -92,46 +88,36 @@ export function BrowserPanel({ active, suspended }: BrowserPanelProps) {
   };
 
   return (
-    <Flex vertical style={{ height: "100%", background: "var(--surface-bg)" }}>
-      <Flex align="center" gap={8} className="browser-toolbar">
-        <Space size={2}>
-          <Tooltip title="后退">
-            <Button
-              type="text"
-              size="small"
-              icon={<ArrowLeftOutlined />}
-              disabled={!state.canGoBack}
-              onClick={() => browser.back()}
-            />
-          </Tooltip>
-          <Tooltip title="前进">
-            <Button
-              type="text"
-              size="small"
-              icon={<ArrowRightOutlined />}
-              disabled={!state.canGoForward}
-              onClick={() => browser.forward()}
-            />
-          </Tooltip>
-          {state.loading ? (
-            <Tooltip title="停止">
-              <Button type="text" size="small" icon={<StopOutlined />} onClick={() => browser.stop()} />
-            </Tooltip>
-          ) : (
-            <Tooltip title="刷新">
-              <Button type="text" size="small" icon={<ReloadOutlined />} onClick={() => browser.reload()} />
-            </Tooltip>
-          )}
-          <Tooltip title="回到首页">
-            <Button type="text" size="small" icon={<HomeOutlined />} onClick={() => navigate(HOME)} />
-          </Tooltip>
-        </Space>
+    <div className="flex h-full min-w-0 flex-col bg-card">
+      <div className="flex shrink-0 items-center gap-1 border-b px-2 py-1.5">
+        <IconButton label="后退" disabled={!state.canGoBack} onClick={() => browser.back()}>
+          <ArrowLeft />
+        </IconButton>
+        <IconButton
+          label="前进"
+          disabled={!state.canGoForward}
+          onClick={() => browser.forward()}
+        >
+          <ArrowRight />
+        </IconButton>
+        {state.loading ? (
+          <IconButton label="停止" onClick={() => browser.stop()}>
+            <Square className="fill-current" />
+          </IconButton>
+        ) : (
+          <IconButton label="刷新" onClick={() => browser.reload()}>
+            <RotateCw />
+          </IconButton>
+        )}
+        <IconButton label="回到首页" onClick={() => navigate(HOME)}>
+          <Home />
+        </IconButton>
 
         <Input
-          size="small"
           value={address}
           spellCheck={false}
           placeholder="输入网址或搜索内容"
+          className="h-7 min-w-0 flex-1 text-xs"
           onChange={(event) => setAddress(event.target.value)}
           onFocus={(event) => {
             editingRef.current = true;
@@ -140,21 +126,41 @@ export function BrowserPanel({ active, suspended }: BrowserPanelProps) {
           onBlur={() => {
             editingRef.current = false;
           }}
-          onPressEnter={() => navigate(address)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") navigate(address);
+          }}
         />
 
-        <Tooltip title="浏览器 DevTools">
-          <Button type="text" size="small" icon={<BugOutlined />} onClick={() => browser.toggleDevTools()} />
-        </Tooltip>
-      </Flex>
+        <IconButton label="浏览器 DevTools" onClick={() => browser.toggleDevTools()}>
+          <Bug />
+        </IconButton>
+      </div>
 
-      <div ref={holderRef} style={{ flex: 1, minHeight: 0 }} />
+      {/* 原生 WebContentsView 会精确停在这个矩形上，DOM 里刻意留空。 */}
+      <div ref={holderRef} className="min-h-0 flex-1" />
 
       {state.title !== "" && (
-        <Typography.Text type="secondary" ellipsis className="browser-title">
+        <div className="truncate border-t px-3 py-1 text-[calc(var(--text-xs)-1px)] text-muted-foreground">
           {state.title}
-        </Typography.Text>
+        </div>
       )}
-    </Flex>
+    </div>
+  );
+}
+
+function IconButton({
+  label,
+  children,
+  ...props
+}: React.ComponentProps<typeof Button> & { label: string }) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button variant="ghost" size="icon-xs" aria-label={label} {...props}>
+          {children}
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent>{label}</TooltipContent>
+    </Tooltip>
   );
 }

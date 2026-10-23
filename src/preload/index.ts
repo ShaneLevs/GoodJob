@@ -7,6 +7,7 @@ import type {
   ChatEvent,
   ChatMessage,
   GoodjobApi,
+  ModelSelection,
   ModelsConfig,
   ModelsDraft,
   Rect,
@@ -48,6 +49,8 @@ const api: GoodjobApi = {
     get: () => ipcRenderer.invoke(IPC.modelsGet) as Promise<ModelsConfig>,
     save: (draft: ModelsDraft) =>
       ipcRenderer.invoke(IPC.modelsSave, draft) as Promise<ModelsConfig>,
+    selectDefault: (selection: ModelSelection | null) =>
+      ipcRenderer.invoke(IPC.modelsSelect, selection) as Promise<ModelsConfig>,
   },
   appearance: {
     get: () => ipcRenderer.invoke(IPC.appearanceGet) as Promise<AppearanceSettings>,

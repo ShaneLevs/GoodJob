@@ -1,0 +1,268 @@
+/*
+ * Tailwind 4 + shadcn/ui 的样式入口。
+ *
+ * 这里的 CSS 变量是全站唯一的配色真值源：
+ *   - `--background` / `--foreground` / `--primary` … 是 shadcn（Tailwind utilities）用的；
+ *   - 下面的 `--shell-*` / `--text-*` 等是本项目壳层语义变量，全部由上面那组推导出来，
+ *     所以切 `.dark` 只改一处，不会出现两套深色各自漂移。
+ *
+ * 注意层级（cascade layer）：
+ *   antd 的 CSS-in-JS 注入的是**不带 layer** 的样式，会压过所有 `@layer`。
+ *   因此 antd 组件上写 Tailwind class 不生效；迁移完成后 antd 已移除，全站只用 Tailwind。
+ */
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+/*
+ * 状态变体桥接。
+ *
+ * shadcn registry 里的源码用 Base UI 风格的简写（`data-checked:` / `data-open:` /
+ * `data-horizontal:`），而 Radix 原语发出的是 `data-state="checked"` /
+ * `data-orientation="horizontal"`。Tailwind 默认把 `data-checked:` 编译成
+ * `[data-checked="true"]`，在 Radix 上永远不匹配（开关会一直显示为关闭）。
+ * 这里把两套约定接到同一个变体上，组件源码保持原样。
+ */
+@custom-variant data-open (&[data-state="open"], &[data-open]);
+@custom-variant data-closed (&[data-state="closed"], &[data-closed]);
+@custom-variant data-disabled (&[data-disabled], &[data-state="disabled"]);
+@custom-variant data-active (&[data-active], &[data-state="active"]);
+@custom-variant data-checked (&[data-state="checked"], &[data-checked]);
+@custom-variant data-unchecked (&[data-state="unchecked"], &[data-unchecked]);
+@custom-variant data-selected (&[data-state="selected"], &[data-selected]);
+@custom-variant data-horizontal (&[data-orientation="horizontal"], &[data-horizontal]);
+@custom-variant data-vertical (&[data-orientation="vertical"], &[data-vertical]);
+
+:root {
+  --radius: 0.625rem;
+
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.145 0 0);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.145 0 0);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.145 0 0);
+  --primary: oklch(0.205 0 0);
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.97 0 0);
+  --secondary-foreground: oklch(0.205 0 0);
+  --muted: oklch(0.97 0 0);
+  --muted-foreground: oklch(0.556 0 0);
+  --accent: oklch(0.97 0 0);
+  --accent-foreground: oklch(0.205 0 0);
+  --destructive: oklch(0.577 0.245 27.325);
+  --destructive-foreground: oklch(0.985 0 0);
+  --border: oklch(0.922 0 0);
+  --input: oklch(0.922 0 0);
+  --ring: oklch(0.708 0 0);
+
+  /* 窗口底色：比卡片略深一档，三张卡片才"浮"得起来。 */
+  --shell: oklch(0.962 0 0);
+  --sidebar: oklch(0.985 0 0);
+  --sidebar-foreground: oklch(0.145 0 0);
+  --sidebar-primary: oklch(0.205 0 0);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.97 0 0);
+  --sidebar-accent-foreground: oklch(0.205 0 0);
+  --sidebar-border: oklch(0.922 0 0);
+  --sidebar-ring: oklch(0.708 0 0);
+}
+
+.dark {
+  --background: oklch(0.145 0 0);
+  --foreground: oklch(0.985 0 0);
+  --card: oklch(0.205 0 0);
+  --card-foreground: oklch(0.985 0 0);
+  --popover: oklch(0.205 0 0);
+  --popover-foreground: oklch(0.985 0 0);
+  --primary: oklch(0.922 0 0);
+  --primary-foreground: oklch(0.205 0 0);
+  --secondary: oklch(0.269 0 0);
+  --secondary-foreground: oklch(0.985 0 0);
+  --muted: oklch(0.269 0 0);
+  --muted-foreground: oklch(0.708 0 0);
+  --accent: oklch(0.269 0 0);
+  --accent-foreground: oklch(0.985 0 0);
+  --destructive: oklch(0.704 0.191 22.216);
+  --destructive-foreground: oklch(0.985 0 0);
+  --border: oklch(1 0 0 / 10%);
+  --input: oklch(1 0 0 / 15%);
+  --ring: oklch(0.556 0 0);
+
+  --shell: oklch(0.115 0 0);
+  --sidebar: oklch(0.205 0 0);
+  --sidebar-foreground: oklch(0.985 0 0);
+  --sidebar-primary: oklch(0.488 0.243 264.376);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.269 0 0);
+  --sidebar-accent-foreground: oklch(0.985 0 0);
+  --sidebar-border: oklch(1 0 0 / 10%);
+  --sidebar-ring: oklch(0.556 0 0);
+}
+
+/*
+ * 壳层语义变量：名字保持旧 CSS 里的那套，值全部来自 shadcn token，
+ * 这样迁移期间旧组件和新组件拿到的是同一个颜色。
+ */
+:root {
+  --shell-bg: color-mix(in oklab, var(--background) 96%, var(--foreground));
+  --surface-bg: var(--card);
+  --panel-bg: color-mix(in oklab, var(--muted) 55%, transparent);
+  --nav-bg: var(--sidebar);
+  --hairline: var(--border);
+  --surface-shadow:
+    0 1px 2px oklch(0 0 0 / 6%),
+    0 8px 24px oklch(0 0 0 / 4%);
+  --text-strong: var(--foreground);
+  --text-body: color-mix(in oklab, var(--foreground) 78%, transparent);
+  --text-muted: var(--muted-foreground);
+  --text-faint: color-mix(in oklab, var(--foreground) 42%, transparent);
+  --subtle-bg: color-mix(in oklab, var(--foreground) 4%, transparent);
+  --hover-bg: color-mix(in oklab, var(--foreground) 6%, transparent);
+  --active-bg: color-mix(in oklab, var(--foreground) 9%, transparent);
+  --focus-ring: var(--ring);
+  --scroll-thumb: color-mix(in oklab, var(--foreground) 16%, transparent);
+  --status-on: oklch(0.65 0.17 150);
+  --status-warn: oklch(0.72 0.16 70);
+  --status-off: color-mix(in oklab, var(--foreground) 28%, transparent);
+
+  --font-base: 13px;
+  --sidebar-width: 248px;
+  --topbar-height: 48px;
+  --topbar-gutter: 8px;
+  /* hiddenInset 窗口顶部这条原生 titlebar 是可拖的。 */
+  --titlebar-native-height: 28px;
+
+  color-scheme: light;
+}
+
+.dark {
+  --surface-shadow:
+    0 1px 2px oklch(0 0 0 / 40%),
+    0 8px 24px oklch(0 0 0 / 28%);
+
+  color-scheme: dark;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-shell: var(--shell);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+
+  /* 字号刻度跟着“界面字号”走：改的是字，不是间距（和旧 antd fontSize token 同语义）。 */
+  --text-xs: calc(var(--font-base) - 2px);
+  --text-sm: calc(var(--font-base) - 1px);
+  --text-base: var(--font-base);
+  --text-lg: calc(var(--font-base) + 3px);
+  --text-xl: calc(var(--font-base) + 6px);
+  --text-2xl: calc(var(--font-base) + 10px);
+
+  --font-sans:
+    -apple-system, BlinkMacSystemFont, "PingFang SC", "Helvetica Neue", "Microsoft YaHei",
+    sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html,
+  body,
+  #root {
+    height: 100%;
+    margin: 0;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-family: var(--font-sans);
+    overflow: hidden;
+  }
+
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--scroll-thumb);
+    border-radius: 4px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+}
+
+/*
+ * Markdown 正文：Streamdown 自带代码块/表格样式，但列表标记会被 Tailwind 的
+ * preflight 重置掉。这里用 components 层补回来（层级高于 base，不跟 utilities 打架）。
+ */
+@layer components {
+  .markdown :where(ul) {
+    list-style: disc;
+    padding-inline-start: 1.25rem;
+  }
+  .markdown :where(ol) {
+    list-style: decimal;
+    padding-inline-start: 1.25rem;
+  }
+  .markdown :where(li) {
+    margin-block: 0.25rem;
+  }
+  .markdown :where(li > p) {
+    margin-block: 0;
+  }
+  .markdown :where(p, table, pre, blockquote) {
+    margin-block: 0.6rem;
+  }
+  .markdown :where(h1, h2, h3, h4) {
+    margin-block: 1rem 0.5rem;
+    font-weight: 600;
+    line-height: 1.35;
+  }
+  .markdown :where(a) {
+    color: var(--primary);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+}
+
+/* 窗口拖拽带（macOS hiddenInset）：只拖标题栏那一条，按钮自己 no-drag。 */
+@utility drag {
+  -webkit-app-region: drag;
+}
+
+@utility no-drag {
+  -webkit-app-region: no-drag;
+}

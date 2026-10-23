@@ -1,5 +1,6 @@
 import path from "node:path";
 
+import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import { defineConfig, externalizeDepsPlugin } from "electron-vite";
 
@@ -27,7 +28,8 @@ export default defineConfig({
   },
   renderer: {
     root: path.resolve("src/renderer"),
-    plugins: [react()],
+    // Tailwind 只挂在渲染层：main / preload 里没有任何 className。
+    plugins: [react(), tailwindcss()],
     resolve: {
       alias: {
         "@": path.resolve("src/renderer/src"),

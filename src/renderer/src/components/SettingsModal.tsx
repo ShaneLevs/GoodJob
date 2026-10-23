@@ -1,21 +1,22 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
-import { ApiOutlined, ArrowLeftOutlined, SkinOutlined } from "@ant-design/icons";
-import { Button, Menu, Modal, Typography } from "antd";
-import type { MenuProps } from "antd";
+import { ArrowLeft, Palette, Plug } from "lucide-react";
 
 import type { AppearanceSettings, ModelsConfig } from "@shared/types";
+
+import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
+import { cn } from "@/lib/utils";
 
 import { AppearanceSettings as AppearanceSettingsPane } from "./settings/AppearanceSettings";
 import { ModelsSettings } from "./settings/ModelsSettings";
 
-/** 左侧分组。新的设置分区直接往这里加。 */
-const NAV_ITEMS: MenuProps["items"] = [
-  { key: "appearance", icon: <SkinOutlined />, label: "外观" },
-  { key: "models", icon: <ApiOutlined />, label: "模型设置" },
-];
+export type SettingsSection = "appearance" | "models";
 
-type SectionKey = "appearance" | "models";
+const NAV: { key: SettingsSection; label: string; icon: React.ReactNode }[] = [
+  { key: "appearance", label: "外观", icon: <Palette /> },
+  { key: "models", label: "模型设置", icon: <Plug /> },
+];
 
 interface SettingsModalProps {
   open: boolean;
@@ -23,76 +24,92 @@ interface SettingsModalProps {
   appearance: AppearanceSettings;
   /** 左下角显示当前工作区，和主界面一致。 */
   workspaceName: string;
+  /** 打开时落在哪一页：从对话区的模型菜单跳进来时直接看模型。 */
+  initialSection?: SettingsSection;
   onClose: () => void;
   onSaved: (models: ModelsConfig) => void;
   onAppearanceChange: (patch: Partial<AppearanceSettings>) => void;
 }
 
+/**
+ * 设置：左侧分区导航 + 右侧内容，铺满整个弹窗（无标题栏、无页脚）。
+ * 「返回工作区」就是关闭，和以前的抽屉手感一致。
+ */
 export function SettingsModal({
   open,
   models,
   appearance,
   workspaceName,
+  initialSection = "appearance",
   onClose,
   onSaved,
   onAppearanceChange,
 }: SettingsModalProps) {
-  const [section, setSection] = useState<SectionKey>("appearance");
+  const [section, setSection] = useState<SettingsSection>(initialSection);
+
+  // 每次打开都回到调用方指定的分区：入口不同，落点也不同。
+  useEffect(() => {
+    if (open) setSection(initialSection);
+  }, [open, initialSection]);
 
   return (
-    <Modal
-      className="settings-modal"
+    <Dialog
       open={open}
-      onCancel={onClose}
-      centered
-      width={1040}
-      destroyOnHidden
-      // 无标题栏、无页脚：左侧导航里的「返回工作区」负责关闭。
-      title={null}
-      closable={false}
-      footer={null}
-      afterClose={() => setSection("appearance")}
-      styles={{ body: { padding: 0 } }}
+      onOpenChange={(next) => {
+        if (!next) onClose();
+      }}
     >
-      <div className="settings-body">
-        <nav className="settings-nav">
-          <Button
-            type="text"
-            className="settings-back"
-            icon={<ArrowLeftOutlined />}
-            onClick={onClose}
-          >
-            返回工作区
-          </Button>
+      <DialogContent
+        showCloseButton={false}
+        className="gap-0 overflow-hidden p-0 sm:max-w-4xl"
+        aria-describedby={undefined}
+      >
+        <DialogTitle className="sr-only">设置</DialogTitle>
 
-          <div className="settings-nav-group">基础设置</div>
-          <Menu
-            mode="inline"
-            className="settings-nav-menu"
-            selectedKeys={[section]}
-            items={NAV_ITEMS}
-            onClick={({ key }) => setSection(key as SectionKey)}
-          />
+        <div className="flex h-[min(86vh,720px)] min-h-[440px]">
+          <nav className="flex w-52 shrink-0 flex-col border-r bg-muted/40 p-2">
+            <Button variant="ghost" className="justify-start gap-2" onClick={onClose}>
+              <ArrowLeft />
+              返回工作区
+            </Button>
 
-          <div className="settings-nav-account">
-            <span className="settings-avatar">{workspaceName.trim().slice(0, 1) || "G"}</span>
-            <span className="settings-account-name">{workspaceName}</span>
-          </div>
-        </nav>
-
-        <div className="settings-content">
-          {section === "appearance" ? (
-            <AppearanceSettingsPane appearance={appearance} onChange={onAppearanceChange} />
-          ) : models === null ? (
-            <div className="settings-page">
-              <h1 className="settings-page-title">模型设置</h1>
-              <Typography.Text type="secondary">正在读取模型…</Typography.Text>
+            <p className="px-2 pt-4 pb-1 text-xs text-muted-foreground">基础设置</p>
+            <div className="flex flex-col gap-0.5">
+              {NAV.map((item) => (
+                <Button
+                  key={item.key}
+                  variant="ghost"
+                  className={cn(
+                    "justify-start gap-2 font-normal text-muted-foreground",
+                    section === item.key && "bg-accent font-medium text-accent-foreground",
+                  )}
+                  onClick={() => setSection(item.key)}
+                >
+                  {item.icon}
+                  {item.label}
+                </Button>
+              ))}
             </div>
-          ) : (
-            <ModelsSettings models={models} onSaved={onSaved} />
-          )}
+
+            <div className="mt-auto flex min-w-0 items-center gap-2 px-2 pt-2 pb-1">
+              <span className="grid size-6 shrink-0 place-items-center rounded-full bg-secondary text-[11px] font-semibold">
+                {workspaceName.trim().slice(0, 1) || "G"}
+              </span>
+              <span className="truncate text-xs text-muted-foreground">{workspaceName}</span>
+            </div>
+          </nav>
+
+          <div className="flex min-w-0 flex-1 flex-col">
+            {section === "appearance" ? (
+              <AppearanceSettingsPane appearance={appearance} onChange={onAppearanceChange} />
+            ) : models === null ? (
+              <div className="p-8 text-sm text-muted-foreground">正在读取模型…</div>
+            ) : (
+              <ModelsSettings models={models} onSaved={onSaved} />
+            )}
+          </div>
         </div>
-      </div>
-    </Modal>
+      </DialogContent>
+    </Dialog>
   );
 }

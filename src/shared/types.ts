@@ -165,6 +165,7 @@ export const IPC = {
   chatEvent: "chat:event",
   modelsGet: "models:get",
   modelsSave: "models:save",
+  modelsSelect: "models:select",
   appearanceGet: "appearance:get",
   appearanceSave: "appearance:save",
   workspaceGet: "workspace:get",
@@ -196,6 +197,8 @@ export interface GoodjobApi {
   models: {
     get: () => Promise<ModelsConfig>;
     save: (draft: ModelsDraft) => Promise<ModelsConfig>;
+    /** 对话侧模型选择器：只改这个工作区的默认模型，不动供应商与 Key。 */
+    selectDefault: (selection: ModelSelection | null) => Promise<ModelsConfig>;
   };
   appearance: {
     get: () => Promise<AppearanceSettings>;

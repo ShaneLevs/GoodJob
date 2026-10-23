@@ -19,7 +19,7 @@ type StateListener = (state: BrowserState) => void;
  * The embedded browser.
  *
  * A `WebContentsView` is a native child view, not a DOM node: the renderer reports the
- * rectangle it reserved for the browser and we mirror it here. That also means antd
+ * rectangle it reserved for the browser and we mirror it here. That also means any
  * overlays (Modal/Drawer/Dropdown) cannot paint on top of it — callers must hide the
  * panel while such an overlay is open.
  */

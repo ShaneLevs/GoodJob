@@ -1,4 +1,14 @@
-import { Empty, Tabs, Tag, Typography } from "antd";
+import { X } from "lucide-react";
+
+import { Button } from "@/components/ui/button";
+import {
+  Empty,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from "@/components/ui/empty";
+import { cn } from "@/lib/utils";
 
 import { BrowserPanel } from "./BrowserPanel";
 import { PANES, PANE_BY_KEY, type PaneKey } from "../panes";
@@ -6,7 +16,7 @@ import { PANES, PANE_BY_KEY, type PaneKey } from "../panes";
 interface WorkbenchProps {
   openPanes: PaneKey[];
   activePane: PaneKey | null;
-  /** Overlays (drawer/modal) must hide the native browser view. */
+  /** Overlays (dialog/dropdown) must hide the native browser view. */
   suspended: boolean;
   onSelect: (key: PaneKey) => void;
   /**
@@ -23,82 +33,116 @@ const PLACEHOLDER_HINT: Record<Exclude<PaneKey, "browser">, string> = {
   log: "AI 每一步做了什么、看了哪个页面、提交了哪些信息，都会记录在这里。",
 };
 
-export function Workbench({ openPanes, activePane, suspended, onSelect, onClose }: WorkbenchProps) {
+export function Workbench({
+  openPanes,
+  activePane,
+  suspended,
+  onSelect,
+  onClose,
+}: WorkbenchProps) {
+  const current = activePane ?? openPanes[0] ?? null;
+
   const renderPane = (key: PaneKey) => {
     if (key === "browser") {
-      return <BrowserPanel active={activePane === "browser"} suspended={suspended} />;
+      return <BrowserPanel active={current === "browser"} suspended={suspended} />;
     }
     const meta = PANE_BY_KEY[key];
     return (
-      <div className="pane-placeholder">
-        <Empty
-          image={Empty.PRESENTED_IMAGE_SIMPLE}
-          description={
-            <div className="pane-placeholder-text">
-              <Typography.Text strong>
-                {meta.icon} {meta.label}
-              </Typography.Text>
-              <Typography.Text type="secondary">{PLACEHOLDER_HINT[key]}</Typography.Text>
-              <Tag variant="filled">规划中</Tag>
-            </div>
-          }
-        />
+      <div className="grid h-full place-items-center p-6">
+        <Empty className="max-w-sm">
+          <EmptyHeader>
+            <EmptyMedia variant="icon">{meta.icon}</EmptyMedia>
+            <EmptyTitle>{meta.label}</EmptyTitle>
+            <EmptyDescription>{PLACEHOLDER_HINT[key]}</EmptyDescription>
+          </EmptyHeader>
+        </Empty>
       </div>
     );
   };
 
   return (
-    <div className="workbench">
-      {openPanes.length === 0 ? (
-        <div className="pane-empty">
-          <div className="pane-empty-copy">
-            <Typography.Title level={4} className="pane-empty-title">
-              右栏由 Agent 使用
-            </Typography.Title>
-            <Typography.Text type="secondary" className="pane-empty-hint">
-              这里不需要你手动打开标签。对话中 Agent 需要给你看东西时，会自己把标签页打开在这里。
-            </Typography.Text>
-          </div>
-
-          <ul className="pane-preview-list">
-            {PANES.map((pane) => (
-              <li key={pane.key} className="pane-preview-item">
-                <span className="pane-preview-icon">{pane.icon}</span>
-                <div>
-                  <div className="pane-preview-label">{pane.label}</div>
-                  <div className="pane-preview-hint">{pane.hint}</div>
+    <div className="flex h-full min-w-0 flex-col">
+      {/*
+       * 细标题栏：左边是 Agent 打开的标签页，没有标签时显示「工作台」。
+       * 收起/展开在顶栏，这里不再放第二个把手。
+       */}
+      <div className="flex h-10 shrink-0 items-center gap-1 border-b px-2">
+        {openPanes.length === 0 ? (
+          <span className="px-1 text-xs font-medium text-muted-foreground">工作台</span>
+        ) : (
+          <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
+            {openPanes.map((key) => {
+              const meta = PANE_BY_KEY[key];
+              const active = key === current;
+              return (
+                <div
+                  key={key}
+                  className={cn(
+                    "group flex shrink-0 items-center gap-1 rounded-lg pr-1 pl-2 text-[var(--text-sm)] transition-colors",
+                    active
+                      ? "bg-accent text-accent-foreground"
+                      : "text-muted-foreground hover:bg-accent/50",
+                  )}
+                >
+                  <button
+                    type="button"
+                    className="flex items-center gap-1.5 py-1"
+                    onClick={() => onSelect(key)}
+                  >
+                    <span className="opacity-70">{meta.icon}</span>
+                    {meta.label}
+                  </button>
+                  <Button
+                    variant="ghost"
+                    size="icon-xs"
+                    className="opacity-0 transition-opacity group-hover:opacity-100"
+                    aria-label={`关闭 ${meta.label}`}
+                    onClick={() => onClose(key)}
+                  >
+                    <X />
+                  </Button>
                 </div>
-              </li>
-            ))}
-          </ul>
+              );
+            })}
+          </div>
+        )}
+      </div>
 
-          <Tag variant="filled">Agent 按需打开</Tag>
-        </div>
-      ) : (
-        <Tabs
-          type="editable-card"
-          hideAdd
-          className="workbench-tabs"
-          activeKey={activePane ?? openPanes[0]}
-          onChange={(key) => onSelect(key as PaneKey)}
-          onEdit={(targetKey, action) => {
-            if (action === "remove" && typeof targetKey === "string") {
-              onClose(targetKey as PaneKey);
-            }
-          }}
-          items={openPanes.map((key) => ({
-            key,
-            closable: true,
-            label: (
-              <span className="workbench-tab-label">
-                {PANE_BY_KEY[key].icon}
-                {PANE_BY_KEY[key].label}
-              </span>
-            ),
-            children: renderPane(key),
-          }))}
-        />
-      )}
+      <div className="min-h-0 flex-1 overflow-hidden">
+        {current === null ? (
+          <div className="flex h-full items-center justify-center overflow-y-auto p-6">
+            <Empty className="max-w-sm">
+              <EmptyHeader>
+                <EmptyMedia variant="icon">{PANES[0]?.icon}</EmptyMedia>
+                <EmptyTitle>右栏由 Agent 使用</EmptyTitle>
+                <EmptyDescription>
+                  这里不需要你手动打开标签。对话中 Agent 需要给你看东西时，会自己把标签页打开在这里。
+                </EmptyDescription>
+              </EmptyHeader>
+              <ul className="flex w-full flex-col gap-1 text-left">
+                {PANES.map((pane) => (
+                  <li
+                    key={pane.key}
+                    className="flex items-start gap-2.5 rounded-lg bg-muted/50 px-3 py-2"
+                  >
+                    <span className="mt-0.5 text-muted-foreground">{pane.icon}</span>
+                    <div className="min-w-0">
+                      <div className="text-[var(--text-sm)] font-medium text-foreground">
+                        {pane.label}
+                      </div>
+                      <div className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
+                        {pane.hint}
+                      </div>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </Empty>
+          </div>
+        ) : (
+          renderPane(current)
+        )}
+      </div>
     </div>
   );
 }
