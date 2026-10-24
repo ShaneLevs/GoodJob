@@ -33,3 +33,4 @@ docs/
 # Local scratch
 .tmp/
 .pi/
+.zcode/

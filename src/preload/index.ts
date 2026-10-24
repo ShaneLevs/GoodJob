@@ -4,13 +4,22 @@ import type {
   AppearanceSettings,
   AppInfo,
   BrowserState,
-  ChatEvent,
-  ChatMessage,
+  ChatSendPayload,
+  ChatStreamEvent,
+  ConversationKey,
+  ConversationState,
   GoodjobApi,
+  ImportedResume,
   ModelSelection,
   ModelsConfig,
   ModelsDraft,
   Rect,
+  ResumeDoc,
+  ResumeDocTarget,
+  ResumeFileEvent,
+  ResumeListState,
+  TailoredDoc,
+  WireMessage,
   WorkspacesState,
 } from "@shared/types";
 import { IPC } from "@shared/types";
@@ -40,10 +49,36 @@ const api: GoodjobApi = {
     onState: (listener: (state: BrowserState) => void) => subscribe(IPC.browserState, listener),
   },
   chat: {
-    send: (id: string, messages: ChatMessage[]) =>
-      ipcRenderer.invoke(IPC.chatSend, id, messages) as Promise<void>,
-    abort: (id: string) => ipcRenderer.send(IPC.chatAbort, id),
-    onEvent: (listener: (event: ChatEvent) => void) => subscribe(IPC.chatEvent, listener),
+    send: (payload: ChatSendPayload) =>
+      ipcRenderer.invoke(IPC.chatSend, payload) as Promise<void>,
+    abort: (key: ConversationKey) => ipcRenderer.send(IPC.chatAbort, key),
+    onChunk: (listener: (event: ChatStreamEvent) => void) =>
+      subscribe(IPC.chatChunk, listener),
+  },
+  conversations: {
+    get: (key: ConversationKey) =>
+      ipcRenderer.invoke(IPC.conversationsGet, key) as Promise<ConversationState>,
+    sync: (key: ConversationKey, messages: WireMessage[]) =>
+      ipcRenderer.invoke(IPC.conversationsSync, key, messages) as Promise<void>,
+  },
+  resume: {
+    list: () => ipcRenderer.invoke(IPC.resumeList) as Promise<ResumeListState>,
+    create: (name: string) =>
+      ipcRenderer.invoke(IPC.resumeCreate, name) as Promise<ResumeListState>,
+    rename: (id: string, name: string) =>
+      ipcRenderer.invoke(IPC.resumeRename, id, name) as Promise<ResumeListState>,
+    remove: (id: string) =>
+      ipcRenderer.invoke(IPC.resumeDelete, id) as Promise<ResumeListState>,
+    select: (id: string) =>
+      ipcRenderer.invoke(IPC.resumeSelect, id) as Promise<ResumeListState>,
+    read: (target: ResumeDocTarget) =>
+      ipcRenderer.invoke(IPC.resumeRead, target) as Promise<ResumeDoc | null>,
+    save: (target: ResumeDocTarget, content: string) =>
+      ipcRenderer.invoke(IPC.resumeSave, target, content) as Promise<ResumeDoc | null>,
+    listTailored: () => ipcRenderer.invoke(IPC.resumeTailoredList) as Promise<TailoredDoc[]>,
+    importFile: () => ipcRenderer.invoke(IPC.resumeImport) as Promise<ImportedResume | null>,
+    onFileChanged: (listener: (event: ResumeFileEvent) => void) =>
+      subscribe(IPC.resumeFileChanged, listener),
   },
   models: {
     get: () => ipcRenderer.invoke(IPC.modelsGet) as Promise<ModelsConfig>,

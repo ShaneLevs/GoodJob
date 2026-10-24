@@ -1,0 +1,188 @@
+import { useCallback, useEffect, useRef, useState } from "react";
+
+import { CircleAlert, Save } from "lucide-react";
+
+import type { ResumeFileEvent } from "@shared/types";
+
+import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
+
+import { MarkdownPreview } from "@/components/MarkdownPreview";
+
+import { ResumeMarkdownEditor } from "./ResumeMarkdownEditor";
+
+type EditorMode = "edit" | "preview";
+
+/**
+ * 简历模块的编辑器卡：编辑（Markdown 源码）/ 预览（模板排版）两个模式。
+ * 一个工作区只有这一份简历，切换工作区即换简历（本组件随模块页 remount 重载）。
+ * 共编协议：磁盘是唯一事实——Agent 写入经 onFileChanged 广播，非脏时热更新；
+ * 有未保存修改时弹冲突条让用户二选一。用户保存前 main 会自动快照旧版。
+ * 上传旧简历（PDF / DOCX / Markdown）在左侧对话输入框的「+」里。
+ */
+export function ResumeEditorCard() {
+  const [mode, setMode] = useState<EditorMode>("preview");
+  /** 磁盘上的内容；null = 还没加载。 */
+  const [content, setContent] = useState<string | null>(null);
+  /** 当前内容（含未保存修改），编辑和预览共用同一份。 */
+  const [draft, setDraft] = useState("");
+  const [conflict, setConflict] = useState<ResumeFileEvent | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const dirtyRef = useRef(false);
+  const dirty = content !== null && draft !== content;
+  dirtyRef.current = dirty;
+
+  const applyContent = useCallback((text: string): void => {
+    setContent(text);
+    setDraft(text);
+  }, []);
+
+  // —— 挂载时读一次主简历（切工作区时整个模块页 remount）——
+  useEffect(() => {
+    let alive = true;
+    void window.goodjob.resume.read({ kind: "main" }).then((doc) => {
+      if (!alive) return;
+      applyContent(doc?.content ?? "");
+    });
+    return () => {
+      alive = false;
+    };
+  }, [applyContent]);
+
+  // —— Agent / 其他来源写入文件：非脏热更新，脏则冲突条 ——
+  useEffect(() => {
+    return window.goodjob.resume.onFileChanged((event) => {
+      if (event.file !== "main") return;
+
+      if (dirtyRef.current) {
+        setConflict(event);
+        return;
+      }
+      void window.goodjob.resume.read({ kind: "main" }).then((doc) => {
+        if (doc !== null) applyContent(doc.content);
+      });
+    });
+  }, [applyContent]);
+
+  const save = useCallback((): void => {
+    if (!dirty || content === null) return;
+    setError(null);
+    void window.goodjob.resume
+      .save({ kind: "main" }, draft)
+      .then((doc) => {
+        if (doc === null) return;
+        setContent(doc.content);
+        setConflict(null);
+      })
+      .catch((cause: unknown) => {
+        setError(cause instanceof Error ? cause.message : String(cause));
+      });
+  }, [dirty, content, draft]);
+
+  // Cmd/Ctrl + S 保存（两个模式下都要能用）。
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s") {
+        event.preventDefault();
+        save();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [save]);
+
+  return (
+    <div className="flex h-full min-w-0 flex-col overflow-hidden rounded-2xl bg-card shadow-sm">
+      {/* 卡片头：左边编辑/预览切换，右边保存控制（切换 / 上传 / 定制稿浏览都不在这里）。 */}
+      <div className="flex h-11 shrink-0 items-center justify-between gap-2 border-b border-border/60 px-2.5">
+        <div className="flex items-center rounded-xl bg-foreground/[0.06] p-0.5" role="group" aria-label="简历视图">
+          <ModeButton active={mode === "edit"} onClick={() => setMode("edit")}>
+            编辑
+          </ModeButton>
+          <ModeButton active={mode === "preview"} onClick={() => setMode("preview")}>
+            预览
+          </ModeButton>
+        </div>
+        <div className="flex items-center gap-1.5">
+          {error !== null && (
+            <span className="max-w-64 truncate text-xs text-destructive" title={error}>
+              {error}
+            </span>
+          )}
+          <span className="flex items-center gap-1.5 px-1 text-xs text-muted-foreground">
+            <span
+              className={cn(
+                "size-1.5 rounded-full",
+                dirty ? "bg-[var(--status-warn)]" : "bg-[var(--status-on)]",
+              )}
+            />
+            {dirty ? "未保存" : "已保存"}
+          </span>
+          <Button variant="secondary" size="sm" disabled={!dirty} onClick={save}>
+            <Save />
+            保存
+          </Button>
+        </div>
+      </div>
+
+      {/* 冲突条：Agent 改了文件而本地有未保存修改 */}
+      {conflict !== null && (
+        <div className="flex shrink-0 items-center gap-2 border-b border-border/60 bg-warning/10 px-3 py-2 text-xs">
+          <CircleAlert className="size-3.5 shrink-0 text-warning" />
+          <span className="flex-1">文件已被 Agent 修改，和你未保存的编辑冲突。</span>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              void window.goodjob.resume.read({ kind: "main" }).then((doc) => {
+                if (doc === null) return;
+                applyContent(doc.content);
+                setConflict(null);
+              });
+            }}
+          >
+            载入新版
+          </Button>
+          <Button variant="ghost" size="sm" onClick={() => setConflict(null)}>
+            保留我的
+          </Button>
+        </div>
+      )}
+
+      {/* 编辑区 / 预览区共用 draft：预览看到的也是未保存的最新内容 */}
+      <div className="min-h-0 flex-1">
+        {mode === "edit" ? (
+          <ResumeMarkdownEditor value={draft} onChange={setDraft} />
+        ) : (
+          <MarkdownPreview
+            markdown={draft}
+            emptyText="简历还是空的：在左边对话里上传旧简历、或直接描述你的经历，Agent 整理写入后就能在这里看到排版效果。"
+          />
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ModeButton({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <Button
+      variant="ghost"
+      size="xs"
+      className={cn("rounded-lg px-2.5", active ? "bg-card text-foreground shadow-sm" : "text-muted-foreground")}
+      aria-pressed={active}
+      onClick={onClick}
+    >
+      {children}
+    </Button>
+  );
+}

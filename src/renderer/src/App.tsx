@@ -1,16 +1,14 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 
 import { PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen } from "lucide-react";
 
 import type {
   AppearanceSettings,
-  ChatMessage,
   ModelSelection,
   ModelsConfig,
   WorkspacesState,
 } from "@shared/types";
 
-import { ChatPanel } from "./components/ChatPanel";
 import { SettingsModal, type SettingsSection } from "./components/SettingsModal";
 import { Sidebar } from "./components/Sidebar";
 import { ThemeApplier } from "./components/theme-applier";
@@ -19,9 +17,11 @@ import { Button } from "./components/ui/button";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "./components/ui/resizable";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./components/ui/tooltip";
 import { cn } from "./lib/utils";
+import { ModulePlaceholder } from "./components/modules/ModulePlaceholder";
+import { ResumePage } from "./components/modules/ResumePage";
+import { MODULE_BY_KEY, type ModuleKey } from "./modules";
 import type { PaneKey } from "./panes";
 import { resolveDark } from "./theme";
-import type { UiMessage } from "./types";
 
 /** 右栏默认宽度（px）。拖拽后会记住用户自己拖出来的宽度。 */
 const WORKBENCH_DEFAULT_WIDTH = 560;
@@ -30,8 +30,6 @@ const CHAT_MIN_WIDTH = 420;
 const WORKBENCH_MIN_WIDTH = 340;
 
 export function App() {
-  const [messages, setMessages] = useState<UiMessage[]>([]);
-  const [streaming, setStreaming] = useState(false);
   const [models, setModels] = useState<ModelsConfig | null>(null);
   const [workspaces, setWorkspaces] = useState<WorkspacesState | null>(null);
   const [appearance, setAppearance] = useState<AppearanceSettings>({
@@ -46,6 +44,7 @@ export function App() {
   const [settingsSection, setSettingsSection] = useState<SettingsSection>("appearance");
 
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [activeModule, setActiveModule] = useState<ModuleKey>("resume");
   /*
    * 右栏默认收起：首次启动时界面只需要对话，右栏由 Agent 需要时自己打开，
    * 顶栏右侧那个按钮随时可以手动展开。
@@ -55,8 +54,6 @@ export function App() {
   const [activePane, setActivePane] = useState<PaneKey | null>(null);
   /** 对话区里的浮层（模型下拉）打开期间为 true，原生浏览器视图要让位。 */
   const [overlayOpen, setOverlayOpen] = useState(false);
-
-  const streamingIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     void window.goodjob.models.get().then(setModels);
@@ -72,7 +69,7 @@ export function App() {
     return () => query.removeEventListener("change", listener);
   }, []);
 
-  // 工作区切换由 main 广播：这里只需要把两个状态重读一遍。
+  // 工作区切换由 main 广播：重读模型配置；模块页通过 remount key 换整套数据。
   useEffect(
     () =>
       window.goodjob.workspace.onChanged((state) => {
@@ -81,98 +78,6 @@ export function App() {
       }),
     [],
   );
-
-  useEffect(() => {
-    const unsubscribe = window.goodjob.chat.onEvent((event) => {
-      if (event.id !== streamingIdRef.current) return;
-
-      if (event.type === "delta") {
-        const text = event.text;
-        setMessages((prev) =>
-          prev.map((message) =>
-            message.id === event.id ? { ...message, content: message.content + text } : message,
-          ),
-        );
-        return;
-      }
-
-      streamingIdRef.current = null;
-      setStreaming(false);
-
-      if (event.type === "done") {
-        setMessages((prev) =>
-          prev.map((message) =>
-            message.id === event.id ? { ...message, streaming: false } : message,
-          ),
-        );
-        return;
-      }
-
-      setMessages((prev) =>
-        prev.map((message) =>
-          message.id === event.id
-            ? {
-                ...message,
-                streaming: false,
-                failed: true,
-                content:
-                  message.content === ""
-                    ? event.message
-                    : `${message.content}\n\n${event.message}`,
-              }
-            : message,
-        ),
-      );
-    });
-
-    return unsubscribe;
-  }, []);
-
-  const send = (text: string): void => {
-    if (streaming) return;
-
-    const id = crypto.randomUUID();
-    const history: ChatMessage[] = [
-      ...messages
-        .filter((message) => message.failed !== true)
-        .map((message): ChatMessage => ({ role: message.role, content: message.content })),
-      { role: "user", content: text },
-    ];
-
-    streamingIdRef.current = id;
-    setStreaming(true);
-    setMessages((prev) => [
-      ...prev,
-      { id: `user-${id}`, role: "user", content: text },
-      { id, role: "assistant", content: "", streaming: true },
-    ]);
-
-    void window.goodjob.chat.send(id, history);
-  };
-
-  const stop = (): void => {
-    const id = streamingIdRef.current;
-    if (id !== null) window.goodjob.chat.abort(id);
-  };
-
-  // 右栏不提供手动创建标签的入口：openPane 留给 Agent 侧通道（后续 IPC 事件）。
-  const openPane = (key: PaneKey): void => {
-    setOpenPanes((prev) => (prev.includes(key) ? prev : [...prev, key]));
-    setActivePane(key);
-    setWorkbenchOpen(true);
-  };
-
-  const closePane = (key: PaneKey): void => {
-    const next = openPanes.filter((pane) => pane !== key);
-    setOpenPanes(next);
-    if (activePane === key) setActivePane(next[next.length - 1] ?? null);
-  };
-
-  const dark = resolveDark(appearance.themeMode, systemDark);
-
-  const workspaceName =
-    workspaces?.items.find((item) => item.id === workspaces.currentId)?.name ?? "工作区";
-
 
   const changeAppearance = (patch: Partial<AppearanceSettings>): void => {
     // 先本地生效（主题/字号要即时反馈），再落盘。
@@ -196,6 +101,11 @@ export function App() {
     setSettingsSection(section);
     setSettingsOpen(true);
   };
+
+  const dark = resolveDark(appearance.themeMode, systemDark);
+
+  const workspaceName =
+    workspaces?.items.find((item) => item.id === workspaces.currentId)?.name ?? "工作区";
 
   /*
    * 顶栏一条 48px：左边让出 macOS 交通灯（实测窗口 x 16–75 / y 19–30.5，中心 y≈24.5，
@@ -222,24 +132,37 @@ export function App() {
     </div>
   );
 
-  const chatPanel = (
-    <ChatPanel
-      messages={messages}
-      streaming={streaming}
-      models={models}
-      onSend={send}
-      onStop={stop}
-      onSelectModel={selectModel}
-      onOpenModelSettings={() => openSettings("models")}
-      onOverlayChange={setOverlayOpen}
-    />
-  );
+  // 模块页公共 props：模型选择与浮层上报都来自 App。
+  const moduleProps = {
+    models,
+    onSelectModel: selectModel,
+    onOpenModelSettings: () => openSettings("models"),
+    onOverlayChange: setOverlayOpen,
+  };
 
-  const chat = (
-    <div className="h-full overflow-hidden rounded-2xl bg-card shadow-sm">
-      {chatPanel}
-    </div>
-  );
+  // 切工作区 = 换一整套数据：模块页按 workspaceId remount，会话和简历全部重载。
+  const workspaceVersion = workspaces?.currentId ?? "loading";
+  const moduleContent = (() => {
+    switch (activeModule) {
+      case "resume":
+        return <ResumePage key={workspaceVersion} {...moduleProps} />;
+      default:
+        return <ModulePlaceholder module={MODULE_BY_KEY[activeModule]} />;
+    }
+  })();
+
+  // 右栏不提供手动创建标签的入口：openPane 留给 Agent 侧通道（后续 IPC 事件）。
+  const openPane = (key: PaneKey): void => {
+    setOpenPanes((prev) => (prev.includes(key) ? prev : [...prev, key]));
+    setActivePane(key);
+    setWorkbenchOpen(true);
+  };
+
+  const closePane = (key: PaneKey): void => {
+    const next = openPanes.filter((pane) => pane !== key);
+    setOpenPanes(next);
+    if (activePane === key) setActivePane(next[next.length - 1] ?? null);
+  };
 
   const workbench = (
     <Workbench
@@ -258,7 +181,7 @@ export function App() {
       {/*
        * 窗口 = 48px 顶栏（交通灯 + 我们的操作按钮）+ 下面分块的内容。
        * 左栏直接铺在窗口底色上（没有卡片、没有描边），只有内容块是白色卡片，
-       * 层级因此是：窗口底 → 侧栏（导航）→ 内容卡（对话 / 右栏）。
+       * 层级因此是：窗口底 → 侧栏（导航）→ 内容卡（模块页 / 右栏）。
        */}
       <div className="flex h-screen flex-col overflow-hidden bg-shell text-foreground">
         {topbar}
@@ -267,6 +190,8 @@ export function App() {
           {sidebarOpen && (
             <div className="w-[248px] shrink-0 overflow-hidden">
               <Sidebar
+                activeModule={activeModule}
+                onSelectModule={setActiveModule}
                 workspaces={workspaces?.items ?? []}
                 currentWorkspace={
                   workspaces?.items.find((item) => item.id === workspaces.currentId) ?? null
@@ -281,7 +206,7 @@ export function App() {
             {workbenchOpen ? (
               <ResizablePanelGroup orientation="horizontal">
                 <ResizablePanel minSize={CHAT_MIN_WIDTH} defaultSize="56%">
-                  {chat}
+                  {moduleContent}
                 </ResizablePanel>
                 {/* 8px 间隙里的一条可拖拽细线：既是分隔提示，也是拖拽热区。 */}
                 <ResizableHandle className="mx-1 w-1 justify-self-center rounded-full bg-border/60 transition-colors after:hidden hover:bg-border data-[separator]:bg-border/60" />
@@ -292,7 +217,7 @@ export function App() {
                 </ResizablePanel>
               </ResizablePanelGroup>
             ) : (
-              chat
+              moduleContent
             )}
           </main>
         </div>

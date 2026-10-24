@@ -165,6 +165,8 @@
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
+  /* 状态色（非破坏性提示，如编辑器冲突条）挂在 --status-warn 上。 */
+  --color-warning: var(--status-warn);
   --color-shell: var(--shell);
   --color-sidebar: var(--sidebar);
   --color-sidebar-foreground: var(--sidebar-foreground);
@@ -257,6 +259,11 @@
     text-underline-offset: 2px;
   }
 }
+
+/*
+ * 文档预览的模板 CSS（mint 等）不在这里：模板是 scoped 到预览纸面的样式串，
+ * 由 MarkdownPreview 按需 <style> 注入，见 src/renderer/src/markdown/templates/。
+ */
 
 /* 窗口拖拽带（macOS hiddenInset）：只拖标题栏那一条，按钮自己 no-drag。 */
 @utility drag {

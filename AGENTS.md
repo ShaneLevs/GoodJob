@@ -102,13 +102,22 @@ AI SDK 4/5，本项目跑 Tailwind 4 + AI SDK 7，都是破坏性版本）。
 
 ```
 .agents/        迁移前的 antd / X 知识库（历史归档，勿参考）
-src/main/       窗口、BrowserPanel(WebContentsView)、ChatService、WorkspacesStore、ModelsStore、paths、IPC
+docs/           PRODUCT.md（产品方案）、ARCHITECTURE.md（技术方案定案）、STACK.md（选型）、BROWSER-AGENT.md（浏览器安全）、plan/（分期实施计划）
+src/main/       窗口、BrowserPanel(WebContentsView)、AgentRuntime(ToolLoopAgent)、
+                 Conversations/Resume/Memory/Models/Workspaces store、paths、IPC
 src/preload/    contextBridge -> window.goodjob
 src/renderer/   React + shadcn/ui + Tailwind 4
   globals.css     唯一的样式入口：token、状态变体桥接、markdown 排版
+                  （文档模板 CSS 是唯一例外：scoped 到预览纸面、随用随注入，见 markdown/）
+  modules.tsx     左栏模块菜单注册表（简历/岗位/投递/面试/公司；没有独立「对话」页）
   components/ui/  shadcn 组件源码（可改）
-  components/     业务组件（AI Elements pattern 在这里组装）
+  components/chat/   IPC ChatTransport + 滚动会话 hook
+  components/modules/  各模块页（ResumePage / 编辑器卡 / 占位页）
+  markdown/       通用文档渲染：render.ts（marked 扩展+消毒）、templates/（一模板一份 CSS 串）；
+                  MarkdownPreview 组件（components/MarkdownPreview.tsx）是所有文档展示的复用入口
 src/shared/     三进程共用的类型与 IPC 频道名（保持零依赖）
+scripts/        图标管线：make-icons.mjs 用 Electron 渲染 build/icon-drafts/logo.svg
+                → build/icon.png + icon.icns（打包自动取后者，dev Dock 图标用前者）
 ```
 
 ## 工作区
@@ -124,7 +133,9 @@ src/shared/     三进程共用的类型与 IPC 频道名（保持零依赖）
   workspaces/               0700
     <workspaceId>/          0700  目录名一律 ID（ws_ 前缀 + 12 位 hex）
       models.json           0600  模型供应商 + 加密 Key
-      conversations/        0700
+      conversations/        0700  滚动会话，一个模块一个 <key>.json（chat / resume）
+      resumes/              0700  主简历们：一份一个文件夹（resume.md / history / tailored）
+      memory.md             0600  工作区级长期记忆，Agent 每次会话注入 instructions
       cache/                0700
       logs/                 0700
 ```

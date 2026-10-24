@@ -14,7 +14,9 @@ import { app } from "electron";
  *   workspaces/               0700
  *     <workspaceId>/          0700  目录名一律用 ID，人类可读的名字只在索引里
  *       models.json           0600  模型供应商 + 模型（含 safeStorage 密文）
- *       conversations/        0700  对话历史
+ *       conversations/        0700  滚动会话（一个模块一个 <key>.json）
+ *       resumes/              0700  主简历们：一份一个文件夹（resume.md/history/tailored）
+ *       memory.md             0600  工作区级长期记忆，Agent 会话自动加载
  *       cache/                0700  可再生数据
  *       logs/                 0700  诊断日志
  * ```
@@ -34,6 +36,10 @@ export interface WorkspacePaths {
   dir: string;
   models: string;
   conversations: string;
+  /** 主简历们：一份一个文件夹（resume.md / history / tailored）。 */
+  resumes: string;
+  /** 工作区级长期记忆，Agent 每次会话自动加载。 */
+  memory: string;
   cache: string;
   logs: string;
 }
@@ -64,6 +70,8 @@ export function workspacePaths(root: string, id: string): WorkspacePaths {
     dir,
     models: path.join(dir, "models.json"),
     conversations: path.join(dir, "conversations"),
+    resumes: path.join(dir, "resumes"),
+    memory: path.join(dir, "memory.md"),
     cache: path.join(dir, "cache"),
     logs: path.join(dir, "logs"),
   };
@@ -73,6 +81,7 @@ export function workspacePaths(root: string, id: string): WorkspacePaths {
 export function ensureWorkspaceDirs(paths: WorkspacePaths): void {
   ensureDir(paths.dir);
   ensureDir(paths.conversations);
+  ensureDir(paths.resumes);
   ensureDir(paths.cache);
   ensureDir(paths.logs);
 }

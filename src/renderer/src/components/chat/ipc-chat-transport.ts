@@ -1,0 +1,84 @@
+import type { ChatTransport, UIMessage, UIMessageChunk } from "ai";
+
+import type { ChatStreamEvent, ConversationKey, WireMessage } from "@shared/types";
+
+/**
+ * 把 AI SDK 的 ChatTransport 桥到 Electron IPC：
+ * `sendMessages` → invoke `chat:send`，main 侧 agent 的 UIMessageChunk 流经
+ * `chat:chunk` 事件回来，这里拼成 ReadableStream 交给 useChat 消费。
+ * Agent 永远跑在 main（Key 不出 main），渲染层只拿 chunk。
+ */
+export function createIpcChatTransport(key: ConversationKey): ChatTransport<UIMessage> {
+  return {
+    async sendMessages({ messages, abortSignal }) {
+      const runId = crypto.randomUUID();
+
+      let controller: ReadableStreamDefaultController<UIMessageChunk> | null = null;
+      let closed = false;
+      const buffer: UIMessageChunk[] = [];
+
+      const drain = (): void => {
+        if (controller === null) return;
+        for (const chunk of buffer.splice(0)) controller.enqueue(chunk);
+      };
+
+      const unsubscribe = window.goodjob.chat.onChunk((event: ChatStreamEvent) => {
+        if (event.key !== key || event.runId !== runId) return;
+        if (event.type === "done") {
+          unsubscribe();
+          closed = true;
+          if (controller !== null) {
+            drain();
+            try {
+              controller.close();
+            } catch {
+              // 消费端已 cancel：忽略。
+            }
+          }
+          return;
+        }
+        if (controller !== null) controller.enqueue(event.chunk as UIMessageChunk);
+        else buffer.push(event.chunk as UIMessageChunk);
+      });
+
+      abortSignal?.addEventListener(
+        "abort",
+        () => {
+          window.goodjob.chat.abort(key);
+        },
+        { once: true },
+      );
+
+      // main 在 send 返回前就可能开始推 chunk，所以订阅必须先于 invoke；
+      // invoke 之后再把缓冲灌进刚创建的流。
+      await window.goodjob.chat.send({
+        key,
+        runId,
+        messages: messages as unknown as WireMessage[],
+      });
+
+      return new ReadableStream<UIMessageChunk>({
+        start(queued) {
+          controller = queued;
+          drain();
+          if (closed) {
+            try {
+              queued.close();
+            } catch {
+              // 同上。
+            }
+          }
+        },
+        cancel() {
+          unsubscribe();
+          window.goodjob.chat.abort(key);
+        },
+      });
+    },
+
+    async reconnectToStream() {
+      // 没有可重连的持久流：断线重连由用户重发消息解决。
+      return null;
+    },
+  };
+}
