@@ -19,3 +19,9 @@ mac:
   gatekeeperAssess: false
 dmg:
   artifactName: ${productName}-${version}-${arch}.${ext}
+# agent-browser（P4 浏览器自动化）：只带当前平台的原生二进制（≈9–16MB），
+# 打包前先跑 node scripts/stage-agent-browser.mjs 生成 resources/agent-browser。
+# 运行时 main 进程从 process.resourcesPath/agent-browser 定位（agent/agent-browser.ts）。
+extraResources:
+  - from: resources/agent-browser
+    to: agent-browser

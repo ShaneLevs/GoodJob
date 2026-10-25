@@ -66,6 +66,13 @@ export class BrowserPanel {
     return this.view.webContents;
   }
 
+  /** agent 的 tab 锁定用：面板 webContents（面板已销毁时 null），不暴露 view 本体。 */
+  get agentContents(): WebContents | null {
+    if (this.disposed) return null;
+    const contents = this.view.webContents;
+    return contents.isDestroyed() ? null : contents;
+  }
+
   get session(): Session {
     return this.view.webContents.session;
   }

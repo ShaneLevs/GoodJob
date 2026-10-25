@@ -1,0 +1,3 @@
+# agent-browser 平台二进制是 scripts/stage-agent-browser.mjs 的可再生 staging 产物
+# （源头在 devDependencies，打包前重新生成即可），不进仓库（BROWSER-AGENT §4）。
+/agent-browser/
