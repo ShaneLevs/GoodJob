@@ -6,14 +6,15 @@ import CodeMirror from "@uiw/react-codemirror";
 interface ResumeMarkdownEditorProps {
   value: string;
   onChange: (next: string) => void;
+  placeholder?: string;
 }
 
 /**
- * 简历的 Markdown 源码编辑器（CodeMirror 6）。
- * 简历里会夹 HTML（顶部信息表）和特有语法，所见即所得编辑器反而难管，
+ * 简历 / 话术这类长文档的 Markdown 源码编辑器（CodeMirror 6）。
+ * 文档里会夹 HTML（简历顶部信息表）和特有语法，所见即所得编辑器反而难管，
  * 所以编辑模式就是纯文本 + Markdown 高亮；排版效果切到预览模式看。
  */
-export function ResumeMarkdownEditor({ value, onChange }: ResumeMarkdownEditorProps) {
+export function ResumeMarkdownEditor({ value, onChange, placeholder }: ResumeMarkdownEditorProps) {
   const dark = useHtmlDark();
 
   return (
@@ -24,7 +25,7 @@ export function ResumeMarkdownEditor({ value, onChange }: ResumeMarkdownEditorPr
         height="100%"
         theme={dark ? "dark" : "light"}
         extensions={[markdown({ base: markdownLanguage, addKeymap: true })]}
-        placeholder="在这里用 Markdown 编辑简历，或让左边的 Agent 帮你起草"
+        placeholder={placeholder ?? "在这里用 Markdown 编辑简历，或让左边的 Agent 帮你起草"}
         basicSetup={{
           lineNumbers: false,
           foldGutter: false,

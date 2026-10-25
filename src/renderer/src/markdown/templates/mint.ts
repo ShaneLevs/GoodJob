@@ -166,5 +166,30 @@ export const mint: DocumentTemplate = {
   background: none;
   color: inherit;
 }
+
+/* —— 打印 / PDF 导出（main 的 pdf-export 走渲染层 #export 路由时生效）——
+   @page 与分页避规 scoped 在模板 CSS 内、不进 globals.css；页边距由
+   printToPDF 的 margins 给，模板在打印时只铺满纸面并避免条目跨页断开。 */
+@page {
+  size: A4;
+}
+@media print {
+  .tpl-mint {
+    max-width: none;
+    padding: 0;
+  }
+  .tpl-mint h1,
+  .tpl-mint h2,
+  .tpl-mint h3,
+  .tpl-mint .entry-head {
+    break-after: avoid;
+  }
+  .tpl-mint .entry-head,
+  .tpl-mint table,
+  .tpl-mint blockquote,
+  .tpl-mint pre {
+    break-inside: avoid;
+  }
+}
 `,
 };

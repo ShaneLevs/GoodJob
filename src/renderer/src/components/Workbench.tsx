@@ -1,5 +1,7 @@
 import { X } from "lucide-react";
 
+import type { ScorecardTarget, TaskState } from "@shared/types";
+
 import { Button } from "@/components/ui/button";
 import {
   Empty,
@@ -11,6 +13,8 @@ import {
 import { cn } from "@/lib/utils";
 
 import { BrowserPanel } from "./BrowserPanel";
+import { ScorecardPane } from "./ScorecardPane";
+import { TasksBadge } from "./TasksBadge";
 import { PANES, PANE_BY_KEY, type PaneKey } from "../panes";
 
 interface WorkbenchProps {
@@ -18,16 +22,20 @@ interface WorkbenchProps {
   activePane: PaneKey | null;
   /** Overlays (dialog/dropdown) must hide the native browser view. */
   suspended: boolean;
+  /** 评分卡要展示的报告定位（agent:pane-open / 岗位表带过来）。 */
+  scorecardTarget: ScorecardTarget | null;
+  /** 后台任务注册表快照：标签栏右侧「任务」角标汇总进度。 */
+  tasks: TaskState[];
   onSelect: (key: PaneKey) => void;
   /**
    * 只给 Agent 侧的通道预留：右栏不提供手动创建标签的入口，
-   * 标签页由 Agent 在需要时打开。
+   * 标签页由 Agent 在需要时打开（评分卡可带定位）。
    */
   onOpen: (key: PaneKey) => void;
   onClose: (key: PaneKey) => void;
 }
 
-const PLACEHOLDER_HINT: Record<Exclude<PaneKey, "browser">, string> = {
+const PLACEHOLDER_HINT: Record<Exclude<PaneKey, "browser" | "scorecard">, string> = {
   markdown: "AI 生成的简历、岗位对比、面试准备清单会以 Markdown 形式在这里预览。",
   editor: "在这里直接修改文档，改动会保存到本地工作区。",
   log: "AI 每一步做了什么、看了哪个页面、提交了哪些信息，都会记录在这里。",
@@ -37,14 +45,20 @@ export function Workbench({
   openPanes,
   activePane,
   suspended,
+  scorecardTarget,
+  tasks,
   onSelect,
   onClose,
-}: WorkbenchProps) {
+  onOverlayChange,
+}: WorkbenchProps & { onOverlayChange: (open: boolean) => void }) {
   const current = activePane ?? openPanes[0] ?? null;
 
   const renderPane = (key: PaneKey) => {
     if (key === "browser") {
       return <BrowserPanel active={current === "browser"} suspended={suspended} />;
+    }
+    if (key === "scorecard") {
+      return <ScorecardPane target={scorecardTarget} active={current === "scorecard"} />;
     }
     const meta = PANE_BY_KEY[key];
     return (
@@ -63,8 +77,8 @@ export function Workbench({
   return (
     <div className="flex h-full min-w-0 flex-col">
       {/*
-       * 细标题栏：左边是 Agent 打开的标签页，没有标签时显示「工作台」。
-       * 收起/展开在顶栏，这里不再放第二个把手。
+       * 细标题栏：左边是 Agent 打开的标签页，没有标签时显示「工作台」；
+       * 右边是后台任务角标。收起/展开在顶栏，这里不放第二个把手。
        */}
       <div className="flex h-10 shrink-0 items-center gap-1 border-b px-2">
         {openPanes.length === 0 ? (
@@ -106,6 +120,7 @@ export function Workbench({
             })}
           </div>
         )}
+        {tasks.length > 0 && <TasksBadge tasks={tasks} onOverlayChange={onOverlayChange} />}
       </div>
 
       <div className="min-h-0 flex-1 overflow-hidden">

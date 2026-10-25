@@ -2,12 +2,17 @@ import type { ReactNode } from "react";
 
 import {
   FileText,
+  Gauge,
   Globe,
   History,
   PencilLine,
 } from "lucide-react";
 
-export type PaneKey = "browser" | "markdown" | "editor" | "log";
+import type { PaneKey } from "@shared/types";
+
+// PaneKey 的真值在 shared/types.ts（跨进程事件 agent:pane-open 要用到），
+// 内容注册表在这里：右栏每个标签展示什么、空闲时怎么介绍自己。
+export type { PaneKey };
 
 export interface PaneMeta {
   key: PaneKey;
@@ -35,6 +40,12 @@ export const PANES: PaneMeta[] = [
     label: "编辑",
     icon: <PencilLine />,
     hint: "需要你调整的文档会在这里打开，改完存到本地工作区",
+  },
+  {
+    key: "scorecard",
+    label: "评分卡",
+    icon: <Gauge />,
+    hint: "简历评估（JD 匹配度）与简历完整性的评分报告",
   },
   {
     key: "log",

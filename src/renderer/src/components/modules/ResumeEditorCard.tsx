@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { CircleAlert, Save } from "lucide-react";
+import { CircleAlert, FileDown, Save } from "lucide-react";
 
-import type { ResumeFileEvent } from "@shared/types";
+import type { ResumeDocTarget, ResumeFileEvent } from "@shared/types";
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -13,14 +13,23 @@ import { ResumeMarkdownEditor } from "./ResumeMarkdownEditor";
 
 type EditorMode = "edit" | "preview";
 
+interface ResumeEditorCardProps {
+  /** 打开的文件：主简历正文，或某份岗位定制稿（name = jobId）。 */
+  target: ResumeDocTarget;
+  /** 预览空状态的提示文案（主简历 / 定制稿各给各的）。 */
+  emptyText: string;
+  /** 导出 PDF 的预填文件名（不含扩展名）；缺省用简历名。 */
+  exportFileName?: string;
+}
+
 /**
- * 简历模块的编辑器卡：编辑（Markdown 源码）/ 预览（模板排版）两个模式。
- * 一个工作区只有这一份简历，切换工作区即换简历（本组件随模块页 remount 重载）。
+ * 简历文档的编辑器卡：编辑（Markdown 源码）/ 预览（模板排版）两个模式。
+ * 主简历页与岗位二级工作台参数化复用同一份组件（target 决定读写哪个文件）。
  * 共编协议：磁盘是唯一事实——Agent 写入经 onFileChanged 广播，非脏时热更新；
  * 有未保存修改时弹冲突条让用户二选一。用户保存前 main 会自动快照旧版。
- * 上传旧简历（PDF / DOCX / Markdown）在左侧对话输入框的「+」里。
+ * 工具条右侧的「PDF」把当前内容（含未保存修改）交给 main 的导出管线。
  */
-export function ResumeEditorCard() {
+export function ResumeEditorCard({ target, emptyText, exportFileName }: ResumeEditorCardProps) {
   const [mode, setMode] = useState<EditorMode>("preview");
   /** 磁盘上的内容；null = 还没加载。 */
   const [content, setContent] = useState<string | null>(null);
@@ -28,48 +37,62 @@ export function ResumeEditorCard() {
   const [draft, setDraft] = useState("");
   const [conflict, setConflict] = useState<ResumeFileEvent | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /** 导出之类的瞬时回执（成功提示），几秒后自己消失。 */
+  const [notice, setNotice] = useState<string | null>(null);
+  const [exporting, setExporting] = useState(false);
+  /** read 回执里的简历名，导出文件名的缺省值。 */
+  const [docName, setDocName] = useState<string | null>(null);
 
   const dirtyRef = useRef(false);
   const dirty = content !== null && draft !== content;
   dirtyRef.current = dirty;
+
+  const fileKey = target.kind === "main" ? "main" : target.name;
 
   const applyContent = useCallback((text: string): void => {
     setContent(text);
     setDraft(text);
   }, []);
 
-  // —— 挂载时读一次主简历（切工作区时整个模块页 remount）——
+  // —— 挂载时读一次当前文件（切工作区 / 换岗位时由父级 remount）——
   useEffect(() => {
     let alive = true;
-    void window.goodjob.resume.read({ kind: "main" }).then((doc) => {
+    void window.goodjob.resume.read(target).then((doc) => {
       if (!alive) return;
       applyContent(doc?.content ?? "");
+      setDocName(doc?.name ?? null);
     });
     return () => {
       alive = false;
     };
-  }, [applyContent]);
+  }, [applyContent, target]);
 
   // —— Agent / 其他来源写入文件：非脏热更新，脏则冲突条 ——
   useEffect(() => {
     return window.goodjob.resume.onFileChanged((event) => {
-      if (event.file !== "main") return;
+      if (event.file !== fileKey) return;
 
       if (dirtyRef.current) {
         setConflict(event);
         return;
       }
-      void window.goodjob.resume.read({ kind: "main" }).then((doc) => {
+      void window.goodjob.resume.read(target).then((doc) => {
         if (doc !== null) applyContent(doc.content);
       });
     });
-  }, [applyContent]);
+  }, [applyContent, fileKey, target]);
+
+  useEffect(() => {
+    if (notice === null) return;
+    const timeout = setTimeout(() => setNotice(null), 6000);
+    return () => clearTimeout(timeout);
+  }, [notice]);
 
   const save = useCallback((): void => {
     if (!dirty || content === null) return;
     setError(null);
     void window.goodjob.resume
-      .save({ kind: "main" }, draft)
+      .save(target, draft)
       .then((doc) => {
         if (doc === null) return;
         setContent(doc.content);
@@ -78,7 +101,23 @@ export function ResumeEditorCard() {
       .catch((cause: unknown) => {
         setError(cause instanceof Error ? cause.message : String(cause));
       });
-  }, [dirty, content, draft]);
+  }, [dirty, content, draft, target]);
+
+  const exportPdf = useCallback((): void => {
+    if (draft.trim() === "" || exporting) return;
+    setError(null);
+    setExporting(true);
+    // 导出不走模型：排版复用预览管线（main 起隐藏窗口渲染后 printToPDF）。
+    void window.goodjob.pdf
+      .export({ markdown: draft, fileName: exportFileName ?? docName ?? undefined })
+      .then((result) => {
+        if (result !== null) setNotice(`已导出：${result.savedTo}`);
+      })
+      .catch((cause: unknown) => {
+        setError(cause instanceof Error ? cause.message : String(cause));
+      })
+      .finally(() => setExporting(false));
+  }, [draft, exporting, exportFileName, docName]);
 
   // Cmd/Ctrl + S 保存（两个模式下都要能用）。
   useEffect(() => {
@@ -94,7 +133,7 @@ export function ResumeEditorCard() {
 
   return (
     <div className="flex h-full min-w-0 flex-col overflow-hidden rounded-2xl bg-card shadow-sm">
-      {/* 卡片头：左边编辑/预览切换，右边保存控制（切换 / 上传 / 定制稿浏览都不在这里）。 */}
+      {/* 卡片头：左边编辑/预览切换，右边保存与导出（切换 / 上传 / 浏览都不在这里）。 */}
       <div className="flex h-11 shrink-0 items-center justify-between gap-2 border-b border-border/60 px-2.5">
         <div className="flex items-center rounded-xl bg-foreground/[0.06] p-0.5" role="group" aria-label="简历视图">
           <ModeButton active={mode === "edit"} onClick={() => setMode("edit")}>
@@ -105,9 +144,15 @@ export function ResumeEditorCard() {
           </ModeButton>
         </div>
         <div className="flex items-center gap-1.5">
-          {error !== null && (
-            <span className="max-w-64 truncate text-xs text-destructive" title={error}>
-              {error}
+          {(error !== null || notice !== null) && (
+            <span
+              className={cn(
+                "max-w-64 truncate text-xs",
+                error !== null ? "text-destructive" : "text-muted-foreground",
+              )}
+              title={error ?? notice ?? undefined}
+            >
+              {error ?? notice}
             </span>
           )}
           <span className="flex items-center gap-1.5 px-1 text-xs text-muted-foreground">
@@ -119,6 +164,16 @@ export function ResumeEditorCard() {
             />
             {dirty ? "未保存" : "已保存"}
           </span>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="text-muted-foreground"
+            disabled={draft.trim() === "" || exporting}
+            onClick={exportPdf}
+          >
+            <FileDown />
+            PDF
+          </Button>
           <Button variant="secondary" size="sm" disabled={!dirty} onClick={save}>
             <Save />
             保存
@@ -135,7 +190,7 @@ export function ResumeEditorCard() {
             variant="ghost"
             size="sm"
             onClick={() => {
-              void window.goodjob.resume.read({ kind: "main" }).then((doc) => {
+              void window.goodjob.resume.read(target).then((doc) => {
                 if (doc === null) return;
                 applyContent(doc.content);
                 setConflict(null);
@@ -155,10 +210,7 @@ export function ResumeEditorCard() {
         {mode === "edit" ? (
           <ResumeMarkdownEditor value={draft} onChange={setDraft} />
         ) : (
-          <MarkdownPreview
-            markdown={draft}
-            emptyText="简历还是空的：在左边对话里上传旧简历、或直接描述你的经历，Agent 整理写入后就能在这里看到排版效果。"
-          />
+          <MarkdownPreview markdown={draft} emptyText={emptyText} />
         )}
       </div>
     </div>

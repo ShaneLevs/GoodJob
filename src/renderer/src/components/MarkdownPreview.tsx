@@ -31,10 +31,13 @@ export function MarkdownPreview({ markdown, templateId = DEFAULT_TEMPLATE_ID, em
   }
 
   return (
-    <div className="h-full overflow-auto bg-muted/40">
+    <div className="h-full overflow-auto bg-muted/40 print:h-auto print:bg-transparent">
       <style>{template.css}</style>
       <div
-        className={cn("doc-paper mx-auto min-h-full bg-white shadow-sm ring-1 ring-black/5", template.paperClass)}
+        className={cn(
+          "doc-paper mx-auto min-h-full bg-white shadow-sm ring-1 ring-black/5 print:min-h-0 print:shadow-none print:ring-0",
+          template.paperClass,
+        )}
         dangerouslySetInnerHTML={{ __html: html }}
       />
     </div>
