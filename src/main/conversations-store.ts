@@ -7,8 +7,10 @@ import { writeJsonFile, type WorkspacePaths } from "./paths";
 
 /**
  * 滚动会话：一个模块一条会话，存 `<workspace>/conversations/<key>.json`。
- * 完整历史始终保留（UI 展示用）；模型输入只取 `summarizedFrom` 之后的尾部，
- * 之前的部分由 AgentRuntime 压缩成 `summary`（见 maybeCompact 调用方）。
+ * key 可能是复合 key（如 `job:job_ab12…`），文件名对 key 做 encodeURIComponent，
+ * `:` 等不安全字符编码掉（`job:xxx` → `job%3Axxx.json`）；纯模块 key（resume 等）
+ * 编码后不变，旧文件无需迁移。完整历史始终保留（UI 展示用）；模型输入只取
+ * `summarizedFrom` 之后的尾部，之前的部分由 AgentRuntime 压缩成 `summary`。
  */
 export interface ConversationDoc {
   key: string;
@@ -67,12 +69,23 @@ export class ConversationsStore {
     this.persist(doc);
   }
 
+  /** 删除一条会话（如删除面试时连带 `interview:<id>`）：内存 + 磁盘一起清。 */
+  remove(key: ConversationKey): void {
+    this.cache.delete(key);
+    try {
+      fs.rmSync(this.file(key), { force: true });
+    } catch {
+      // 文件已被手动删掉之类：内存才是事实，忽略磁盘错误。
+    }
+  }
+
   private persist(doc: ConversationDoc): void {
     writeJsonFile(this.file(doc.key), doc);
   }
 
   private file(key: string): string {
-    return path.join(this.workspace.conversations, `${key}.json`);
+    // 复合 key 含 ':' 等文件系统不安全字符：整体 encodeURIComponent（可逆，纯模块 key 不变）。
+    return path.join(this.workspace.conversations, `${encodeURIComponent(key)}.json`);
   }
 
   private read(key: ConversationKey): ConversationDoc {
