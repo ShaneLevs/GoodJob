@@ -3,3 +3,4 @@ allowBuilds:
   electron-winstaller: true
   esbuild: true
   "@swc/core": true
+  agent-browser: true

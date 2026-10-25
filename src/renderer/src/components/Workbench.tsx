@@ -13,6 +13,7 @@ import {
 import { cn } from "@/lib/utils";
 
 import { BrowserPanel } from "./BrowserPanel";
+import { AgentLogPane } from "./AgentLogPane";
 import { ScorecardPane } from "./ScorecardPane";
 import { TasksBadge } from "./TasksBadge";
 import { PANES, PANE_BY_KEY, type PaneKey } from "../panes";
@@ -26,6 +27,11 @@ interface WorkbenchProps {
   scorecardTarget: ScorecardTarget | null;
   /** 后台任务注册表快照：标签栏右侧「任务」角标汇总进度。 */
   tasks: TaskState[];
+  /**
+   * 当前会话是否接得住「让 Agent 接管」（companies / jobs / applications）；
+   * 接不住时浏览器工具条不显示该按钮。
+   */
+  takeoverAvailable: boolean;
   onSelect: (key: PaneKey) => void;
   /**
    * 只给 Agent 侧的通道预留：右栏不提供手动创建标签的入口，
@@ -35,10 +41,9 @@ interface WorkbenchProps {
   onClose: (key: PaneKey) => void;
 }
 
-const PLACEHOLDER_HINT: Record<Exclude<PaneKey, "browser" | "scorecard">, string> = {
+const PLACEHOLDER_HINT: Record<Exclude<PaneKey, "browser" | "scorecard" | "log">, string> = {
   markdown: "AI 生成的简历、岗位对比、面试准备清单会以 Markdown 形式在这里预览。",
   editor: "在这里直接修改文档，改动会保存到本地工作区。",
-  log: "AI 每一步做了什么、看了哪个页面、提交了哪些信息，都会记录在这里。",
 };
 
 export function Workbench({
@@ -47,6 +52,7 @@ export function Workbench({
   suspended,
   scorecardTarget,
   tasks,
+  takeoverAvailable,
   onSelect,
   onClose,
   onOverlayChange,
@@ -55,10 +61,20 @@ export function Workbench({
 
   const renderPane = (key: PaneKey) => {
     if (key === "browser") {
-      return <BrowserPanel active={current === "browser"} suspended={suspended} />;
+      return (
+        <BrowserPanel
+          active={current === "browser"}
+          suspended={suspended}
+          takeoverAvailable={takeoverAvailable}
+        />
+      );
     }
     if (key === "scorecard") {
       return <ScorecardPane target={scorecardTarget} active={current === "scorecard"} />;
+    }
+    // 工作日志（P4）：Agent 每步受控动作的时间线，不再是空态占位。
+    if (key === "log") {
+      return <AgentLogPane />;
     }
     const meta = PANE_BY_KEY[key];
     return (

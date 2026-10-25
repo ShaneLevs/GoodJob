@@ -15,7 +15,20 @@ import { app } from "electron";
  *     <workspaceId>/          0700  目录名一律用 ID，人类可读的名字只在索引里
  *       models.json           0600  模型供应商 + 模型（含 safeStorage 密文）
  *       conversations/        0700  滚动会话（一个模块一个 <key>.json）
- *       resumes/              0700  主简历们：一份一个文件夹（resume.md/history/tailored）
+ *       resumes/              0700  主简历们：一份一个文件夹（resume.md/history/tailored/
+ *                                   scripts 话术/reports 评分报告）
+ *       companies/            0700  公司档案：一个公司一个 <id>.json
+ *       jobs/                 0700  岗位档案：一个岗位一个 <id>.json
+ *       applications/         0700  投递档案：一个投递一个 <id>.json +
+ *                                   pipeline.json 状态流水线定义（工作区级）
+ *       interviews/           0700  模拟面试：一场面试一个 <id>.json（逐轮问答
+ *                                   本体在 conversations/ 的 interview:<id> 会话里）
+ *       notifications.json    0600  通知配置（P3）：SMTP / IMAP 账户 + 日报 / 周报调度，
+ *                                   密码是 safeStorage 密文（跟随工作区，可对不同邮箱）
+ *       agent-browser.json    0600  浏览器自动化设置（P4）：启用开关 + 提交限速参数
+ *                                   + 单站提交记账（每日上限按本地日历日重置）
+ *       browser-playbooks.md  0600  投递平台适配指令模板（P4，用户可编辑），Agent
+ *                                   投递前会读进指令
  *       memory.md             0600  工作区级长期记忆，Agent 会话自动加载
  *       cache/                0700  可再生数据
  *       logs/                 0700  诊断日志
@@ -36,8 +49,22 @@ export interface WorkspacePaths {
   dir: string;
   models: string;
   conversations: string;
-  /** 主简历们：一份一个文件夹（resume.md / history / tailored）。 */
+  /** 主简历们：一份一个文件夹（resume.md / history / tailored / scripts / reports / upload）。 */
   resumes: string;
+  /** 公司档案集合：一个公司一个 `<id>.json`（domain-store）。 */
+  companies: string;
+  /** 岗位档案集合：一个岗位一个 `<id>.json`（domain-store）。 */
+  jobs: string;
+  /** 投递档案集合：一个投递一个 `<id>.json` + 工作区级 `pipeline.json`（domain-store）。 */
+  applications: string;
+  /** 模拟面试记录集合：一场面试一个 `<id>.json`（interviews-store）。 */
+  interviews: string;
+  /** 通知配置（notify-store）：SMTP / IMAP 账户 + 日报 / 周报调度，密码 safeStorage 密文。 */
+  notifications: string;
+  /** 浏览器自动化设置（P4，agent/ 下的 settings-store）：开关 + 限速参数 + 提交记账。 */
+  agentBrowser: string;
+  /** 投递平台适配指令模板（P4）：用户可编辑，Agent 投递前读进指令。 */
+  browserPlaybooks: string;
   /** 工作区级长期记忆，Agent 每次会话自动加载。 */
   memory: string;
   cache: string;
@@ -71,6 +98,13 @@ export function workspacePaths(root: string, id: string): WorkspacePaths {
     models: path.join(dir, "models.json"),
     conversations: path.join(dir, "conversations"),
     resumes: path.join(dir, "resumes"),
+    companies: path.join(dir, "companies"),
+    jobs: path.join(dir, "jobs"),
+    applications: path.join(dir, "applications"),
+    interviews: path.join(dir, "interviews"),
+    notifications: path.join(dir, "notifications.json"),
+    agentBrowser: path.join(dir, "agent-browser.json"),
+    browserPlaybooks: path.join(dir, "browser-playbooks.md"),
     memory: path.join(dir, "memory.md"),
     cache: path.join(dir, "cache"),
     logs: path.join(dir, "logs"),
@@ -82,6 +116,10 @@ export function ensureWorkspaceDirs(paths: WorkspacePaths): void {
   ensureDir(paths.dir);
   ensureDir(paths.conversations);
   ensureDir(paths.resumes);
+  ensureDir(paths.companies);
+  ensureDir(paths.jobs);
+  ensureDir(paths.applications);
+  ensureDir(paths.interviews);
   ensureDir(paths.cache);
   ensureDir(paths.logs);
 }

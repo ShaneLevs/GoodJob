@@ -6,6 +6,8 @@ import type {
   AppearanceSettings,
   ModelSelection,
   ModelsConfig,
+  ScorecardTarget,
+  TaskState,
   WorkspacesState,
 } from "@shared/types";
 
@@ -17,9 +19,13 @@ import { Button } from "./components/ui/button";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "./components/ui/resizable";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./components/ui/tooltip";
 import { cn } from "./lib/utils";
-import { ModulePlaceholder } from "./components/modules/ModulePlaceholder";
+import { ApplicationsPage } from "./components/modules/ApplicationsPage";
+import { CompaniesPage } from "./components/modules/CompaniesPage";
+import { InterviewPage } from "./components/modules/InterviewPage";
+import { JobWorkbenchPage } from "./components/modules/JobWorkbenchPage";
+import { JobsPage } from "./components/modules/JobsPage";
 import { ResumePage } from "./components/modules/ResumePage";
-import { MODULE_BY_KEY, type ModuleKey } from "./modules";
+import type { ModuleKey } from "./modules";
 import type { PaneKey } from "./panes";
 import { resolveDark } from "./theme";
 
@@ -46,12 +52,25 @@ export function App() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [activeModule, setActiveModule] = useState<ModuleKey>("resume");
   /*
+   * 岗位二级工作台（定制简历）：有值时「岗位」模块渲染 JobWorkbenchPage。
+   * autoPrompt 是进入时的一次性起草指令（生成简历 / 生成话术），发完即清。
+   */
+  const [jobWorkbench, setJobWorkbench] = useState<{ jobId: string; autoPrompt: string | null } | null>(null);
+  /*
+   * 模拟面试的一次性定位：从岗位页发起后跳到面试模块并选中这场面试，选中即清。
+   */
+  const [interviewFocus, setInterviewFocus] = useState<string | null>(null);
+  /*
    * 右栏默认收起：首次启动时界面只需要对话，右栏由 Agent 需要时自己打开，
    * 顶栏右侧那个按钮随时可以手动展开。
    */
   const [workbenchOpen, setWorkbenchOpen] = useState(false);
   const [openPanes, setOpenPanes] = useState<PaneKey[]>([]);
   const [activePane, setActivePane] = useState<PaneKey | null>(null);
+  /** 评分卡标签当前展示的报告定位。 */
+  const [scorecardTarget, setScorecardTarget] = useState<ScorecardTarget | null>(null);
+  /** 后台任务注册表快照（右栏「任务」角标汇总用）。 */
+  const [tasks, setTasks] = useState<TaskState[]>([]);
   /** 对话区里的浮层（模型下拉）打开期间为 true，原生浏览器视图要让位。 */
   const [overlayOpen, setOverlayOpen] = useState(false);
 
@@ -59,6 +78,14 @@ export function App() {
     void window.goodjob.models.get().then(setModels);
     void window.goodjob.workspace.get().then(setWorkspaces);
     void window.goodjob.appearance.get().then(setAppearance);
+  }, []);
+
+  // 后台任务：挂载取一次注册表，事件增量更新（任务只在内存，切工作区会清空重取）。
+  useEffect(() => {
+    void window.goodjob.tasks.list().then(setTasks);
+    return window.goodjob.tasks.onEvent((event) => {
+      setTasks((prev) => [event.task, ...prev.filter((task) => task.id !== event.task.id)]);
+    });
   }, []);
 
   // "跟随系统"要能实时响应系统外观的变化。
@@ -69,12 +96,17 @@ export function App() {
     return () => query.removeEventListener("change", listener);
   }, []);
 
-  // 工作区切换由 main 广播：重读模型配置；模块页通过 remount key 换整套数据。
+  // 工作区切换由 main 广播：重读模型配置与任务注册表；模块页通过 remount key 换整套数据。
+  // 岗位工作台、面试定位与评分卡指向的是旧工作区的数据，一并退出。
   useEffect(
     () =>
       window.goodjob.workspace.onChanged((state) => {
         setWorkspaces(state);
+        setJobWorkbench(null);
+        setInterviewFocus(null);
+        setScorecardTarget(null);
         void window.goodjob.models.get().then(setModels);
+        void window.goodjob.tasks.list().then(setTasks);
       }),
     [],
   );
@@ -146,17 +178,71 @@ export function App() {
     switch (activeModule) {
       case "resume":
         return <ResumePage key={workspaceVersion} {...moduleProps} />;
-      default:
-        return <ModulePlaceholder module={MODULE_BY_KEY[activeModule]} />;
+      case "companies":
+        return <CompaniesPage key={workspaceVersion} {...moduleProps} />;
+      case "jobs":
+        // 二级工作台（定制简历）优先于岗位表；返回键落回表格。
+        return jobWorkbench !== null ? (
+          <JobWorkbenchPage
+            key={`${workspaceVersion}:${jobWorkbench.jobId}`}
+            jobId={jobWorkbench.jobId}
+            autoPrompt={jobWorkbench.autoPrompt}
+            onAutoPromptSent={() =>
+              setJobWorkbench((prev) => (prev === null ? prev : { ...prev, autoPrompt: null }))
+            }
+            onBack={() => setJobWorkbench(null)}
+            {...moduleProps}
+          />
+        ) : (
+          <JobsPage
+            key={workspaceVersion}
+            onOpenJob={(jobId, autoPrompt) => setJobWorkbench({ jobId, autoPrompt })}
+            onOpenScorecard={(target) => openPane("scorecard", target)}
+            onOpenInterview={(interviewId) => {
+              setInterviewFocus(interviewId);
+              setActiveModule("interview");
+            }}
+            {...moduleProps}
+          />
+        );
+      case "applications":
+        return <ApplicationsPage key={workspaceVersion} {...moduleProps} />;
+      case "interview":
+        return (
+          <InterviewPage
+            key={workspaceVersion}
+            focusId={interviewFocus}
+            onFocusConsumed={() => setInterviewFocus(null)}
+            {...moduleProps}
+          />
+        );
+      case "companies":
+        return <CompaniesPage key={workspaceVersion} {...moduleProps} />;
     }
   })();
 
-  // 右栏不提供手动创建标签的入口：openPane 留给 Agent 侧通道（后续 IPC 事件）。
-  const openPane = (key: PaneKey): void => {
+  // 右栏不提供手动创建标签的入口：openPane 留给 Agent 侧通道（评分卡可带定位）。
+  const openPane = (key: PaneKey, scorecard?: ScorecardTarget): void => {
     setOpenPanes((prev) => (prev.includes(key) ? prev : [...prev, key]));
     setActivePane(key);
     setWorkbenchOpen(true);
+    if (key === "scorecard" && scorecard !== undefined) setScorecardTarget(scorecard);
   };
+
+  // agent:pane-open（BROWSER-AGENT §6 预留事件）的兑现：main（后台任务等）
+  // 请求打开右栏与对应标签——评分类任务完成时带评分卡定位。
+  useEffect(
+    () =>
+      window.goodjob.workbench.onPaneOpen((event) => {
+        setOpenPanes((prev) => (prev.includes(event.pane) ? prev : [...prev, event.pane]));
+        setActivePane(event.pane);
+        setWorkbenchOpen(true);
+        if (event.pane === "scorecard" && event.scorecard !== undefined) {
+          setScorecardTarget(event.scorecard);
+        }
+      }),
+    [],
+  );
 
   const closePane = (key: PaneKey): void => {
     const next = openPanes.filter((pane) => pane !== key);
@@ -169,9 +255,18 @@ export function App() {
       openPanes={openPanes}
       activePane={activePane}
       suspended={settingsOpen || overlayOpen || !workbenchOpen}
+      scorecardTarget={scorecardTarget}
+      tasks={tasks}
+      // 「让 Agent 接管」只在挂了 useBrowserTakeover 的会话里出现
+      // （companies / jobs / applications；岗位二级工作台的 job:<id> 会话没有浏览器工具）。
+      takeoverAvailable={
+        (activeModule === "companies" || activeModule === "jobs" || activeModule === "applications") &&
+        !(activeModule === "jobs" && jobWorkbench !== null)
+      }
       onSelect={setActivePane}
       onOpen={openPane}
       onClose={closePane}
+      onOverlayChange={setOverlayOpen}
     />
   );
 
@@ -191,7 +286,11 @@ export function App() {
             <div className="w-[248px] shrink-0 overflow-hidden">
               <Sidebar
                 activeModule={activeModule}
-                onSelectModule={setActiveModule}
+                onSelectModule={(key) => {
+                  setActiveModule(key);
+                  // 离开岗位模块即退出二级工作台（回来落在岗位表）。
+                  if (key !== "jobs") setJobWorkbench(null);
+                }}
                 workspaces={workspaces?.items ?? []}
                 currentWorkspace={
                   workspaces?.items.find((item) => item.id === workspaces.currentId) ?? null

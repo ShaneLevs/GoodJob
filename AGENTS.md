@@ -103,16 +103,45 @@ AI SDK 4/5，本项目跑 Tailwind 4 + AI SDK 7，都是破坏性版本）。
 ```
 .agents/        迁移前的 antd / X 知识库（历史归档，勿参考）
 docs/           PRODUCT.md（产品方案）、ARCHITECTURE.md（技术方案定案）、STACK.md（选型）、BROWSER-AGENT.md（浏览器安全）、plan/（分期实施计划）
-src/main/       窗口、BrowserPanel(WebContentsView)、AgentRuntime(ToolLoopAgent)、
-                 Conversations/Resume/Memory/Models/Workspaces store、paths、IPC
+src/main/       窗口、BrowserPanel(WebContentsView)、AgentRuntime(ToolLoopAgent，toolsFor 按
+                 会话 key 分发工具；job:<jobId> 岗位工作台与 interview:<id> 模拟面试为
+                 复合会话；companies/jobs/applications 会话另有 notify /
+                 request_confirmation（applications）与 browser_read/act/submit（三个
+                 领域会话，P4）工具，notify 与 browser_act 挂 toolApproval 界面审批)、
+                 Conversations/Resume/Memory/
+                 Models/Workspaces store、domain-store（companies/jobs/applications +
+                 pipeline，通用 JSON 集合底座导出给 interviews-store 复用）、
+                 interviews-store（模拟面试记录：逐轮落账与总评收束是仅有的两个写入口）、
+                 notify-store / notify-service（通知：notifications.json 密文凭据 +
+                 nodemailer 发送 + imapflow 收信监控 + 确认门 sent→waiting→reminded→
+                 approved|timeout + 分钟级 tick 日报调度，日报/周报到点跑一次
+                 AgentRuntime.runDigest）、agent/（P4 浏览器自动化：agent-browser.ts
+                 二进制定位与 spawn、actions.ts 受控动作枚举与 argv 组装、target.ts
+                 tab 锁定、runner.ts 任务包络与审计、settings-store.ts 开关与限速）、
+                 tasks（后台任务：简历评估 / 完整性评分，
+                 task:event）、pdf-export（printToPDF）、model-provider、paths、IPC
 src/preload/    contextBridge -> window.goodjob
 src/renderer/   React + shadcn/ui + Tailwind 4
   globals.css     唯一的样式入口：token、状态变体桥接、markdown 排版
                   （文档模板 CSS 是唯一例外：scoped 到预览纸面、随用随注入，见 markdown/）
   modules.tsx     左栏模块菜单注册表（简历/岗位/投递/面试/公司；没有独立「对话」页）
+  panes.tsx       右栏标签内容注册表（browser/markdown/editor/scorecard/log）；PaneKey
+                  真值在 shared/types.ts（agent:pane-open 事件跨进程要用）
   components/ui/  shadcn 组件源码（可改）
-  components/chat/   IPC ChatTransport + 滚动会话 hook
-  components/modules/  各模块页（ResumePage / 编辑器卡 / 占位页）
+  components/chat/   IPC ChatTransport + 滚动会话 hook；上传附件（data-upload part，
+                     不进模型输入）、耗时 metadata 与工具审批（sendAutomaticallyWhen +
+                     addToolApprovalResponse，批准/拒绝后续跑）在这里接
+  components/settings/  设置分区：外观 / 模型 / 通知（NotifySettings：SMTP / IMAP 表单 +
+                     逐项测试连接 + 日报周报调度）
+  components/modules/  各模块页：ResumePage / CompaniesPage / JobsPage（操作枢纽，含
+                     ScriptDialog 话术定稿与「模拟面试」发起弹窗）/ JobWorkbenchPage（岗位
+                     二级工作台，会话 key=job:<jobId>）/ ApplicationsPage（含 pipeline
+                     设置、Offer 对比）/ InterviewPage（模拟面试：面试列表 + interview:<id>
+                     会话 + 总评点评卡）；ResumeEditorCard 按 ResumeDocTarget 参数化
+                     （主简历 / 定制稿共用，带 PDF 导出）；table-bits 是三张表共用的
+                     内存排序小件；所有弹层经 onOverlayChange 让位内嵌浏览器
+  components/     Workbench（右栏标签壳 + TasksBadge 后台任务角标）、ScorecardPane（评分卡）、
+                  ExportRoute（#export 导出路由；main.tsx 按 hash 分流，导出窗不挂 App）
   markdown/       通用文档渲染：render.ts（marked 扩展+消毒）、templates/（一模板一份 CSS 串）；
                   MarkdownPreview 组件（components/MarkdownPreview.tsx）是所有文档展示的复用入口
 src/shared/     三进程共用的类型与 IPC 频道名（保持零依赖）
@@ -133,17 +162,42 @@ scripts/        图标管线：make-icons.mjs 用 Electron 渲染 build/icon-dra
   workspaces/               0700
     <workspaceId>/          0700  目录名一律 ID（ws_ 前缀 + 12 位 hex）
       models.json           0600  模型供应商 + 加密 Key
-      conversations/        0700  滚动会话，一个模块一个 <key>.json（chat / resume）
-      resumes/              0700  主简历们：一份一个文件夹（resume.md / history / tailored）
+      conversations/        0700  滚动会话 <key>.json（resume / companies / jobs /
+                                  applications / job:<jobId> / interview:<id>；
+                                  复合 key 会 encodeURIComponent）
+      resumes/              0700  主简历们：一份一个文件夹（resume.md / history /
+                                  tailored/<jobId>.md 与 tailored/history / scripts 话术
+                                  （含定稿 sidecar 与 history）/ reports 评分报告 /
+                                  upload 用户上传的参考文件，Agent 用工具读）
+      companies/            0700  公司档案：一个公司一个 <id>.json（含调研快照）
+      jobs/                 0700  岗位档案：一个岗位一个 <id>.json（含 JD 与匹配度报告）
+      applications/         0700  投递档案：一个投递一个 <id>.json + pipeline.json
+                                  （工作区级状态流水线：有序阶段 + 终态标记）
+      interviews/           0700  模拟面试：一场一个 <id>.json（config 轮次/模式 + 逐轮
+                                  记录 + 总评；问答消息本体在 conversations/ 的会话里）
+      notifications.json    0600  通知配置（P3 M3）：SMTP / IMAP 账户 + 日报 / 周报
+                                  调度；密码 safeStorage 密文，跟随工作区（不同工作区
+                                  可对不同邮箱），渲染层只见 hasPassword
+      agent-browser.json    0600  浏览器自动化设置（P4）：启用开关 + 提交限速参数 +
+                                  单站提交记账（每日上限按本地日历日重置）
+      browser-playbooks.md  0600  投递平台适配指令模板（P4，用户手编），Agent 投递前读进指令
       memory.md             0600  工作区级长期记忆，Agent 每次会话注入 instructions
-      cache/                0700
-      logs/                 0700
+      cache/                0700  （agent 截图等可再生数据落 cache/agent-screenshots/）
+      logs/                 0700  （agent.log：浏览器自动化逐步审计 JSONL，不含页面正文）
 ```
 
 - **外观（主题 / 字号）是机器级偏好，不进工作区**：存根目录 `preferences.json`，
   切工作区不跟着变。字号 10–18px，主题 `system | light | dark`。
+- **agent-browser 自己的状态目录是 `~/.agent-browser`**（P4）：daemon pid / socket /
+  会话恢复都在那里，不在 `~/.goodjob` 里——这是既有约定的一处偏离，设置页已如实
+  告知；不要试图改 HOME 迁移它。
 - 首次启动时若索引为空（或整个目录为空），自动建一个「默认工作区」。
 - 旧版本放在根目录的 `models.json` / `conversations` 会在此时迁移进默认工作区。
+- 领域实体（公司 / 岗位 / 投递 / 面试）ID 惯例：`co_` / `job_` / `app_` / `iv_` + 12 位 hex；
+  引用存名不存内容（Job.companyId / Application.jobId / Interview.jobId），删除不级联——
+  悬空引用由渲染层提示。
+- 后台任务（`src/main/tasks.ts`）注册表只在内存：同 type 同 target 去重，应用退出 /
+  切工作区即停、不做断点续跑（结果已落库可重跑）。
 - 新增持久化数据请先在 `src/main/paths.ts` 的 `WorkspacePaths` 里登记路径，
   再由 `ensureWorkspaceDirs()` 建目录——不要绕过工作区往根目录写东西。
 

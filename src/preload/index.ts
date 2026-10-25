@@ -1,24 +1,52 @@
 import { contextBridge, ipcRenderer } from "electron";
 
 import type {
+  AgentPaneOpenEvent,
+  AgentStep,
+  AgentStepEvent,
   AppearanceSettings,
   AppInfo,
+  Application,
+  ApplicationPatch,
+  BrowserAgentSettings,
+  BrowserAgentSettingsDraft,
   BrowserState,
   ChatSendPayload,
   ChatStreamEvent,
+  Company,
+  CompanyPatch,
   ConversationKey,
   ConversationState,
   GoodjobApi,
-  ImportedResume,
+  IntegrityReport,
+  InterviewCreateInput,
+  Interview,
+  Job,
+  JobPatch,
   ModelSelection,
   ModelsConfig,
   ModelsDraft,
+  NotificationDraft,
+  NotificationSettings,
+  NotifyTestRequest,
+  NotifyTestResult,
+  DigestKind,
+  DigestRunResult,
+  PdfExportPayload,
+  PdfExportResult,
+  PipelineConfig,
+  PipelineDraft,
   Rect,
   ResumeDoc,
   ResumeDocTarget,
   ResumeFileEvent,
   ResumeListState,
+  ScriptDoc,
   TailoredDoc,
+  TaskEvent,
+  TaskState,
+  TaskType,
+  UploadedFileMeta,
   WireMessage,
   WorkspacesState,
 } from "@shared/types";
@@ -76,9 +104,92 @@ const api: GoodjobApi = {
     save: (target: ResumeDocTarget, content: string) =>
       ipcRenderer.invoke(IPC.resumeSave, target, content) as Promise<ResumeDoc | null>,
     listTailored: () => ipcRenderer.invoke(IPC.resumeTailoredList) as Promise<TailoredDoc[]>,
-    importFile: () => ipcRenderer.invoke(IPC.resumeImport) as Promise<ImportedResume | null>,
+    upload: () => ipcRenderer.invoke(IPC.resumeUpload) as Promise<UploadedFileMeta[] | null>,
     onFileChanged: (listener: (event: ResumeFileEvent) => void) =>
       subscribe(IPC.resumeFileChanged, listener),
+    scripts: {
+      list: () => ipcRenderer.invoke(IPC.resumeScriptList) as Promise<ScriptDoc[]>,
+      read: (jobId: string) =>
+        ipcRenderer.invoke(IPC.resumeScriptRead, jobId) as Promise<
+          { jobId: string; content: string; doc: ScriptDoc } | null
+        >,
+      save: (jobId: string, content: string) =>
+        ipcRenderer.invoke(IPC.resumeScriptSave, jobId, content) as Promise<ScriptDoc>,
+      finalize: (jobId: string) =>
+        ipcRenderer.invoke(IPC.resumeScriptFinalize, jobId) as Promise<ScriptDoc>,
+    },
+    integrityReports: (resumeId: string) =>
+      ipcRenderer.invoke(IPC.resumeIntegrityReports, resumeId) as Promise<IntegrityReport[]>,
+  },
+  companies: {
+    list: () => ipcRenderer.invoke(IPC.companiesList) as Promise<Company[]>,
+    create: (patch: CompanyPatch) =>
+      ipcRenderer.invoke(IPC.companiesCreate, patch) as Promise<Company>,
+    update: (id: string, patch: CompanyPatch) =>
+      ipcRenderer.invoke(IPC.companiesUpdate, id, patch) as Promise<Company>,
+    remove: (id: string) => ipcRenderer.invoke(IPC.companiesDelete, id) as Promise<void>,
+  },
+  jobs: {
+    list: () => ipcRenderer.invoke(IPC.jobsList) as Promise<Job[]>,
+    create: (patch: JobPatch) => ipcRenderer.invoke(IPC.jobsCreate, patch) as Promise<Job>,
+    update: (id: string, patch: JobPatch) =>
+      ipcRenderer.invoke(IPC.jobsUpdate, id, patch) as Promise<Job>,
+    remove: (id: string) => ipcRenderer.invoke(IPC.jobsDelete, id) as Promise<void>,
+  },
+  applications: {
+    list: () => ipcRenderer.invoke(IPC.applicationsList) as Promise<Application[]>,
+    create: (patch: ApplicationPatch) =>
+      ipcRenderer.invoke(IPC.applicationsCreate, patch) as Promise<Application>,
+    update: (id: string, patch: ApplicationPatch) =>
+      ipcRenderer.invoke(IPC.applicationsUpdate, id, patch) as Promise<Application>,
+    remove: (id: string) => ipcRenderer.invoke(IPC.applicationsDelete, id) as Promise<void>,
+  },
+  pipeline: {
+    get: () => ipcRenderer.invoke(IPC.pipelineGet) as Promise<PipelineConfig>,
+    save: (draft: PipelineDraft) =>
+      ipcRenderer.invoke(IPC.pipelineSave, draft) as Promise<PipelineConfig>,
+  },
+  tasks: {
+    list: () => ipcRenderer.invoke(IPC.tasksList) as Promise<TaskState[]>,
+    run: (type: TaskType, target: string) =>
+      ipcRenderer.invoke(IPC.tasksRun, type, target) as Promise<TaskState>,
+    rerun: (taskId: string) => ipcRenderer.invoke(IPC.tasksRerun, taskId) as Promise<TaskState>,
+    onEvent: (listener: (event: TaskEvent) => void) => subscribe(IPC.taskEvent, listener),
+  },
+  pdf: {
+    export: (payload: PdfExportPayload) =>
+      ipcRenderer.invoke(IPC.pdfExport, payload) as Promise<PdfExportResult | null>,
+  },
+  interviews: {
+    list: () => ipcRenderer.invoke(IPC.interviewsList) as Promise<Interview[]>,
+    create: (input: InterviewCreateInput) =>
+      ipcRenderer.invoke(IPC.interviewsCreate, input) as Promise<Interview>,
+    remove: (id: string) => ipcRenderer.invoke(IPC.interviewsRemove, id) as Promise<void>,
+  },
+  notify: {
+    get: () => ipcRenderer.invoke(IPC.notifyGet) as Promise<NotificationSettings>,
+    save: (draft: NotificationDraft) =>
+      ipcRenderer.invoke(IPC.notifySave, draft) as Promise<NotificationSettings>,
+    test: (request: NotifyTestRequest) =>
+      ipcRenderer.invoke(IPC.notifyTest, request) as Promise<NotifyTestResult>,
+    runDigest: (kind: DigestKind) =>
+      ipcRenderer.invoke(IPC.notifyDigestRun, kind) as Promise<DigestRunResult>,
+  },
+  workbench: {
+    onPaneOpen: (listener: (event: AgentPaneOpenEvent) => void) =>
+      subscribe(IPC.agentPaneOpen, listener),
+  },
+  agent: {
+    listLog: () => ipcRenderer.invoke(IPC.agentLogList) as Promise<AgentStep[]>,
+    onStep: (listener: (event: AgentStepEvent) => void) =>
+      subscribe(IPC.agentStepEvent, listener),
+    abort: () => ipcRenderer.send(IPC.agentAbort),
+    replayStep: (stepId: string) =>
+      ipcRenderer.invoke(IPC.agentReplayStep, stepId) as Promise<void>,
+    getSettings: () =>
+      ipcRenderer.invoke(IPC.agentSettingsGet) as Promise<BrowserAgentSettings>,
+    saveSettings: (draft: BrowserAgentSettingsDraft) =>
+      ipcRenderer.invoke(IPC.agentSettingsSave, draft) as Promise<BrowserAgentSettings>,
   },
   models: {
     get: () => ipcRenderer.invoke(IPC.modelsGet) as Promise<ModelsConfig>,

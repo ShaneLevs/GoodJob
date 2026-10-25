@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 
-import { ArrowLeft, Palette, Plug } from "lucide-react";
+import { ArrowLeft, Bell, Globe, Palette, Plug } from "lucide-react";
 
 import type { AppearanceSettings, ModelsConfig } from "@shared/types";
 
@@ -9,13 +9,17 @@ import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 
 import { AppearanceSettings as AppearanceSettingsPane } from "./settings/AppearanceSettings";
+import { BrowserAgentSettings } from "./settings/BrowserAgentSettings";
 import { ModelsSettings } from "./settings/ModelsSettings";
+import { NotifySettings } from "./settings/NotifySettings";
 
-export type SettingsSection = "appearance" | "models";
+export type SettingsSection = "appearance" | "models" | "notify" | "browser";
 
 const NAV: { key: SettingsSection; label: string; icon: React.ReactNode }[] = [
   { key: "appearance", label: "外观", icon: <Palette /> },
   { key: "models", label: "模型设置", icon: <Plug /> },
+  { key: "notify", label: "通知", icon: <Bell /> },
+  { key: "browser", label: "浏览器", icon: <Globe /> },
 ];
 
 interface SettingsModalProps {
@@ -102,6 +106,10 @@ export function SettingsModal({
           <div className="flex min-w-0 flex-1 flex-col">
             {section === "appearance" ? (
               <AppearanceSettingsPane appearance={appearance} onChange={onAppearanceChange} />
+            ) : section === "notify" ? (
+              <NotifySettings />
+            ) : section === "browser" ? (
+              <BrowserAgentSettings />
             ) : models === null ? (
               <div className="p-8 text-sm text-muted-foreground">正在读取模型…</div>
             ) : (
