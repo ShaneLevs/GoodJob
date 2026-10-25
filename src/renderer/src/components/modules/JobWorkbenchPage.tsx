@@ -119,6 +119,7 @@ function JobWorkbenchLoaded({
                 onSend={chat.send}
                 onStop={chat.stop}
                 onApprovalResponse={chat.respondApproval}
+                conversationKey={`job:${jobId}`}
               />
             </div>
           </ResizablePanel>

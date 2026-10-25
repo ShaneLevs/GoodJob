@@ -145,6 +145,7 @@ function CompaniesPageLoaded({
             onSend={chat.send}
             onStop={chat.stop}
             onApprovalResponse={chat.respondApproval}
+            conversationKey="companies"
           />
         </div>
       </ResizablePanel>

@@ -281,6 +281,7 @@ function JobsPageLoaded({
             onSend={chat.send}
             onStop={chat.stop}
             onApprovalResponse={chat.respondApproval}
+            conversationKey="jobs"
           />
         </div>
       </ResizablePanel>

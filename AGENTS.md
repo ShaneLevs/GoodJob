@@ -37,6 +37,13 @@ GoodJob：一个带内嵌浏览器的求职助手桌面端。技术栈与理由�
      不是一个新 HTTP 客户端。
    - 流式一律走 AI SDK 的 UI message part（`text` / `reasoning` / `tool-*` /
      `source` / `file` / `data-*`），不要再往自定义 `ChatEvent` 里加通道。
+   - OpenAI 兼容协议（`openai-chat`）用 `@ai-sdk/openai-compatible`，**不要**用
+     `@ai-sdk/openai` 的 `.chat()`：后者只解析 `delta.content` / `tool_calls` /
+     `annotations`，中转站塞在同一条 delta 里的 `reasoning_content` 会被静默丢弃，
+     思考型模型界面上一个字都看不到。openai-compatible 发版节奏和 `ai` 对不齐，
+     升级前先看它的 `@ai-sdk/provider` 版本，和 `@ai-sdk/openai` 用同一个（当前都锁
+     `provider@4.0.33` / `provider-utils@5.0.67`），否则 `LanguageModelV4` 两个副本会
+     报类型不兼容。
    - 工具用 `tool({ inputSchema: z.object(...) })`——v7 是 `inputSchema`，老教程的
      `parameters` 会编译不过。浏览器动作的白名单就体现在 tool 注册表里，
      副作用动作走 `toolApproval`，不要靠 prompt 祈使。
@@ -127,7 +134,8 @@ src/renderer/   React + shadcn/ui + Tailwind 4
   modules.tsx     左栏模块菜单注册表（简历/岗位/投递/面试/公司；没有独立「对话」页）
   panes.tsx       右栏标签内容注册表（browser/markdown/editor/scorecard/log）；PaneKey
                   真值在 shared/types.ts（agent:pane-open 事件跨进程要用）
-  components/ui/  shadcn 组件源码（可改）
+  components/ui/  shadcn 组件源码（可改）；工具调用与思考过程用 trace.tsx（AI Elements
+                  的 tool / chain-of-thought 结构）+ code-block.tsx，不要再自制折叠卡片
   components/chat/   IPC ChatTransport + 滚动会话 hook；上传附件（data-upload part，
                      不进模型输入）、耗时 metadata 与工具审批（sendAutomaticallyWhen +
                      addToolApprovalResponse，批准/拒绝后续跑）在这里接
@@ -146,7 +154,9 @@ src/renderer/   React + shadcn/ui + Tailwind 4
                   MarkdownPreview 组件（components/MarkdownPreview.tsx）是所有文档展示的复用入口
 src/shared/     三进程共用的类型与 IPC 频道名（保持零依赖）
 scripts/        图标管线：make-icons.mjs 用 Electron 渲染 build/icon-drafts/logo.svg
-                → build/icon.png + icon.icns（打包自动取后者，dev Dock 图标用前者）
+                → build/icon.png + icon.icns（打包自动取后者，dev Dock 图标用前者）；
+                dist-mac.sh 一键出 dmg（staging agent-browser → typecheck → 编译 →
+                electron-builder，下载固定走 npmmirror 镜像）
 ```
 
 ## 工作区
@@ -169,12 +179,15 @@ scripts/        图标管线：make-icons.mjs 用 Electron 渲染 build/icon-dra
                                   tailored/<jobId>.md 与 tailored/history / scripts 话术
                                   （含定稿 sidecar 与 history）/ reports 评分报告 /
                                   upload 用户上传的参考文件，Agent 用工具读）
-      companies/            0700  公司档案：一个公司一个 <id>.json（含调研快照）
+      companies/            0700  公司档案：一个公司一个 <id>.json（含调研快照）+ upload/
+                                  会话上传的参考资料
       jobs/                 0700  岗位档案：一个岗位一个 <id>.json（含 JD 与匹配度报告）
+                                  + upload/（岗位会话）与 upload/<jobId>/（岗位工作台）
       applications/         0700  投递档案：一个投递一个 <id>.json + pipeline.json
-                                  （工作区级状态流水线：有序阶段 + 终态标记）
+                                  （工作区级状态流水线：有序阶段 + 终态标记）+ upload/
       interviews/           0700  模拟面试：一场一个 <id>.json（config 轮次/模式 + 逐轮
                                   记录 + 总评；问答消息本体在 conversations/ 的会话里）
+                                  + upload/<interviewId>/（预留给将来，面试会话不发上传工具）
       notifications.json    0600  通知配置（P3 M3）：SMTP / IMAP 账户 + 日报 / 周报
                                   调度；密码 safeStorage 密文，跟随工作区（不同工作区
                                   可对不同邮箱），渲染层只见 hasPassword
@@ -183,7 +196,10 @@ scripts/        图标管线：make-icons.mjs 用 Electron 渲染 build/icon-dra
       browser-playbooks.md  0600  投递平台适配指令模板（P4，用户手编），Agent 投递前读进指令
       memory.md             0600  工作区级长期记忆，Agent 每次会话注入 instructions
       cache/                0700  （agent 截图等可再生数据落 cache/agent-screenshots/）
-      logs/                 0700  （agent.log：浏览器自动化逐步审计 JSONL，不含页面正文）
+      logs/                 0700  （agent.log：浏览器自动化逐步审计 JSONL，不含页面正文；
+                                  chat.log：每次 Agent run 的收发痕迹 JSONL——供应商 / 协议 /
+                                  baseURL origin / 模型 / 消息规模 / 首字节耗时 / chunk 类型
+                                  直方图 / 错误，不含 prompt 与模型输出）
 ```
 
 - **外观（主题 / 字号）是机器级偏好，不进工作区**：存根目录 `preferences.json`，

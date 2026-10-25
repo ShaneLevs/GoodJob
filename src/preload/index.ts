@@ -15,6 +15,7 @@ import type {
   ChatStreamEvent,
   Company,
   CompanyPatch,
+  ContextUsage,
   ConversationKey,
   ConversationState,
   GoodjobApi,
@@ -80,6 +81,12 @@ const api: GoodjobApi = {
     send: (payload: ChatSendPayload) =>
       ipcRenderer.invoke(IPC.chatSend, payload) as Promise<void>,
     abort: (key: ConversationKey) => ipcRenderer.send(IPC.chatAbort, key),
+    context: (key: ConversationKey) =>
+      ipcRenderer.invoke(IPC.chatContext, key) as Promise<ContextUsage>,
+    compact: (key: ConversationKey) =>
+      ipcRenderer.invoke(IPC.chatCompact, key) as Promise<ContextUsage>,
+    upload: (key: ConversationKey) =>
+      ipcRenderer.invoke(IPC.chatUpload, key) as Promise<UploadedFileMeta[] | null>,
     onChunk: (listener: (event: ChatStreamEvent) => void) =>
       subscribe(IPC.chatChunk, listener),
   },
@@ -104,7 +111,6 @@ const api: GoodjobApi = {
     save: (target: ResumeDocTarget, content: string) =>
       ipcRenderer.invoke(IPC.resumeSave, target, content) as Promise<ResumeDoc | null>,
     listTailored: () => ipcRenderer.invoke(IPC.resumeTailoredList) as Promise<TailoredDoc[]>,
-    upload: () => ipcRenderer.invoke(IPC.resumeUpload) as Promise<UploadedFileMeta[] | null>,
     onFileChanged: (listener: (event: ResumeFileEvent) => void) =>
       subscribe(IPC.resumeFileChanged, listener),
     scripts: {

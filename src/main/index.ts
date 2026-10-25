@@ -21,6 +21,7 @@ import { NotifyService } from "./notify-service";
 import { PreferencesStore } from "./preferences-store";
 import { ResumeStore } from "./resume-store";
 import { TaskManager } from "./tasks";
+import { uploadDirFor } from "./uploads";
 import { WorkspacesStore } from "./workspaces-store";
 import { registerIpc } from "./ipc";
 import { hardenRendererSession, hardenRendererWindow } from "./security";
@@ -213,6 +214,8 @@ if (!app.requestSingleInstanceLock()) {
       notify,
       browser: browserAgent,
       browserSettings: agentSettings,
+      logsDir: () => workspaces.currentPaths.logs,
+      uploadDir: (key) => uploadDirFor(workspaces.currentPaths, key, resumes.currentUploadDir()),
     });
     const runtime = agentRuntime;
     // 循环依赖从这里剪断：NotifyService 只认「到点要跑一次汇总」，跑什么由 runtime 决定。

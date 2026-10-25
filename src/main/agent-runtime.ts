@@ -1,3 +1,5 @@
+import fs from "node:fs";
+
 import {
   ToolLoopAgent,
   convertToModelMessages,
@@ -11,12 +13,15 @@ import {
 import { z } from "zod";
 
 import {
+  DEFAULT_REASONING_EFFORT,
   interviewKeyTarget,
   jobKeyTarget,
   type ChatSendPayload,
   type ChatStreamEvent,
+  type ContextUsage,
   type ConversationKey,
   type DigestKind,
+  type ReasoningEffort,
   type WireMessage,
 } from "@shared/types";
 
@@ -37,12 +42,30 @@ import type { ModelsStore, ResolvedModel } from "./models-store";
 import type { NotifyService } from "./notify-service";
 import type { ResumeStore } from "./resume-store";
 import type { TaskManager } from "./tasks";
+import { listUploadFiles, readUploadFile } from "./uploads";
 
 type Emit = (event: ChatStreamEvent) => void;
 
-/** 压缩阈值与保留条数：模型输入只送摘要 + 最近 KEEP_TAIL 条。 */
-const COMPACT_THRESHOLD_CHARS = 60_000;
-const COMPACT_KEEP_TAIL = 12;
+/**
+ * 上下文预算：一切按模型的 contextWindow 算，不再按「保留最近 N 条」截尾。
+ * 输出上限要从窗口里预留出来，否则「窗口 200K + 输出 64K」的请求会被供应商直接拒。
+ */
+function contextBudget(target: ResolvedModel): {
+  limit: number;
+  maxOutputTokens: number;
+  threshold: number;
+  keep: number;
+} {
+  const limit = Math.max(1, Math.floor(target.contextWindow));
+  const reserve = Math.min(Math.max(0, Math.floor(target.maxOutputTokens)), Math.floor(limit * 0.5));
+  // 输入可用量：给回复让出它的输出上限，但不允许低于窗口的一半（输出上限填得离谱时兜底）。
+  const usableInput = Math.max(limit - reserve, Math.floor(limit * 0.5));
+  // 用户要的「到 90% 自动压缩」：既看比例，也看是不是已经挤进输出预留区。
+  const threshold = Math.min(Math.floor(limit * 0.9), usableInput);
+  // 压完保留的尾部预算：阈值的一半不到，压一次能撑一阵，不会下一条消息又超。
+  const keep = Math.max(1, Math.floor(threshold * 0.45));
+  return { limit, maxOutputTokens: reserve, threshold, keep };
+}
 /** 压缩时单条消息喂给摘要器的上限，避免把整份简历原文塞两遍。 */
 const OUTLINE_CHAR_LIMIT = 4_000;
 /**
@@ -52,6 +75,12 @@ const OUTLINE_CHAR_LIMIT = 4_000;
 const OFFLINE_GATE_IDLE_MS = 10 * 60_000;
 /** 提交限速的随机抖动上限：在最小间隔之外再加 0–30s，避免机械等间隔。 */
 const SUBMIT_JITTER_MAX_MS = 30_000;
+/**
+ * 首字节 / 空闲看门狗：流式期间超过这么久没有任何 chunk 就判定网关卡死并中断。
+ * 没有它的时候，中转网关（如 CCConfig 自动网关）不回数据就等于 UI 永远停在
+ * 「正在思考…」——用户只能靠猜，日志里也留不下任何痕迹。
+ */
+const STREAM_IDLE_TIMEOUT_MS = 90_000;
 /** 平台适配模板注入指令的上限（模板是用户手编文件，失控时别拖垮上下文）。 */
 const PLAYBOOKS_INSTRUCTION_LIMIT = 4_000;
 
@@ -72,6 +101,10 @@ export interface AgentDeps {
   browser: BrowserAgentService;
   /** 浏览器自动化设置（P4）：启用开关与提交限速。 */
   browserSettings: BrowserAgentSettingsStore;
+  /** 诊断日志目录（`<workspace>/logs`）：每次 run 的收发痕迹写 chat.log。 */
+  logsDir: () => string;
+  /** 会话对应的上传目录（按 key 落到各自模块的 upload/，见 main/uploads.ts）。 */
+  uploadDir: (key: ConversationKey) => string;
 }
 
 /**
@@ -112,55 +145,134 @@ export class AgentRuntime {
       return;
     }
 
-    // 以渲染层装配好的完整历史为准（含新用户消息），再做压缩与截尾。
-    this.deps.conversations.updateMessages(key, payload.messages);
-    await this.maybeCompact(key, target);
-
-    const doc = this.deps.conversations.get(key);
-    const tail = doc.messages.slice(doc.summarizedFrom);
-    const instructions = this.buildInstructions(key, doc.summary, this.deps.memory.read());
-
-    const agent = new ToolLoopAgent({
-      model: createLanguageModel(target),
-      instructions,
-      tools: this.toolsFor(key),
-      // 审批分级（ARCHITECTURE §4）：
-      // - notify（外发邮件）与 browser_act（浏览器写动作）一律界面审批；
-      // - browser_submit 双重门：mode=interactive 走界面审批（附上模型给的
-      //   「将要提交的内容摘要」）；mode=offline 不走界面审批，由工具内调用
-      //   request_confirmation 邮件门（且仅当用户 ≥10 分钟无操作才可用）。
-      toolApproval: ({ toolCall }) => {
-        if (toolCall.toolName === "notify") return "user-approval";
-        if (toolCall.toolName === "browser_act") return "user-approval";
-        if (toolCall.toolName === "browser_submit") {
-          const input = toolCall.input as { mode?: unknown; summary?: unknown };
-          if (input.mode === "offline") return undefined;
-          const summary = typeof input.summary === "string" && input.summary.trim() !== "" ? input.summary : undefined;
-          return { type: "user-approval", reason: summary ?? "即将在浏览器面板里执行提交动作。" };
-        }
-        return undefined;
-      },
-    });
-
     const controller = new AbortController();
     this.running.set(key, controller);
 
+    const startedAt = Date.now();
+    const chunkTypes = new Map<string, number>();
+    let firstChunkMs: number | null = null;
+    let idleTimer: NodeJS.Timeout | null = null;
+    let idleFired = false;
+    // 每次收到 chunk 就重新计时；超时直接打断本次 run（AbortError 由 catch 接手）。
+    const armIdleWatchdog = (): void => {
+      if (idleTimer !== null) clearTimeout(idleTimer);
+      idleTimer = setTimeout(() => {
+        idleFired = true;
+        controller.abort();
+      }, STREAM_IDLE_TIMEOUT_MS);
+    };
+
     try {
+      // 以渲染层装配好的完整历史为准（含新用户消息），再做压缩与截尾。
+      // 这几步必须在 try 内：任何一步抛错都要走到 finally 的 done，
+      // 否则渲染层的流永远关不掉，UI 就卡在「正在思考…」。
+      // 看门狗从头盯到尾：压缩那一次 generateText 也会掉进同一个坑。
+      armIdleWatchdog();
+      this.deps.conversations.updateMessages(key, payload.messages);
+      await this.maybeCompact(key, target, controller.signal);
+
+      const doc = this.deps.conversations.get(key);
+      const tail = doc.messages.slice(doc.summarizedFrom);
+      const instructions = this.buildInstructions(key, doc.summary, this.deps.memory.read());
+
+      this.logChat({
+        event: "run:start",
+        key,
+        runId,
+        provider: target.providerName,
+        protocol: target.protocol,
+        baseURL: sanitizeBaseURL(target.baseURL),
+        model: target.modelId,
+        contextWindow: target.contextWindow,
+        maxOutputTokens: target.maxOutputTokens,
+        effort: target.reasoning ? this.effortFor(payload.effort) : "none",
+        messages: tail.length,
+        chars: estimateSize(tail),
+        inputTokens: measureMessages(tail).total,
+        instructionsChars: instructions.length,
+      });
+
+      const agent = new ToolLoopAgent({
+        model: createLanguageModel(target),
+        instructions,
+        tools: this.toolsFor(key),
+        // 输出上限来自模型配置（默认 64K）：不传则供应商按自己的默认值截断。
+        maxOutputTokens: target.maxOutputTokens,
+        // 思考等级只发给真正的推理模型：openai-compatible 会把所有非
+        // provider-default 的值当 reasoning_effort 发出去，标准模型会被严格中转 400。
+        ...(target.reasoning ? { reasoning: this.effortFor(payload.effort) } : {}),
+        // 审批分级（ARCHITECTURE §4）：
+        // - notify（外发邮件）与 browser_act（浏览器写动作）一律界面审批；
+        // - browser_submit 双重门：mode=interactive 走界面审批（附上模型给的
+        //   「将要提交的内容摘要」）；mode=offline 不走界面审批，由工具内调用
+        //   request_confirmation 邮件门（且仅当用户 ≥10 分钟无操作才可用）。
+        toolApproval: ({ toolCall }) => {
+          if (toolCall.toolName === "notify") return "user-approval";
+          if (toolCall.toolName === "browser_act") return "user-approval";
+          if (toolCall.toolName === "browser_submit") {
+            const input = toolCall.input as { mode?: unknown; summary?: unknown };
+            if (input.mode === "offline") return undefined;
+            const summary = typeof input.summary === "string" && input.summary.trim() !== "" ? input.summary : undefined;
+            return { type: "user-approval", reason: summary ?? "即将在浏览器面板里执行提交动作。" };
+          }
+          return undefined;
+        },
+      });
+
       const modelMessages = await convertToModelMessages(tail as UIMessage[]);
+      armIdleWatchdog();
       const result = await agent.stream({
         messages: modelMessages,
         abortSignal: controller.signal,
       });
       const stream = toUIMessageStream({ stream: result.fullStream });
       for await (const chunk of stream) {
+        if (firstChunkMs === null) {
+          firstChunkMs = Date.now() - startedAt;
+          this.logChat({ event: "run:first-chunk", key, runId, ms: firstChunkMs, chunk: chunk.type });
+        }
+        chunkTypes.set(chunk.type, (chunkTypes.get(chunk.type) ?? 0) + 1);
+        armIdleWatchdog();
         emit({ key, runId, type: "chunk", chunk });
       }
+      this.logChat({
+        event: "run:finish",
+        key,
+        runId,
+        status: "ok",
+        ms: Date.now() - startedAt,
+        firstChunkMs,
+        chunkTypes: Object.fromEntries(chunkTypes),
+      });
     } catch (error) {
+      this.logChat({
+        event: "run:finish",
+        key,
+        runId,
+        status: idleFired ? "idle-timeout" : controller.signal.aborted ? "aborted" : "error",
+        ms: Date.now() - startedAt,
+        firstChunkMs,
+        chunkTypes: Object.fromEntries(chunkTypes),
+        error: error instanceof Error ? `${error.name}: ${error.message}` : String(error),
+        // 栈只给真实错误配：主动停止 / 看门狗超时的那份栈是 abort 的内部调用，没用。
+        ...(!controller.signal.aborted && error instanceof Error ? { stack: error.stack } : {}),
+      });
       // 用户主动停止：渲染层经 abortSignal 已知情，不必再发错误块。
-      if (!controller.signal.aborted) {
+      if (idleFired) {
+        emit({
+          key,
+          runId,
+          type: "chunk",
+          chunk: {
+            type: "error",
+            errorText: `模型网关 ${Math.round(STREAM_IDLE_TIMEOUT_MS / 1000)} 秒没有任何数据返回（供应商「${target.providerName}」/ 模型 ${target.modelName}），已中断本次请求。请求确实发出去了，卡在网关或上游：去中转服务看一眼它的日志，或换一个模型再试。`,
+          },
+        });
+      } else if (!controller.signal.aborted) {
         emit({ key, runId, type: "chunk", chunk: { type: "error", errorText: describeError(error) } });
       }
     } finally {
+      if (idleTimer !== null) clearTimeout(idleTimer);
       this.running.delete(key);
       // 浏览器任务的 tab 锁是会话级的：run 结束（正常 / 出错 / 被停）就收掉。
       this.deps.browser.endTask(key);
@@ -168,9 +280,31 @@ export class AgentRuntime {
     }
   }
 
+  /**
+   * 一次 run 的收发痕迹（`<workspace>/logs/chat.log`，JSONL，0600）。
+   * 只记元数据：供应商 / 协议 / baseURL 的 origin / 模型 / 消息规模 / 首字节耗时 /
+   * chunk 类型直方图 / 错误——不记 prompt、不记模型输出、不记 Key（Key 只在 main）。
+   */
+  private logChat(entry: Record<string, unknown>): void {
+    try {
+      const dir = this.deps.logsDir();
+      fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+      fs.appendFileSync(`${dir}/chat.log`, `${JSON.stringify({ at: new Date().toISOString(), ...entry })}\n`, {
+        mode: 0o600,
+      });
+    } catch {
+      // 日志写不进去不影响对话（UI 的 chunk 流还在），只是这次没留下痕迹。
+    }
+  }
+
   abort(key: ConversationKey): void {
     this.lastActivityAt = Date.now();
     this.running.get(key)?.abort();
+  }
+
+  /** 思考等级归一：渲染层没传或传了非法值就按默认（medium）。 */
+  private effortFor(effort: ChatSendPayload["effort"]): ReasoningEffort {
+    return effort === "low" || effort === "medium" || effort === "high" ? effort : DEFAULT_REASONING_EFFORT;
   }
 
   abortAll(): void {
@@ -227,24 +361,100 @@ export class AgentRuntime {
   }
 
   /**
-   * 压缩：模型输入尾部超阈值时，把更早的消息并入摘要。摘要失败只跳过本次压缩，
-   * 不影响本次回复——宁可多花一次上下文，不让摘要故障挡住对话。
+   * 压缩：把更早的消息并入摘要，输入预算只留「摘要 + 最近若干轮」。
+   * 触发条件按模型的 contextWindow 算（默认到 90% 就压），保留量也是 token 预算
+   * 而不是固定条数——窗口 200K 和 1M 的模型本来就不该共用一个「保留 12 轮」。
+   * 摘要失败只跳过本次压缩，不影响本次回复：宁可多花一次上下文，不让摘要故障挡住对话。
    */
-  private async maybeCompact(key: ConversationKey, target: ResolvedModel): Promise<void> {
+  private async maybeCompact(
+    key: ConversationKey,
+    target: ResolvedModel,
+    signal?: AbortSignal,
+    force = false,
+  ): Promise<void> {
     const doc = this.deps.conversations.get(key);
+    const budget = contextBudget(target);
     const tail = doc.messages.slice(doc.summarizedFrom);
-    if (estimateSize(tail) < COMPACT_THRESHOLD_CHARS) return;
+    if (!force) {
+      const instructionsText = this.buildInstructions(key, doc.summary, this.deps.memory.read());
+      const used = estimateTokens(instructionsText) + measureMessages(tail).total;
+      if (used < budget.threshold) return;
+    }
 
-    const cutoff = Math.max(doc.summarizedFrom, doc.messages.length - COMPACT_KEEP_TAIL);
+    // 切点对齐到 user 消息：把一轮问答（user + 助手回复 + 工具结果）整块吞进摘要，
+    // 不要从两条消息中间切，否则模型会看到一个没有提问的答案。
+    let cutoff = doc.summarizedFrom + chooseCutoff(tail, budget.keep);
+    if (force && cutoff <= doc.summarizedFrom) {
+      // 手动压缩且尾部本来就装得下：用户就是想现在压，那就只留最后一轮。
+      let lastUser = -1;
+      for (let i = tail.length - 1; i >= 0; i -= 1) {
+        if (tail[i]?.role === "user") {
+          lastUser = i;
+          break;
+        }
+      }
+      if (lastUser > 0) cutoff = doc.summarizedFrom + lastUser;
+    }
     if (cutoff <= doc.summarizedFrom) return;
 
     const covered = doc.messages.slice(doc.summarizedFrom, cutoff);
     try {
-      const summary = await summarize(createLanguageModel(target), doc.summary, covered);
+      const summary = await summarize(createLanguageModel(target), doc.summary, covered, signal);
       this.deps.conversations.applySummary(key, summary, cutoff);
     } catch {
       // 摘要失败：保持原状，下次再试。
     }
+  }
+
+  /**
+   * 上下文用量（渲染层的「上下文」气泡）：同一套估算器算出来的，
+   * 和自动压缩用的阈值完全一致，不会出现「界面说 88%，实际上已经不压了」。
+   */
+  context(key: ConversationKey): ContextUsage {
+    const target = this.deps.models.resolveActive();
+    const doc = this.deps.conversations.get(key);
+    if (target === null) {
+      return {
+        limit: 0,
+        maxOutputTokens: 0,
+        threshold: 0,
+        instructions: 0,
+        input: 0,
+        output: 0,
+        reasoning: 0,
+        used: 0,
+        summarizedMessages: doc.summarizedFrom,
+      };
+    }
+    const budget = contextBudget(target);
+    const tail = doc.messages.slice(doc.summarizedFrom);
+    const instructionsText = this.buildInstructions(key, doc.summary, this.deps.memory.read());
+    const instructions = estimateTokens(instructionsText);
+    const breakdown = measureMessages(tail);
+    return {
+      limit: budget.limit,
+      maxOutputTokens: budget.maxOutputTokens,
+      threshold: budget.threshold,
+      instructions,
+      input: breakdown.input,
+      output: breakdown.output,
+      reasoning: breakdown.reasoning,
+      used: instructions + breakdown.total,
+      summarizedMessages: doc.summarizedFrom,
+    };
+  }
+
+  /**
+   * 手动压缩（渲染层「压缩上下文」按钮）：和自动压缩同一条路径，只是不看阈值。
+   * 返回压缩后的用量，让界面立刻反映结果。
+   */
+  async compact(key: ConversationKey): Promise<ContextUsage> {
+    this.lastActivityAt = Date.now();
+    const target = this.deps.models.resolveActive();
+    if (target !== null && !this.running.has(key)) {
+      await this.maybeCompact(key, target, undefined, true);
+    }
+    return this.context(key);
   }
 
   private buildInstructions(key: ConversationKey, summary: string | null, memoryText: string): string {
@@ -333,9 +543,11 @@ export class AgentRuntime {
    */
   private toolsFor(key: ConversationKey): ToolSet {
     const memoryTools = this.memoryTools();
+    // 上传的参考文件：每个会话都有（落各自模块的 upload/），面试官是限定角色所以不给。
+    const uploadTools = this.uploadTools(key);
 
     const jobKey = jobKeyTarget(key);
-    if (jobKey !== null) return { ...memoryTools, ...this.jobWorkbenchTools(jobKey) };
+    if (jobKey !== null) return { ...memoryTools, ...uploadTools, ...this.jobWorkbenchTools(jobKey) };
 
     const interviewKey = interviewKeyTarget(key);
     if (interviewKey !== null) return this.interviewSessionTools(interviewKey);
@@ -343,23 +555,47 @@ export class AgentRuntime {
     switch (key) {
       case "companies":
         // 公司调研（P4）：浏览器只读动作辅助调研，快照整理进 research。
-        return { ...memoryTools, ...this.companyTools(), ...this.browserTools(key) };
+        return { ...memoryTools, ...uploadTools, ...this.companyTools(), ...this.browserTools(key) };
       case "jobs":
         // 链接抓 JD / 自动搜索（P4）：只读浏览，回填岗位档案。
-        return { ...memoryTools, ...this.jobTools(), ...this.browserTools(key) };
+        return { ...memoryTools, ...uploadTools, ...this.jobTools(), ...this.browserTools(key) };
       case "applications":
         // 投递会话拿通知工具（P3 M3）：外发 / 邮件确认门都以「用户自己的邮箱」为准。
         // 填表投递（P4 M4）：browser_act / browser_submit 双重门 + 限速也在这里。
         return {
           ...memoryTools,
+          ...uploadTools,
           ...this.applicationTools(),
           ...this.notifyTools(),
           ...this.browserTools(key),
         };
       default:
         // resume：简历协作工具（P1）+ 话术 + 评分技能（后台任务）。
-        return { ...memoryTools, ...this.resumeTools(), ...this.skillTools() };
+        return { ...memoryTools, ...uploadTools, ...this.resumeTools(), ...this.skillTools() };
     }
+  }
+
+  /**
+   * 上传的参考文件（全模块通用）：用户在对话里「+」上传的文件原样落进当前模块的
+   * upload/ 目录，正文靠这两个工具按需读——对话里只出现文件名，不塞全文。
+   * 目录按会话 key 解析（见 main/uploads.ts 的 uploadDirFor），所以同一对工具在
+   * 简历 / 公司 / 岗位 / 投递 / 面试里读的是各自的目录，互不串。
+   */
+  private uploadTools(key: ConversationKey): ToolSet {
+    return {
+      upload_list: tool({
+        description:
+          "列出用户上传到当前模块 upload/ 目录里的参考文件（旧简历、JD 文档、公司资料等）。",
+        inputSchema: z.object({}),
+        execute: () => listUploadFiles(this.deps.uploadDir(key)),
+      }),
+      upload_read: tool({
+        description:
+          "读取一份上传文件的文本：PDF / DOCX 自动抽成纯文本，Markdown / 文本文件返回原文。fileName 用 upload_list 里的名字。",
+        inputSchema: z.object({ fileName: z.string() }),
+        execute: ({ fileName }) => readUploadFile(this.deps.uploadDir(key), fileName),
+      }),
+    };
   }
 
   /**
@@ -530,17 +766,6 @@ export class AgentRuntime {
           const saved = resumes.writeTailored(jobId, content, migrateFrom);
           return `已写入定制简历「${saved.key}」。`;
         },
-      }),
-      resume_upload_list: tool({
-        description: "列出用户上传到当前简历文件夹 upload/ 里的参考文件（旧简历、JD 文档等）。",
-        inputSchema: z.object({}),
-        execute: () => resumes.listUploads(),
-      }),
-      resume_upload_read: tool({
-        description:
-          "读取一份上传文件的文本：PDF / DOCX 自动抽成纯文本，Markdown / 文本文件返回原文。fileName 用 resume_upload_list 里的名字。",
-        inputSchema: z.object({ fileName: z.string() }),
-        execute: ({ fileName }) => resumes.readUpload(fileName),
       }),
     };
   }
@@ -1048,7 +1273,7 @@ const RESUME_INSTRUCTIONS = `你是 GoodJob 的简历协作 Agent，和用户共
 - 岗位定制简历：与岗位 1:1，文件名就是岗位的 jobId（用 job_list 把用户说的岗位对应到 id）。先读主简历，针对 JD 取舍改写，用 resume_tailored_write 按 jobId 存；遇到 P1 旧版按岗位名存的文件，读取后用 migrateFrom 一次性迁移成 jobId 键。改完说明你做了哪些取舍。
 - 面试话术也按 jobId 存（script_write / script_finalize）：结构按「自我介绍 / 项目深挖（预判 JD 相关的问题给要点式回答）/ 反问环节」组织；定稿锁定的是供引用的版本，之后仍可继续改。
 - 评分技能是后台任务：resume_job_evaluate（JD 匹配度）与 resume_integrity_check（主简历完整性）发起后不用等待，结果分别写进岗位的匹配度报告和简历的 reports/ 目录，告诉用户去哪看即可。
-- 用户上传的旧简历和参考文件都存放在当前简历文件夹的 upload/ 里（对话里只会提到文件名，不会有全文）。需要内容时用 resume_upload_list 查看、resume_upload_read 读取（PDF / Word 会自动抽成纯文本），再把旧简历整理成上面的版式写入 resume.md；信息缺失的地方留空并提醒用户补，不要编造。
+- 用户上传的旧简历和参考文件都存放在当前简历文件夹的 upload/ 里（对话里只会提到文件名，不会有全文）。需要内容时用 upload_list 查看、upload_read 读取（PDF / Word 会自动抽成纯文本），再把旧简历整理成上面的版式写入 resume.md；信息缺失的地方留空并提醒用户补，不要编造。
 
 回复用简体中文。不确定的经历细节先问用户，宁缺毋滥。`;
 
@@ -1064,6 +1289,7 @@ const COMPANIES_INSTRUCTIONS = `你是 GoodJob 的公司档案助手，帮用户
 - browser_read 打开公司官网 / 公开页，snapshot 后提炼要点，用 company_update 写进 research（标注来源 URL 与时间）。调研是只读的：不点登录、不提交任何表单、不点「投递 / 沟通 / 收藏」这类改变平台状态的按钮。
 - 坑清单：先 snapshot 拿到 @ref 再动作；元素在视口外时先 scrollintoview 再重新 snapshot（ref 可能变）；open 导航之后旧 ref 全部失效，必须重新 snapshot；一次只做一步，看完结果再决定下一步。
 - 页面要求登录 / 验证码 / 人机校验时立即停下，把情况告诉用户，交回人工。
+- 用户在这个会话里上传的参考资料落在本模块的 upload/ 目录（对话里只出现文件名）：upload_list 看清单、upload_read 读正文（PDF / Word 自动抽纯文本）。原文没说的信息不要替用户编造。
 
 回复用简体中文。`;
 
@@ -1081,6 +1307,7 @@ const JOBS_INSTRUCTIONS = `你是 GoodJob 的岗位档案助手，帮用户维�
 - 自动搜索：在招聘站按用户给的条件搜索（填搜索框 / 点搜索是读的过程），snapshot 结果列表回填候选岗位（job_create）；每个候选标注来源 URL。只读列表页，绝不点进投递流程。
 - 坑清单：先 snapshot 拿到 @ref 再动作；元素在视口外先 scrollintoview 再重新 snapshot（ref 可能变）；open 导航后旧 ref 全部失效，必须重新 snapshot；一次一步，看完结果再动。
 - 结果去重：job_list 里已有的岗位不要重复建档；页面要求登录 / 验证码时立即停下交回用户。
+- 用户在这个会话里上传的参考资料落在本模块的 upload/ 目录（对话里只出现文件名）：upload_list 看清单、upload_read 读正文（PDF / Word 自动抽纯文本）。原文没说的信息不要替用户编造。
 
 回复用简体中文。`;
 
@@ -1100,6 +1327,7 @@ const APPLICATIONS_INSTRUCTIONS = `你是 GoodJob 的投递管理助手，帮用
 - 提交后立刻 snapshot 确认结果（成功页 / 报错），失败就停下说明，不要盲目重试。遇到验证码 / 扫码 / 人机校验立即停下交回用户。
 - 各平台的适配口径（入口、字段、禁忌）以「投递平台适配指令」一节为准；模板没写的平台按通用规则保守执行，拿不准的先问用户。
 - 坑清单：先 snapshot 拿到 @ref 再动作；元素在视口外先 scrollintoview 再重新 snapshot（ref 可能变）；open 导航后旧 ref 全部失效，必须重新 snapshot。
+- 用户在这个会话里上传的参考资料落在本模块的 upload/ 目录（对话里只出现文件名）：upload_list 看清单、upload_read 读正文（PDF / Word 自动抽纯文本）。原文没说的信息不要替用户编造。
 
 回复用简体中文。不确定的状态先问用户，宁缺毋滥。`;
 
@@ -1112,6 +1340,7 @@ const JOB_WORKBENCH_INSTRUCTIONS = `你是 GoodJob 的岗位定制简历协作 A
 - 针对 JD 取舍：最匹配的经历放前面、成果量化、技能表述贴近 JD 关键词；JD 没要求的内容果断砍，不编造经历。
 - 面试话术也属于这个岗位：job_script_read / job_script_write（Markdown，结构按「自我介绍 / 项目深挖 / 反问环节」），定稿用 job_script_finalize——锁定的是供引用的版本，之后仍可继续编辑，改过会提示重新定稿。
 - 重新评估匹配度：让用户在岗位表点「简历评估」（后台任务会读你写好的定制稿），本会话没有评估工具。
+- 用户在这个会话里上传的参考资料落在该岗位的 upload/ 目录（对话里只出现文件名）：upload_list 看清单、upload_read 读正文（PDF / Word 自动抽纯文本）。原文没说的信息不要替用户编造。
 
 回复用简体中文。不确定的经历细节先问用户，宁缺毋滥。`;
 
@@ -1136,6 +1365,7 @@ async function summarize(
   model: LanguageModel,
   previous: string | null,
   covered: WireMessage[],
+  abortSignal?: AbortSignal,
 ): Promise<string> {
   const outline = covered
     .map((message) => `${message.role === "user" ? "用户" : "助手"}：${messageOutline(message)}`)
@@ -1143,6 +1373,7 @@ async function summarize(
 
   const result = await generateText({
     model,
+    abortSignal,
     prompt: [
       "把下面这段求职助手的对话历史压缩成一份要点摘要，供后续对话作为上下文。",
       "要求保留：用户的关键事实与偏好（经历、技能、目标岗位、城市等）、已完成的操作（如写入/修改了简历的哪些部分）、尚未解决的事项。",
@@ -1179,6 +1410,66 @@ function estimateSize(messages: WireMessage[]): number {
   return total;
 }
 
+/**
+ * token 估算：CJK 逐字按 1 token，其余按 3.5 字符 1 token。
+ * 宁可估高一点：估高只是早一点压缩，估低会把请求顶到供应商的上下文上限而报错。
+ */
+function estimateTokens(text: string): number {
+  if (text === "") return 0;
+  let wide = 0;
+  let narrow = 0;
+  for (const char of text) {
+    const code = char.codePointAt(0) ?? 0;
+    if (code >= 0x2e80) wide += 1;
+    else narrow += 1;
+  }
+  return wide + Math.ceil(narrow / 3.5);
+}
+
+/** 按角色/部件拆开用量：界面上分 Input / Output / Reasoning 三行展示。 */
+function measureMessages(messages: WireMessage[]): {
+  input: number;
+  output: number;
+  reasoning: number;
+  total: number;
+} {
+  let input = 0;
+  let output = 0;
+  let reasoning = 0;
+  for (const message of messages) {
+    for (const part of message.parts as Array<{ type?: string }>) {
+      const tokens = estimateTokens(JSON.stringify(part));
+      if (part.type === "reasoning") reasoning += tokens;
+      else if (message.role === "assistant" && part.type === "text") output += tokens;
+      else input += tokens;
+    }
+  }
+  return { input, output, reasoning, total: input + output + reasoning };
+}
+
+/**
+ * 压缩切点（返回 messages 里第一个保留的下标）：从尾部往前累加，
+ * 取「装进 keepTokens 预算的最早一轮 user 消息」。至少要留下最后一轮，
+ * 否则压完历史全空，模型不知道用户刚说了什么。
+ */
+function chooseCutoff(messages: WireMessage[], keepTokens: number): number {
+  let accumulated = 0;
+  let cutoff = messages.length;
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    accumulated += estimateTokens(JSON.stringify(messages[i]));
+    if (accumulated > keepTokens) break;
+    if (messages[i]?.role === "user") cutoff = i;
+  }
+  if (cutoff === messages.length) {
+    // 一轮都装不下：退化成「只留最后一轮」。
+    for (let i = messages.length - 1; i >= 0; i -= 1) {
+      if (messages[i]?.role === "user") return i;
+    }
+    return messages.length;
+  }
+  return cutoff;
+}
+
 /** 可中断的等待（提交限速用）：run 被停止时立刻抛错，不挂着干等。 */
 function sleepWithAbort(ms: number, signal?: AbortSignal): Promise<void> {
   if (ms <= 0) return Promise.resolve();
@@ -1202,4 +1493,14 @@ function describeError(error: unknown): string {
   if (error instanceof Error) return error.message;
   if (typeof error === "string") return error;
   return "调用模型失败（未知错误）";
+}
+
+/** baseURL 进日志前去掉 userinfo / query：有些中转服务会把 Key 拼在 URL 里。 */
+function sanitizeBaseURL(raw: string): string {
+  try {
+    const url = new URL(raw);
+    return `${url.protocol}//${url.host}${url.pathname}`;
+  } catch {
+    return "(无法解析的 baseURL)";
+  }
 }

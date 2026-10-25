@@ -15,6 +15,7 @@ import type {
   ProviderDraft,
   PublicProvider,
 } from "@shared/types";
+import { DEFAULT_CONTEXT_WINDOW, DEFAULT_MAX_OUTPUT_TOKENS } from "@shared/types";
 
 import {
   AlertDialog,
@@ -565,6 +566,7 @@ function ModelEditor({ open, model, onCancel, onSubmit }: ModelEditorProps) {
   const [id, setId] = useState("");
   const [name, setName] = useState("");
   const [contextWindow, setContextWindow] = useState("");
+  const [maxOutputTokens, setMaxOutputTokens] = useState("");
   const [vision, setVision] = useState(false);
   const [reasoning, setReasoning] = useState(false);
   const [enabled, setEnabled] = useState(true);
@@ -575,6 +577,9 @@ function ModelEditor({ open, model, onCancel, onSubmit }: ModelEditorProps) {
     setId(model?.id ?? "");
     setName(model?.name ?? "");
     setContextWindow(model?.contextWindow === undefined ? "" : String(model.contextWindow));
+    setMaxOutputTokens(
+      model?.maxOutputTokens === undefined ? "" : String(model.maxOutputTokens),
+    );
     setVision(model?.vision === true);
     setReasoning(model?.reasoning === true);
     setEnabled(model?.enabled !== false);
@@ -584,11 +589,17 @@ function ModelEditor({ open, model, onCancel, onSubmit }: ModelEditorProps) {
     const trimmedId = id.trim();
     if (trimmedId === "") return;
     const tokens = Number(contextWindow);
+    const maxTokens = Number(maxOutputTokens);
     onSubmit({
       id: trimmedId,
       name: name.trim() === "" ? trimmedId : name.trim(),
       enabled,
-      contextWindow: Number.isFinite(tokens) && tokens > 0 ? Math.round(tokens) : undefined,
+      contextWindow:
+        Number.isFinite(tokens) && tokens > 0 ? Math.round(tokens) : DEFAULT_CONTEXT_WINDOW,
+      maxOutputTokens:
+        Number.isFinite(maxTokens) && maxTokens > 0
+          ? Math.round(maxTokens)
+          : DEFAULT_MAX_OUTPUT_TOKENS,
       vision,
       reasoning,
     });
@@ -636,15 +647,31 @@ function ModelEditor({ open, model, onCancel, onSubmit }: ModelEditorProps) {
 
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="model-context" className="text-xs text-muted-foreground">
-              上下文窗口（token，可选）
+              上下文窗口（token）
             </Label>
             <Input
               id="model-context"
               inputMode="numeric"
               value={contextWindow}
-              placeholder="例如 128000"
+              placeholder={`默认 ${DEFAULT_CONTEXT_WINDOW}`}
               onChange={(event) => setContextWindow(event.target.value)}
             />
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="model-max-output" className="text-xs text-muted-foreground">
+              最大输出（token）
+            </Label>
+            <Input
+              id="model-max-output"
+              inputMode="numeric"
+              value={maxOutputTokens}
+              placeholder={`默认 ${DEFAULT_MAX_OUTPUT_TOKENS}`}
+              onChange={(event) => setMaxOutputTokens(event.target.value)}
+            />
+            <p className="text-[11px] leading-relaxed text-muted-foreground">
+              单次回复的上限，同时会从上下文窗口里预留这么多空间。
+            </p>
           </div>
 
           <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
@@ -691,7 +718,8 @@ function fromPresetModel(preset: PresetModel): ModelEntry {
     id: preset.id,
     name: preset.name ?? preset.id,
     enabled: true,
-    contextWindow: preset.contextWindow,
+    contextWindow: preset.contextWindow ?? DEFAULT_CONTEXT_WINDOW,
+    maxOutputTokens: preset.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
     vision: preset.vision,
     reasoning: preset.reasoning,
   };

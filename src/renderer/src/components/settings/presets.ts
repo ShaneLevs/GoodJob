@@ -4,6 +4,8 @@ export interface PresetModel {
   id: string;
   name?: string;
   contextWindow?: number;
+  /** 单次回复上限；不填就用出厂默认（64K）。 */
+  maxOutputTokens?: number;
   vision?: boolean;
   reasoning?: boolean;
 }

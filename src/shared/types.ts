@@ -59,6 +59,19 @@ export interface WireMessage {
   metadata?: unknown;
 }
 
+/** 模型上下文的出厂默认值：窗口 200K，单次回复最多 64K。 */
+export const DEFAULT_CONTEXT_WINDOW = 200_000;
+export const DEFAULT_MAX_OUTPUT_TOKENS = 64_000;
+
+/**
+ * 思考等级（输入框里的那个选项）：映射到 AI SDK 顶层 `reasoning` 参数，
+ * 由各供应商适配层翻成自己的字段（OpenAI 的 reasoning_effort、Anthropic 的预算等）。
+ */
+export type ReasoningEffort = "low" | "medium" | "high";
+
+/** 默认思考等级（新建会话 / 老会话没有记录时）。 */
+export const DEFAULT_REASONING_EFFORT: ReasoningEffort = "medium";
+
 export interface ConversationState {
   key: ConversationKey;
   messages: WireMessage[];
@@ -70,6 +83,33 @@ export interface ChatSendPayload {
   key: ConversationKey;
   runId: string;
   messages: WireMessage[];
+  /** 本次 run 的思考等级；不传则用默认值（medium）。只在推理模型上生效。 */
+  effort?: ReasoningEffort;
+}
+
+/**
+ * 上下文用量（`chat:context` 的返回）：token 数为估算值（按字符数折算），
+ * 只用于展示与压缩判定，不是供应商账单上的数字。
+ */
+export interface ContextUsage {
+  /** 模型的上下文窗口（token）。 */
+  limit: number;
+  /** 单次回复预留的输出上限（token）。 */
+  maxOutputTokens: number;
+  /** 到多少就自动压缩（约等于窗口 90%，并为输出预留空间）。 */
+  threshold: number;
+  /** 指令（系统提示 + 记忆 + 摘要）占用的 token。 */
+  instructions: number;
+  /** 会送进模型的消息里，用户 / 工具结果的 token。 */
+  input: number;
+  /** 助手正文的 token。 */
+  output: number;
+  /** 思考内容的 token。 */
+  reasoning: number;
+  /** 合计 = instructions + input + output + reasoning。 */
+  used: number;
+  /** 已被压缩进摘要的消息条数。 */
+  summarizedMessages: number;
 }
 
 /** main → 渲染层的流事件：chunk 是 UIMessageChunk（可序列化线协议）；done 表示 run 结束。 */
@@ -109,7 +149,7 @@ export interface TailoredDoc {
 }
 
 /**
- * 一次上传的回执：文件已原样复制进当前简历文件夹的 `upload/` 目录。
+ * 一次上传的回执：文件已原样复制进当前会话所属模块的 `upload/` 目录。
  * 消息里只带文件名，内容由 Agent 用工具自行读取（不再把全文塞进消息）。
  */
 export interface UploadedFileMeta {
@@ -569,9 +609,15 @@ export interface ModelEntry {
   /** Display name; falls back to `id` when empty. */
   name: string;
   enabled: boolean;
-  /** Context window in tokens — only used for the UI badge. */
-  contextWindow?: number;
+  /**
+   * 上下文窗口（token）：Agent 的对话预算由它决定——不再按「保留最近 12 条」截尾，
+   * 而是用到约 90% 就把更早的消息压进摘要。缺省 200K（DEFAULT_CONTEXT_WINDOW）。
+   */
+  contextWindow: number;
+  /** 单次回复的输出上限（token），同时从上下文里预留这么多空间。缺省 64K。 */
+  maxOutputTokens: number;
   vision?: boolean;
+  /** 推理模型：勾上才会把思考等级发给供应商，也才会显示思考过程。 */
   reasoning?: boolean;
 }
 
@@ -607,6 +653,8 @@ export interface ActiveModel {
   name: string;
   /** False when the provider needs an API key that has not been stored. */
   ready: boolean;
+  /** 推理模型：输入框才显示思考等级选项。 */
+  reasoning: boolean;
 }
 
 export interface ModelsConfig {
@@ -684,6 +732,9 @@ export const IPC = {
   chatSend: "chat:send",
   chatAbort: "chat:abort",
   chatChunk: "chat:chunk",
+  chatContext: "chat:context",
+  chatCompact: "chat:compact",
+  chatUpload: "chat:upload",
   conversationsGet: "conversations:get",
   conversationsSync: "conversations:sync",
   resumeList: "resume:list",
@@ -694,7 +745,6 @@ export const IPC = {
   resumeRead: "resume:read",
   resumeSave: "resume:save",
   resumeTailoredList: "resume:tailored-list",
-  resumeUpload: "resume:upload",
   resumeFileChanged: "resume:file-changed",
   resumeScriptList: "resume:script-list",
   resumeScriptRead: "resume:script-read",
@@ -765,6 +815,16 @@ export interface GoodjobApi {
     send: (payload: ChatSendPayload) => Promise<void>;
     abort: (key: ConversationKey) => void;
     onChunk: (listener: (event: ChatStreamEvent) => void) => () => void;
+    /** 当前会话的上下文用量（token 估算 + 自动压缩阈值）。 */
+    context: (key: ConversationKey) => Promise<ContextUsage>;
+    /** 手动压缩：把更早的消息并进摘要，返回压缩后的用量。 */
+    compact: (key: ConversationKey) => Promise<ContextUsage>;
+    /**
+     * 打开系统选择框，把所选文件原样复制进这个会话所属模块的上传目录
+     * （公司 / 岗位 / 投递 / 面试各自己的 `upload/`，简历落当前简历文件夹）；
+     * 取消返回 null。正文由 Agent 用 upload_list / upload_read 按需读。
+     */
+    upload: (key: ConversationKey) => Promise<UploadedFileMeta[] | null>;
   };
   conversations: {
     /** 模块滚动会话：挂载时取初始消息，run 结束后用 sync 落盘装配结果。 */
@@ -781,11 +841,6 @@ export interface GoodjobApi {
     read: (target: ResumeDocTarget) => Promise<ResumeDoc | null>;
     save: (target: ResumeDocTarget, content: string) => Promise<ResumeDoc | null>;
     listTailored: () => Promise<TailoredDoc[]>;
-    /**
-     * 打开系统选择框，把所选文件原样复制进当前简历文件夹的 `upload/`；
-     * 取消返回 null，成功返回每个文件的落盘回执。
-     */
-    upload: () => Promise<UploadedFileMeta[] | null>;
     onFileChanged: (listener: (event: ResumeFileEvent) => void) => () => void;
     /*
      * 岗位话术（scripts/<jobId>.md + 定稿 sidecar）：与岗位 1:1，按 jobId 读写。

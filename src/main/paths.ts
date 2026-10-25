@@ -16,13 +16,14 @@ import { app } from "electron";
  *       models.json           0600  模型供应商 + 模型（含 safeStorage 密文）
  *       conversations/        0700  滚动会话（一个模块一个 <key>.json）
  *       resumes/              0700  主简历们：一份一个文件夹（resume.md/history/tailored/
- *                                   scripts 话术/reports 评分报告）
- *       companies/            0700  公司档案：一个公司一个 <id>.json
- *       jobs/                 0700  岗位档案：一个岗位一个 <id>.json
+ *                                   scripts 话术/reports 评分报告/upload 上传的参考文件）
+ *       companies/            0700  公司档案：一个公司一个 <id>.json + upload/ 上传落点
+ *       jobs/                 0700  岗位档案：一个岗位一个 <id>.json + upload/<jobId>/
  *       applications/         0700  投递档案：一个投递一个 <id>.json +
- *                                   pipeline.json 状态流水线定义（工作区级）
+ *                                   pipeline.json 状态流水线定义（工作区级）+ upload/
  *       interviews/           0700  模拟面试：一场面试一个 <id>.json（逐轮问答
  *                                   本体在 conversations/ 的 interview:<id> 会话里）
+ *                                   + upload/<interviewId>/
  *       notifications.json    0600  通知配置（P3）：SMTP / IMAP 账户 + 日报 / 周报调度，
  *                                   密码是 safeStorage 密文（跟随工作区，可对不同邮箱）
  *       agent-browser.json    0600  浏览器自动化设置（P4）：启用开关 + 提交限速参数
@@ -59,6 +60,15 @@ export interface WorkspacePaths {
   applications: string;
   /** 模拟面试记录集合：一场面试一个 `<id>.json`（interviews-store）。 */
   interviews: string;
+  /**
+   * 各模块会话的上传落点（`uploads.ts` 按会话 key 选目录）：
+   * companies/upload、jobs/upload（`job:<id>` 再下一层）、applications/upload、
+   * interviews/upload（`interview:<id>` 再下一层）；简历会话用 resumes/<id>/upload。
+   */
+  companiesUpload: string;
+  jobsUpload: string;
+  applicationsUpload: string;
+  interviewsUpload: string;
   /** 通知配置（notify-store）：SMTP / IMAP 账户 + 日报 / 周报调度，密码 safeStorage 密文。 */
   notifications: string;
   /** 浏览器自动化设置（P4，agent/ 下的 settings-store）：开关 + 限速参数 + 提交记账。 */
@@ -102,6 +112,10 @@ export function workspacePaths(root: string, id: string): WorkspacePaths {
     jobs: path.join(dir, "jobs"),
     applications: path.join(dir, "applications"),
     interviews: path.join(dir, "interviews"),
+    companiesUpload: path.join(dir, "companies", "upload"),
+    jobsUpload: path.join(dir, "jobs", "upload"),
+    applicationsUpload: path.join(dir, "applications", "upload"),
+    interviewsUpload: path.join(dir, "interviews", "upload"),
     notifications: path.join(dir, "notifications.json"),
     agentBrowser: path.join(dir, "agent-browser.json"),
     browserPlaybooks: path.join(dir, "browser-playbooks.md"),
@@ -120,6 +134,10 @@ export function ensureWorkspaceDirs(paths: WorkspacePaths): void {
   ensureDir(paths.jobs);
   ensureDir(paths.applications);
   ensureDir(paths.interviews);
+  ensureDir(paths.companiesUpload);
+  ensureDir(paths.jobsUpload);
+  ensureDir(paths.applicationsUpload);
+  ensureDir(paths.interviewsUpload);
   ensureDir(paths.cache);
   ensureDir(paths.logs);
 }

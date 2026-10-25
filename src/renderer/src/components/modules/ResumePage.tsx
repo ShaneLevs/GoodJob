@@ -1,7 +1,4 @@
-import { useCallback } from "react";
-
 import type { UIMessage } from "ai";
-import type { UploadedFileMeta } from "@shared/types";
 
 import { useConversationInitial, useModuleChat } from "@/components/chat/use-module-chat";
 import { ChatPanel } from "@/components/ChatPanel";
@@ -35,11 +32,6 @@ function ResumePageLoaded({
 }: ModulePageProps & { initialMessages: UIMessage[] }) {
   const chat = useModuleChat("resume", initialMessages);
 
-  const uploadReferenceFile = useCallback(async (): Promise<UploadedFileMeta[] | null> => {
-    // main 侧完成选择框 + 落盘到 resumes/<当前>/upload/；取消返回 null。
-    return window.goodjob.resume.upload();
-  }, []);
-
   return (
     <ResizablePanelGroup orientation="horizontal">
       <ResizablePanel minSize={CHAT_MIN_WIDTH} defaultSize="45%">
@@ -55,7 +47,7 @@ function ResumePageLoaded({
             onSend={chat.send}
             onStop={chat.stop}
             onApprovalResponse={chat.respondApproval}
-            onUploadFile={uploadReferenceFile}
+            conversationKey="resume"
           />
         </div>
       </ResizablePanel>

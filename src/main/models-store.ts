@@ -13,6 +13,7 @@ import type {
   ProviderDraft,
   ProviderProtocol,
 } from "@shared/types";
+import { DEFAULT_CONTEXT_WINDOW, DEFAULT_MAX_OUTPUT_TOKENS } from "@shared/types";
 
 import { writeJsonFile, type WorkspacePaths } from "./paths";
 
@@ -59,6 +60,12 @@ export interface ResolvedModel {
   missingApiKey: boolean;
   modelId: string;
   modelName: string;
+  /** Agent 的对话预算（token）：压缩阈值与保留尾部都从它算。 */
+  contextWindow: number;
+  /** 单次回复的输出上限，同时从窗口里预留出来。 */
+  maxOutputTokens: number;
+  /** 推理模型：勾上才把思考等级发给供应商。 */
+  reasoning: boolean;
 }
 
 /**
@@ -180,6 +187,9 @@ export class ModelsStore {
       missingApiKey,
       modelId: active.model.id,
       modelName: normalizeModelName(active.model),
+      contextWindow: active.model.contextWindow,
+      maxOutputTokens: active.model.maxOutputTokens,
+      reasoning: active.model.reasoning === true,
     };
   }
 
@@ -220,6 +230,7 @@ export class ModelsStore {
       modelId: model.id,
       name: normalizeModelName(model),
       ready: provider.apiKeyEncrypted !== null || !requiresApiKey(provider.baseURL),
+      reasoning: model.reasoning === true,
     };
   }
 
@@ -302,7 +313,11 @@ function readModel(input: unknown): ModelEntry | null {
     name: typeof input.name === "string" ? input.name : "",
     enabled: input.enabled !== false,
     contextWindow:
-      typeof input.contextWindow === "number" ? input.contextWindow : undefined,
+      typeof input.contextWindow === "number" ? input.contextWindow : DEFAULT_CONTEXT_WINDOW,
+    maxOutputTokens:
+      typeof input.maxOutputTokens === "number"
+        ? input.maxOutputTokens
+        : DEFAULT_MAX_OUTPUT_TOKENS,
     vision: input.vision === true,
     reasoning: input.reasoning === true,
   });
@@ -332,10 +347,16 @@ function normalizeModel(model: ModelEntry): ModelEntry {
     id,
     name: normalizeModelName(model),
     enabled: model.enabled !== false,
+    // 老配置里没有这两个字段：按出厂默认值补齐（200K 窗口 / 64K 输出）。
+    contextWindow:
+      typeof model.contextWindow === "number" && model.contextWindow > 0
+        ? Math.round(model.contextWindow)
+        : DEFAULT_CONTEXT_WINDOW,
+    maxOutputTokens:
+      typeof model.maxOutputTokens === "number" && model.maxOutputTokens > 0
+        ? Math.round(model.maxOutputTokens)
+        : DEFAULT_MAX_OUTPUT_TOKENS,
   };
-  if (typeof model.contextWindow === "number" && model.contextWindow > 0) {
-    entry.contextWindow = Math.round(model.contextWindow);
-  }
   if (model.vision === true) entry.vision = true;
   if (model.reasoning === true) entry.reasoning = true;
   return entry;

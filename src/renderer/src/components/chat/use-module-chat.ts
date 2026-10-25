@@ -7,7 +7,13 @@ import {
   type UIMessage,
 } from "ai";
 
-import type { ConversationKey, UploadedFileMeta, WireMessage } from "@shared/types";
+import type {
+  ConversationKey,
+  ReasoningEffort,
+  UploadedFileMeta,
+  WireMessage,
+} from "@shared/types";
+import { DEFAULT_REASONING_EFFORT } from "@shared/types";
 
 import { createIpcChatTransport } from "./ipc-chat-transport";
 
@@ -60,8 +66,9 @@ export interface ModuleChat {
   /**
    * 发一条带附件的用户消息。附件以 `data-upload` part 附带（UI 展示用，
    * convertToModelMessages 默认不把 data part 送进模型），模型只看到 text 部分。
+   * effort 是输入框里选的思考等级，只在推理模型上生效。
    */
-  send: (text: string, uploads: UploadedFileMeta[]) => void;
+  send: (text: string, uploads: UploadedFileMeta[], effort?: ReasoningEffort) => void;
   stop: () => void;
   /**
    * 工具审批（P3 M3）：批准 / 拒绝一个「等待批准」的工具调用。
@@ -78,7 +85,9 @@ export interface ModuleChat {
  * sendAutomaticallyWhen 兑现 toolApproval 界面审批（P1 预留位）：批准 / 拒绝后自动续跑。
  */
 export function useModuleChat(key: ConversationKey, initialMessages: UIMessage[]): ModuleChat {
-  const transport = useMemo(() => createIpcChatTransport(key), [key]);
+  // 当前思考等级：随发送带出去，不在会话里持久化（重启回落默认值）。
+  const effortRef = useRef<ReasoningEffort>(DEFAULT_REASONING_EFFORT);
+  const transport = useMemo(() => createIpcChatTransport(key, () => effortRef.current), [key]);
   // 本轮 run 的起点（performance.now）：结束时刻算进耗时，写进助手消息 metadata。
   const runStartedAtRef = useRef<number | null>(null);
 
@@ -127,9 +136,11 @@ export function useModuleChat(key: ConversationKey, initialMessages: UIMessage[]
     messages,
     status,
     errorText: error?.message ?? null,
-    send: (text: string, uploads: UploadedFileMeta[]) => {
+    send: (text: string, uploads: UploadedFileMeta[], effort?: ReasoningEffort) => {
       const trimmed = text.trim();
       if (trimmed === "" && uploads.length === 0) return;
+
+      effortRef.current = effort ?? DEFAULT_REASONING_EFFORT;
 
       const parts: UIMessage["parts"] = [];
       if (trimmed !== "") parts.push({ type: "text", text: trimmed });

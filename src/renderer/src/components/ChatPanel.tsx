@@ -5,24 +5,46 @@ import {
   Check,
   ChevronDown,
   CircleAlert,
-  Clock,
   Copy,
   FileText,
-  LoaderCircle,
   MessageCircleDashed,
   Plus,
   Settings2,
   Square,
-  Wrench,
   X,
 } from "lucide-react";
 
 import type { ChatStatus, UIMessage } from "ai";
-import type { ModelSelection, ModelsConfig, UploadedFileMeta } from "@shared/types";
+import { DEFAULT_REASONING_EFFORT } from "@shared/types";
+import type {
+  ContextUsage,
+  ConversationKey,
+  ModelSelection,
+  ModelsConfig,
+  ReasoningEffort,
+  UploadedFileMeta,
+} from "@shared/types";
 
+import { useContextUsage } from "./chat/use-context-usage";
 import { Markdown } from "./markdown";
 import { Button } from "./ui/button";
 import { Bubble, BubbleContent } from "./ui/bubble";
+import {
+  CodeBlock,
+  CodeBlockActions,
+  CodeBlockContent,
+  CodeBlockCopyButton,
+  CodeBlockHeader,
+  CodeBlockTitle,
+} from "./ui/code-block";
+import {
+  Trace,
+  TraceCollapsible,
+  TraceCollapsibleContent,
+  TraceCollapsibleTrigger,
+  TraceLine,
+  TraceTitle,
+} from "./ui/trace";
 import {
   Attachment,
   AttachmentAction,
@@ -43,6 +65,8 @@ import {
   DropdownMenuTrigger,
 } from "./ui/dropdown-menu";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "./ui/empty";
+import { HoverCard, HoverCardContent, HoverCardTrigger } from "./ui/hover-card";
+import { Progress } from "./ui/progress";
 import {
   InputGroup,
   InputGroupAddon,
@@ -58,14 +82,13 @@ import {
   MessageScrollerProvider,
   MessageScrollerViewport,
 } from "./ui/message-scroller";
-import { cn } from "@/lib/utils";
 
 interface ChatPanelProps {
   messages: UIMessage[];
   status: ChatStatus;
   errorText: string | null;
   models: ModelsConfig | null;
-  onSend: (text: string, uploads: UploadedFileMeta[]) => void;
+  onSend: (text: string, uploads: UploadedFileMeta[], effort: ReasoningEffort) => void;
   onStop: () => void;
   onSelectModel: (selection: ModelSelection) => void;
   /** 模型下拉里的「模型设置」跳转。 */
@@ -77,16 +100,17 @@ interface ChatPanelProps {
   emptyDescription?: string;
   placeholder?: string;
   /**
-   * 输入框左下角「+」的上传动作：main 侧完成文件选择并落盘（不解析内容），
-   * 返回上传回执供发送时附带；用户取消返回 null。不传则不显示 + 按钮。
-   * 哪个模块复用对话，就由它决定文件存到哪——这里是唯一的模块差异点。
+   * 是否显示「+」上传：默认显示（文件落这个会话所属模块的 upload/，Agent 用
+   * upload_list / upload_read 读）。模拟面试不发这些工具，那边传 false。
    */
-  onUploadFile?: () => Promise<UploadedFileMeta[] | null>;
+  allowUpload?: boolean;
   /**
    * 工具审批（P3 M3）：「等待批准」的工具条上给批准 / 拒绝按钮，回填后自动续跑。
    * 不传时等待态只显示状态、不给按钮。
    */
   onApprovalResponse?: (approvalId: string, approved: boolean) => void;
+  /** 会话 key：用来查上下文用量（用量只在 main 算，界面只展示 / 触发压缩）。 */
+  conversationKey?: ConversationKey;
 }
 
 interface ModelOption {
@@ -129,6 +153,31 @@ function formatContext(tokens: number | undefined): string | null {
   return `${Math.round(tokens / 1000)}K`;
 }
 
+/** 上下文气泡里的数字：0 也要显示成一个 0，不能像模型标签那样省略。 */
+function formatTokens(tokens: number): string {
+  return tokens <= 0 ? "0" : (formatContext(tokens) ?? "0");
+}
+
+const EFFORT_OPTIONS: Array<{ value: ReasoningEffort; label: string }> = [
+  { value: "low", label: "低" },
+  { value: "medium", label: "中" },
+  { value: "high", label: "高" },
+];
+
+function effortLabel(effort: ReasoningEffort): string {
+  return EFFORT_OPTIONS.find((option) => option.value === effort)?.label ?? "中";
+}
+
+/** 用量拆行：和 main 侧 measureMessages 的分类一一对应。 */
+function usageRows(usage: ContextUsage): Array<{ label: string; value: number }> {
+  return [
+    { label: "指令", value: usage.instructions },
+    { label: "输入", value: usage.input },
+    { label: "输出", value: usage.output },
+    { label: "思考", value: usage.reasoning },
+  ];
+}
+
 function formatBytes(size: number): string {
   if (size < 1024) return `${size} B`;
   if (size < 1024 * 1024) return `${Math.round(size / 1024)} KB`;
@@ -165,6 +214,69 @@ function durationOf(message: UIMessage): number | null {
   return typeof metadata?.durationMs === "number" ? metadata.durationMs : null;
 }
 
+/**
+ * 一次 run 的工作时长，形如「1 分 55 秒」。
+ */
+function formatWorkDuration(ms: number): string {
+  const total = Math.max(1, Math.round(ms / 1000));
+  const minutes = Math.floor(total / 60);
+  const seconds = total % 60;
+  return minutes > 0 ? `${minutes} 分 ${seconds} 秒` : `${seconds} 秒`;
+}
+
+/**
+ * 把一条消息的 parts 切成两种块：正文块，和「思考 + 工具调用」块。
+ *
+ * reasoning / tool-* 连续出现就合并成一个 Trace（AI Elements 的 chain-of-thought 结构：
+ * 一串可展开的步骤行），中间夹着正文时切开——保持流式的真实顺序。
+ * 其他 part（step-start / file / data-*）不进渲染。
+ */
+type TraceGroup =
+  | { kind: "text"; key: string; part: { type: "text"; text: string } }
+  | { kind: "trace"; key: string; parts: UIMessage["parts"] };
+
+function groupTraceParts(parts: UIMessage["parts"]): TraceGroup[] {
+  const groups: TraceGroup[] = [];
+  let buffer: UIMessage["parts"] = [];
+
+  const flush = (): void => {
+    if (buffer.length === 0) return;
+    groups.push({ kind: "trace", key: `trace-${groups.length}`, parts: buffer });
+    buffer = [];
+  };
+
+  for (const part of parts) {
+    if (part.type === "text") {
+      flush();
+      groups.push({ kind: "text", key: `text-${groups.length}`, part });
+      continue;
+    }
+    if (part.type === "reasoning" || part.type.startsWith("tool-")) {
+      buffer.push(part);
+    }
+  }
+  flush();
+
+  return groups;
+}
+
+/** busy 期间逐秒走的计数器：等首字节的空窗里给用户一个「还在动」的凭据。 */
+function useBusySeconds(busy: boolean): number {
+  const [seconds, setSeconds] = useState(0);
+  useEffect(() => {
+    if (!busy) {
+      setSeconds(0);
+      return;
+    }
+    const startedAt = Date.now();
+    const timer = setInterval(() => {
+      setSeconds(Math.round((Date.now() - startedAt) / 1000));
+    }, 500);
+    return () => clearInterval(timer);
+  }, [busy]);
+  return seconds;
+}
+
 export function ChatPanel({
   messages,
   status,
@@ -178,10 +290,12 @@ export function ChatPanel({
   emptyTitle = "今天想找什么样的工作？",
   emptyDescription = "说说你的目标岗位、城市和年限，我来帮你梳理。",
   placeholder = "说说你想找什么岗位，或者直接问我",
-  onUploadFile,
+  allowUpload = true,
   onApprovalResponse,
+  conversationKey,
 }: ChatPanelProps) {
   const [draft, setDraft] = useState("");
+  const [effort, setEffort] = useState<ReasoningEffort>(DEFAULT_REASONING_EFFORT);
   const [pendingUploads, setPendingUploads] = useState<UploadedFileMeta[]>([]);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -213,6 +327,12 @@ export function ChatPanel({
   const hasOptions = groups.length > 0;
   const modelLabel = active === null ? "选择模型" : `${active.providerName}/${active.name}`;
   const busy = status === "submitted" || status === "streaming";
+  // 上下文用量：只在 main 算（与自动压缩阈值同一套），这里只管展示与手动压缩。
+  const { usage, compact } = useContextUsage(conversationKey ?? null, busy);
+  const usagePercent =
+    usage.limit > 0 ? Math.min(100, Math.round((usage.used / usage.limit) * 100)) : 0;
+  const thresholdPercent =
+    usage.limit > 0 ? Math.round((usage.threshold / usage.limit) * 100) : 0;
   const canSend = (draft.trim() !== "" || pendingUploads.length > 0) && !busy;
 
   // 发出后到首段文本出现前的空窗：流光占位，否则用户不知道 Agent 是否在动。
@@ -221,7 +341,13 @@ export function ChatPanel({
     lastMessage !== undefined &&
     lastMessage.role === "assistant" &&
     lastMessage.parts.some((part) => part.type === "text" && part.text.trim() !== "");
-  const waiting = busy && !lastHasText;
+  // 只有「既没正文、也没思考内容」才是真的空窗：思考型模型在思考时已经有区块可看。
+  const lastHasReasoning =
+    lastMessage !== undefined &&
+    lastMessage.role === "assistant" &&
+    lastMessage.parts.some((part) => part.type === "reasoning" && part.text.trim() !== "");
+  const waiting = busy && !lastHasText && !lastHasReasoning;
+  const busySeconds = useBusySeconds(busy);
 
   const submit = (): void => {
     if (!canSend) return;
@@ -229,17 +355,19 @@ export function ChatPanel({
       draft.trim() !== ""
         ? draft.trim()
         : `我上传了文件 ${pendingUploads.map((file) => `「${file.fileName}」`).join("、")}，请查看。`;
-    onSend(text, pendingUploads);
+    onSend(text, pendingUploads, effort);
     setDraft("");
     setPendingUploads([]);
     inputRef.current?.focus();
   };
 
-  // 「+」上传：文件选择与落盘都在 main 侧完成，这里只把回执挂成待发附件。
+  // 「+」上传：文件选择与落盘都在 main 侧完成（落这个会话所属模块的 upload/），
+  // 这里只把回执挂成待发附件。文件存到哪由 main 的 uploadDirFor 按 key 决定。
   const uploadFiles = (): void => {
-    if (onUploadFile === undefined || busy) return;
+    if (!allowUpload || conversationKey === undefined || busy) return;
     setUploadError(null);
-    onUploadFile()
+    window.goodjob.chat
+      .upload(conversationKey)
       .then((uploaded) => {
         if (uploaded !== null) setPendingUploads((prev) => [...prev, ...uploaded]);
       })
@@ -300,7 +428,7 @@ export function ChatPanel({
           }}
         />
         <InputGroupAddon align="block-end" className="gap-1.5">
-          {onUploadFile !== undefined && (
+          {allowUpload && conversationKey !== undefined && (
             <InputGroupButton
               size="icon-sm"
               variant="ghost"
@@ -313,62 +441,139 @@ export function ChatPanel({
             </InputGroupButton>
           )}
 
-          <DropdownMenu onOpenChange={onOverlayChange}>
-            <DropdownMenuTrigger asChild>
-              <InputGroupButton
-                size="sm"
-                variant="ghost"
-                className="ml-auto max-w-56 text-xs text-muted-foreground"
-                aria-label={`模型：${modelLabel}`}
-              >
-                <span className="truncate">{modelLabel}</span>
-                <ChevronDown className="size-3.5 shrink-0 opacity-60" />
-              </InputGroupButton>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-64">
-              {hasOptions ? (
-                <DropdownMenuRadioGroup
-                  value={activeKey ?? undefined}
-                  onValueChange={(key) => {
-                    const option = groups
-                      .flatMap((group) => group.options)
-                      .find((item) => item.key === key);
-                    if (option !== undefined) onSelectModel(option.selection);
-                  }}
+          {conversationKey !== undefined && usage.limit > 0 && (
+            <HoverCard openDelay={10} closeDelay={100} onOpenChange={onOverlayChange}>
+              <HoverCardTrigger asChild>
+                <InputGroupButton
+                  size="sm"
+                  variant="ghost"
+                  className="shrink-0 text-xs text-muted-foreground"
+                  aria-label="上下文用量"
                 >
-                  {groups.map((group, index) => (
-                    <div key={group.name}>
-                      {index > 0 && <DropdownMenuSeparator />}
-                      <DropdownMenuLabel className="text-xs text-muted-foreground">
-                        {group.name}
-                      </DropdownMenuLabel>
-                      {group.options.map((option) => (
-                        <DropdownMenuRadioItem key={option.key} value={option.key}>
-                          <span className="truncate">{option.label}</span>
-                          {option.context !== null && (
-                            <span className="ml-auto pl-2 text-[11px] text-muted-foreground">
-                              {option.context}
-                            </span>
-                          )}
-                        </DropdownMenuRadioItem>
-                      ))}
+                  {usagePercent}%
+                </InputGroupButton>
+              </HoverCardTrigger>
+              <HoverCardContent align="start" className="flex w-64 flex-col gap-3">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="font-medium">上下文</span>
+                  <span className="text-muted-foreground">
+                    {formatTokens(usage.used)} / {formatTokens(usage.limit)}
+                  </span>
+                </div>
+                <Progress value={usagePercent} aria-label="上下文用量" />
+                <div className="flex flex-col gap-1">
+                  {usageRows(usage).map((row) => (
+                    <div key={row.label} className="flex justify-between gap-3">
+                      <span className="text-muted-foreground">{row.label}</span>
+                      <span>{formatTokens(row.value)}</span>
                     </div>
                   ))}
-                </DropdownMenuRadioGroup>
-              ) : (
-                <div className="px-2 py-3 text-xs leading-relaxed text-muted-foreground">
-                  还没有可用的模型。
-                  <br />
-                  先在设置里添加一个供应商，并为它启用至少一个模型。
                 </div>
-              )}
-              <DropdownMenuSeparator />
-              <DropdownMenuItem onSelect={onOpenModelSettings}>
-                <Settings2 />
-                模型设置
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
+                <div className="flex items-center justify-between gap-3 border-t border-border/60 pt-2">
+                  <span className="text-xs text-muted-foreground">
+                    到 {thresholdPercent}% 自动压缩
+                  </span>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={busy || usage.used === 0}
+                    onClick={() => void compact()}
+                  >
+                    压缩
+                  </Button>
+                </div>
+              </HoverCardContent>
+            </HoverCard>
+          )}
+
+          {/* 右侧一组：模型 / 思考等级，统一 `ml-auto` 推到最右。 */}
+          <div className="ml-auto flex items-center gap-1">
+            <DropdownMenu onOpenChange={onOverlayChange}>
+              <DropdownMenuTrigger asChild>
+                <InputGroupButton
+                  size="sm"
+                  variant="ghost"
+                  className="max-w-56 text-xs text-muted-foreground"
+                  aria-label={`模型：${modelLabel}`}
+                >
+                  <span className="truncate">{modelLabel}</span>
+                  <ChevronDown className="size-3.5 shrink-0 opacity-60" />
+                </InputGroupButton>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-64">
+                {hasOptions ? (
+                  <DropdownMenuRadioGroup
+                    value={activeKey ?? undefined}
+                    onValueChange={(key) => {
+                      const option = groups
+                        .flatMap((group) => group.options)
+                        .find((item) => item.key === key);
+                      if (option !== undefined) onSelectModel(option.selection);
+                    }}
+                  >
+                    {groups.map((group, index) => (
+                      <div key={group.name}>
+                        {index > 0 && <DropdownMenuSeparator />}
+                        <DropdownMenuLabel className="text-xs text-muted-foreground">
+                          {group.name}
+                        </DropdownMenuLabel>
+                        {group.options.map((option) => (
+                          <DropdownMenuRadioItem key={option.key} value={option.key}>
+                            <span className="truncate">{option.label}</span>
+                            {option.context !== null && (
+                              <span className="ml-auto pl-2 text-[11px] text-muted-foreground">
+                                {option.context}
+                              </span>
+                            )}
+                          </DropdownMenuRadioItem>
+                        ))}
+                      </div>
+                    ))}
+                  </DropdownMenuRadioGroup>
+                ) : (
+                  <div className="px-2 py-3 text-xs leading-relaxed text-muted-foreground">
+                    还没有可用的模型。
+                    <br />
+                    先在设置里添加一个供应商，并为它启用至少一个模型。
+                  </div>
+                )}
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onSelect={onOpenModelSettings}>
+                  <Settings2 />
+                  模型设置
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+
+            {/* 思考等级：只对勾了「推理」的模型有意义（普通模型传 reasoning_effort 会被中转 400）。 */}
+            {active?.reasoning === true && (
+              <DropdownMenu onOpenChange={onOverlayChange}>
+                <DropdownMenuTrigger asChild>
+                  <InputGroupButton
+                    size="sm"
+                    variant="ghost"
+                    className="shrink-0 text-xs text-muted-foreground"
+                    aria-label={`思考等级：${effortLabel(effort)}`}
+                  >
+                    <span>思考 {effortLabel(effort)}</span>
+                    <ChevronDown className="size-3.5 shrink-0 opacity-60" />
+                  </InputGroupButton>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-44">
+                  <DropdownMenuRadioGroup
+                    value={effort}
+                    onValueChange={(value) => setEffort(value as ReasoningEffort)}
+                  >
+                    {EFFORT_OPTIONS.map((option) => (
+                      <DropdownMenuRadioItem key={option.value} value={option.value}>
+                        {option.label}
+                      </DropdownMenuRadioItem>
+                    ))}
+                  </DropdownMenuRadioGroup>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )}
+          </div>
 
           {busy ? (
             <InputGroupButton
@@ -455,39 +660,41 @@ export function ChatPanel({
 
                   const duration = durationOf(message);
                   const fullText = messageText(message);
+                  const streaming = isLast && busy;
+                  const groups = groupTraceParts(message.parts);
+                  // 最后一块正文是这轮的答复（留在外面），它前面的思考 / 工具 / 中间正文
+                  // 全部打包进「工作过程」。
+                  const last = groups[groups.length - 1];
+                  const answer = last !== undefined && last.kind === "text" ? last : null;
+                  const work = answer === null ? groups : groups.slice(0, -1);
                   const showFooter = !(isLast && busy) && (duration !== null || fullText !== "");
 
                   return (
                     <MessageScrollerItem key={message.id}>
                       <Message>
                         <MessageContent className="gap-3">
-                          {message.parts.map((part, partIndex) => {
-                            if (part.type === "text") {
-                              return (
-                                <Markdown
-                                  key={partIndex}
-                                  streaming={isLast && status === "streaming"}
-                                >
-                                  {part.text}
-                                </Markdown>
-                              );
-                            }
-                            if (part.type.startsWith("tool-")) {
-                              return (
-                                <ToolChip
-                                  key={partIndex}
-                                  part={part as unknown as ToolPartView}
-                                  onRespond={onApprovalResponse}
-                                />
-                              );
-                            }
-                            // step-start / file / data-* 等 P1 不展示。
-                            return null;
-                          })}
+                          {work.length > 0 && (
+                            <WorkBlock
+                              groups={work}
+                              streaming={streaming}
+                              elapsedMs={
+                                streaming
+                                  ? busySeconds * 1000
+                                  : duration
+                              }
+                              onRespond={onApprovalResponse}
+                            />
+                          )}
+
+                          {answer !== null && (
+                            <Markdown streaming={isLast && status === "streaming"}>
+                              {answer.part.text}
+                            </Markdown>
+                          )}
 
                           {showFooter && (
                             <MessageFooter className="gap-1 px-0">
-                              {duration !== null && (
+                              {duration !== null && work.length === 0 && (
                                 <span className="tabular-nums">耗时 {formatDuration(duration)}</span>
                               )}
                               <CopyButton text={fullText} />
@@ -500,8 +707,14 @@ export function ChatPanel({
                 })}
 
                 {waiting && (
-                  <div className="text-sm text-muted-foreground">
+                  <div className="flex items-baseline gap-2 text-sm text-muted-foreground">
                     <span className="shimmer">正在思考…</span>
+                    {busySeconds >= 3 && (
+                      <span className="text-xs tabular-nums text-muted-foreground/70">
+                        {busySeconds}s
+                        {busySeconds >= 30 ? "（网关迟迟不回数据，90 秒没动静会自动中断）" : ""}
+                      </span>
+                    )}
                   </div>
                 )}
 
@@ -560,70 +773,219 @@ function CopyButton({ text }: { text: string }) {
   );
 }
 
-function ToolChip({
+/**
+ * 工具名 → 中文标签。工具是 `<名词>_<动作>` 的 snake_case，这里拆开查两张小表，
+ * 新增工具不用改这里；查不到就原样显示。
+ */
+const TOOL_NOUNS: Record<string, string> = {
+  browser: "页面",
+  memory: "记忆",
+  resume: "简历",
+  resume_tailored: "定制稿",
+  resume_job: "岗位匹配",
+  script: "话术",
+  job: "岗位",
+  company: "公司",
+  application: "投递",
+  pipeline: "流水线",
+};
+
+const TOOL_VERBS: Record<string, string> = {
+  read: "读取",
+  list: "查看",
+  get: "查看",
+  write: "写入",
+  create: "新建",
+  update: "更新",
+  delete: "删除",
+  act: "操作",
+  submit: "提交",
+  evaluate: "评估",
+  check: "检查",
+  finalize: "定稿",
+  advance: "推进",
+  info: "查看",
+};
+
+/** 名字不按 `<名词>_<动作>` 来的少数几个，单独给标签。 */
+const TOOL_SPECIAL: Record<string, string> = {
+  upload_list: "查看上传文件",
+  upload_read: "读取上传文件",
+  notify: "发送通知",
+  request_confirmation: "请求确认",
+  memory_read: "读取记忆",
+  memory_write: "更新记忆",
+  browser_read: "读取页面",
+  browser_act: "操作页面",
+  browser_submit: "提交表单",
+};
+
+function toolLabel(name: string): string {
+  const special = TOOL_SPECIAL[name];
+  if (special !== undefined) return special;
+  const segments = name.split("_");
+  const verb = segments[segments.length - 1] ?? name;
+  const noun = TOOL_NOUNS[segments.slice(0, -1).join("_")];
+  const action = TOOL_VERBS[verb];
+  return noun !== undefined && action !== undefined ? `${action}${noun}` : name;
+}
+
+/** JSON / 字符串统一成一段可复制的文本。 */
+function valueText(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (value === undefined) return "";
+  return JSON.stringify(value, null, 2) ?? String(value);
+}
+
+/**
+ * 一轮 run 的「工作过程」：思考 + 工具调用 + 中间正文整段折成一行「已工作 X 分 Y 秒」。
+ * 跑的时候默认展开（看得见在动），这轮结束后默认收起；点标题随时展开。
+ */
+function WorkBlock({
+  groups,
+  streaming,
+  elapsedMs,
+  onRespond,
+}: {
+  groups: TraceGroup[];
+  streaming: boolean;
+  elapsedMs: number | null;
+  onRespond?: (approvalId: string, approved: boolean) => void;
+}) {
+  const [open, setOpen] = useState<boolean>();
+
+  return (
+    <TraceCollapsible open={open ?? streaming} onOpenChange={setOpen}>
+      <div className="border-b border-border/60 pb-2">
+        <TraceCollapsibleTrigger>
+          <TraceLine status={streaming ? "running" : undefined}>
+            <TraceTitle>
+              {elapsedMs === null ? "工作过程" : `已工作 ${formatWorkDuration(elapsedMs)}`}
+            </TraceTitle>
+          </TraceLine>
+        </TraceCollapsibleTrigger>
+      </div>
+      <TraceCollapsibleContent>
+        <Trace>
+          {groups.map((group) =>
+            group.kind === "text" ? (
+              <Markdown key={group.key} streaming={streaming}>
+                {group.part.text}
+              </Markdown>
+            ) : (
+              group.parts.map((part, index) =>
+                part.type === "reasoning" ? (
+                  <ReasoningRow key={`${group.key}-${index}`} text={part.text} streaming={streaming} />
+                ) : (
+                  <ToolRow
+                    key={`${group.key}-${index}`}
+                    part={part as unknown as ToolPartView}
+                    onRespond={onRespond}
+                  />
+                ),
+              )
+            ),
+          )}
+        </Trace>
+      </TraceCollapsibleContent>
+    </TraceCollapsible>
+  );
+}
+
+/** 思考内容：标题写状态，展开是模型的原始推理文本；无图标，完成后默认收起。 */
+function ReasoningRow({ text, streaming }: { text: string; streaming: boolean }) {
+  const [open, setOpen] = useState<boolean>();
+
+  const line = (
+    <TraceLine status={streaming ? "running" : undefined}>
+      <TraceTitle>{streaming ? "思考中" : "思考完成"}</TraceTitle>
+    </TraceLine>
+  );
+
+  if (text.length === 0) return line;
+
+  return (
+    <TraceCollapsible open={open ?? streaming} onOpenChange={setOpen}>
+      <TraceCollapsibleTrigger>{line}</TraceCollapsibleTrigger>
+      <TraceCollapsibleContent className="whitespace-pre-wrap">
+        {text}
+      </TraceCollapsibleContent>
+    </TraceCollapsible>
+  );
+}
+
+/** 一条工具调用：标题是「运行 + 中文工具名」，无图标；输入 / 输出 / 错误折在行内。
+ *  执行中展开，完成后默认收起。 */
+function ToolRow({
   part,
   onRespond,
 }: {
   part: ToolPartView;
   onRespond?: (approvalId: string, approved: boolean) => void;
 }) {
-  const [open, setOpen] = useState(false);
-
+  const [open, setOpen] = useState<boolean>();
   const name = part.type.slice("tool-".length);
-  const running = part.state === "input-streaming" || part.state === "input-available";
+  const label = toolLabel(name);
+
+  const running =
+    part.state === "input-streaming" ||
+    part.state === "input-available" ||
+    part.state === "approval-responded";
   const failed = part.state === "output-error";
+  const denied = part.state === "output-denied";
   const waiting =
     part.state === "approval-requested" && part.approval !== undefined && !part.approval.isAutomatic;
-  // 审批后的中间态：批准了但续跑还没带回输出 / 明确拒绝。
-  const responded = part.state === "approval-responded";
-  const denied = part.state === "output-denied";
 
-  const statusLabel = failed
-    ? "失败"
+  const status = failed
+    ? ("error" as const)
     : waiting
-      ? "等待批准"
-      : denied
-        ? "已拒绝"
-        : responded
-          ? "已批准，执行中"
-          : running
-            ? "运行中"
-            : "完成";
+      ? ("pending" as const)
+      : running
+        ? ("running" as const)
+        : undefined;
+
+  const title = failed
+    ? `运行 ${label} 失败`
+    : denied
+      ? `已拒绝：${label}`
+      : waiting
+        ? `等待批准：${label}`
+        : `运行 ${label}`;
+
+  const errorText = failed ? part.errorText : undefined;
+  const hasDetail =
+    (part.input !== undefined && part.input !== null) ||
+    (part.output !== undefined && part.output !== null) ||
+    (errorText !== undefined && errorText !== "");
+
+  const line = (
+    <TraceLine status={status}>
+      <TraceTitle>{title}</TraceTitle>
+    </TraceLine>
+  );
 
   return (
-    <div className="w-full overflow-hidden rounded-lg border border-border/60 bg-muted/30 text-xs">
-      <button
-        type="button"
-        className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left hover:bg-muted/50"
-        onClick={() => setOpen((prev) => !prev)}
-        aria-expanded={open}
-      >
-        {failed || denied ? (
-          <CircleAlert
-            className={cn("size-3.5 shrink-0", failed ? "text-destructive" : "text-muted-foreground")}
-          />
-        ) : waiting ? (
-          <Clock className="size-3.5 shrink-0 text-muted-foreground" />
-        ) : running || responded ? (
-          <LoaderCircle className="size-3.5 shrink-0 animate-spin text-muted-foreground" />
-        ) : (
-          <Check className="size-3.5 shrink-0 text-muted-foreground" />
-        )}
-        <Wrench className="size-3 shrink-0 text-muted-foreground" />
-        <span className="font-medium">{name}</span>
-        <span className="text-muted-foreground">{statusLabel}</span>
-        <ChevronDown
-          className={cn(
-            "ml-auto size-3.5 text-muted-foreground transition-transform",
-            open && "rotate-180",
-          )}
-        />
-      </button>
-      {/* 审批动作不收进折叠区：等待批准要一眼可见、一次点按完成（P1 预留位的兑现）。 */}
-      {waiting && onRespond !== undefined && (
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-t border-border/60 bg-background/60 px-2.5 py-2">
-          <span className="min-w-0 flex-1 text-[11px] leading-relaxed text-muted-foreground">
-            {part.approval?.requestReason ?? "这个动作在等你批准后才会执行。"}
+    <div className="flex min-w-0 flex-col gap-1.5">
+      {hasDetail ? (
+        <TraceCollapsible open={open ?? (running || waiting)} onOpenChange={setOpen}>
+          <TraceCollapsibleTrigger>{line}</TraceCollapsibleTrigger>
+          <TraceCollapsibleContent className="text-xs">
+            <ToolDetail
+              input={part.input}
+              output={part.output}
+              errorText={errorText}
+            />
+          </TraceCollapsibleContent>
+        </TraceCollapsible>
+      ) : (
+        line
+      )}
+
+      {/* 审批动作不收进折叠区：等待批准要一眼可见、一次点按完成。 */}
+      {waiting && onRespond !== undefined && part.approval !== undefined && (
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2 ps-6">
+          <span className="min-w-0 flex-1 text-xs leading-relaxed text-muted-foreground">
+            {part.approval.requestReason ?? "这个动作在等你批准后才会执行。"}
           </span>
           <div className="flex shrink-0 gap-1.5">
             <Button
@@ -634,44 +996,68 @@ function ToolChip({
             >
               拒绝
             </Button>
-            <Button size="sm" className="h-7 text-xs" onClick={() => onRespond(part.approval!.id, true)}>
+            <Button
+              size="sm"
+              className="h-7 text-xs"
+              onClick={() => onRespond(part.approval!.id, true)}
+            >
               批准
             </Button>
           </div>
-        </div>
-      )}
-      {open && (
-        <div className="space-y-2 border-t border-border/60 px-2.5 py-2">
-          {part.input !== undefined && part.input !== null && (
-            <div>
-              <p className="mb-1 text-[11px] font-medium text-muted-foreground">输入</p>
-              <JsonBlock value={part.input} />
-            </div>
-          )}
-          {part.state === "output-error" && part.errorText !== undefined && (
-            <div>
-              <p className="mb-1 text-[11px] font-medium text-muted-foreground">错误</p>
-              <JsonBlock value={part.errorText} />
-            </div>
-          )}
-          {part.output !== undefined && part.output !== null && (
-            <div>
-              <p className="mb-1 text-[11px] font-medium text-muted-foreground">输出</p>
-              <JsonBlock value={part.output} />
-            </div>
-          )}
         </div>
       )}
     </div>
   );
 }
 
-function JsonBlock({ value }: { value: unknown }) {
-  const text =
-    typeof value === "string" ? value : JSON.stringify(value, null, 2) ?? String(value);
+/** 工具入参 / 输出。长 JSON 用 CodeBlock 折在 Trace 里，带复制按钮。 */
+function ToolDetail({
+  input,
+  output,
+  errorText,
+}: {
+  input: unknown;
+  output: unknown;
+  errorText: string | undefined;
+}) {
   return (
-    <pre className="max-h-56 overflow-auto rounded-md bg-muted/60 p-2 font-mono text-[11px] leading-relaxed whitespace-pre-wrap">
-      {text}
-    </pre>
+    <div className="flex flex-col gap-2">
+      {input !== undefined && input !== null && (
+        <CodeBlock size="sm">
+          <CodeBlockHeader>
+            <CodeBlockTitle>调用参数</CodeBlockTitle>
+            <CodeBlockActions>
+              <CodeBlockCopyButton value={valueText(input)} />
+            </CodeBlockActions>
+          </CodeBlockHeader>
+          <CodeBlockContent wrap className="max-h-56">
+            {valueText(input)}
+          </CodeBlockContent>
+        </CodeBlock>
+      )}
+      {errorText !== undefined && errorText !== "" && (
+        <CodeBlock size="sm" variant="destructive">
+          <CodeBlockHeader>
+            <CodeBlockTitle>错误</CodeBlockTitle>
+          </CodeBlockHeader>
+          <CodeBlockContent wrap className="max-h-56">
+            {errorText}
+          </CodeBlockContent>
+        </CodeBlock>
+      )}
+      {output !== undefined && output !== null && (
+        <CodeBlock size="sm">
+          <CodeBlockHeader>
+            <CodeBlockTitle>结果</CodeBlockTitle>
+            <CodeBlockActions>
+              <CodeBlockCopyButton value={valueText(output)} />
+            </CodeBlockActions>
+          </CodeBlockHeader>
+          <CodeBlockContent wrap className="max-h-56">
+            {valueText(output)}
+          </CodeBlockContent>
+        </CodeBlock>
+      )}
+    </div>
   );
 }

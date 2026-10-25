@@ -1,14 +1,25 @@
 import type { ChatTransport, UIMessage, UIMessageChunk } from "ai";
 
-import type { ChatStreamEvent, ConversationKey, WireMessage } from "@shared/types";
+import type {
+  ChatStreamEvent,
+  ConversationKey,
+  ReasoningEffort,
+  WireMessage,
+} from "@shared/types";
 
 /**
  * 把 AI SDK 的 ChatTransport 桥到 Electron IPC：
  * `sendMessages` → invoke `chat:send`，main 侧 agent 的 UIMessageChunk 流经
  * `chat:chunk` 事件回来，这里拼成 ReadableStream 交给 useChat 消费。
  * Agent 永远跑在 main（Key 不出 main），渲染层只拿 chunk。
+ *
+ * 思考等级用 getter 传：它可以在输入框里随时改，但 transport 一旦重建，
+ * useChat 的流就会断——所以只在每次发送时取一次当前值。
  */
-export function createIpcChatTransport(key: ConversationKey): ChatTransport<UIMessage> {
+export function createIpcChatTransport(
+  key: ConversationKey,
+  getEffort?: () => ReasoningEffort,
+): ChatTransport<UIMessage> {
   return {
     async sendMessages({ messages, abortSignal }) {
       const runId = crypto.randomUUID();
@@ -55,6 +66,7 @@ export function createIpcChatTransport(key: ConversationKey): ChatTransport<UIMe
         key,
         runId,
         messages: messages as unknown as WireMessage[],
+        effort: getEffort?.(),
       });
 
       return new ReadableStream<UIMessageChunk>({

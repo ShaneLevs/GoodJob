@@ -38,6 +38,7 @@ import type { PreferencesStore } from "./preferences-store";
 import { exportPdf } from "./pdf-export";
 import type { ResumeStore } from "./resume-store";
 import type { TaskManager } from "./tasks";
+import { saveUploadFile, uploadDirFor } from "./uploads";
 import type { WorkspacesStore } from "./workspaces-store";
 
 export interface IpcDeps {
@@ -117,6 +118,8 @@ export function registerIpc(deps: IpcDeps): void {
     void runtime.send(payload, (event) => sendToUi(IPC.chatChunk, event));
   });
   ipcMain.on(IPC.chatAbort, (_event, key: ConversationKey) => runtime.abort(key));
+  ipcMain.handle(IPC.chatContext, (_event, key: ConversationKey) => runtime.context(key));
+  ipcMain.handle(IPC.chatCompact, (_event, key: ConversationKey) => runtime.compact(key));
 
   ipcMain.handle(IPC.conversationsGet, (_event, key: ConversationKey) => {
     const doc = conversations.get(key);
@@ -137,9 +140,10 @@ export function registerIpc(deps: IpcDeps): void {
   );
   ipcMain.handle(IPC.resumeTailoredList, () => resumes.listTailored());
 
-  // 上传 = 原样落盘到当前简历文件夹的 upload/，不做任何解析；
-  // 内容由 Agent 通过 resume_upload_list / resume_upload_read 工具按需读取。
-  ipcMain.handle(IPC.resumeUpload, async () => {
+  // 上传 = 原样落盘到当前会话所属模块的 upload/（公司 / 岗位 / 投递 / 面试各自己的，
+  // 简历落当前简历文件夹），不做任何解析；内容由 Agent 用 upload_list / upload_read
+  // 工具按需读取。
+  ipcMain.handle(IPC.chatUpload, async (_event, key: ConversationKey) => {
     const win = getWindow();
     const options = {
       title: "上传参考文件",
@@ -149,7 +153,8 @@ export function registerIpc(deps: IpcDeps): void {
     const picked =
       win === null ? await dialog.showOpenDialog(options) : await dialog.showOpenDialog(win, options);
     if (picked.canceled || picked.filePaths.length === 0) return null;
-    return picked.filePaths.map((filePath) => resumes.uploadFile(filePath));
+    const dir = uploadDirFor(workspaces.currentPaths, key, resumes.currentUploadDir());
+    return picked.filePaths.map((filePath) => saveUploadFile(dir, filePath));
   });
 
   // 话术（scripts/<jobId>.md + 定稿 sidecar）：与岗位 1:1，话术管理 UI 直接读写。

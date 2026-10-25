@@ -1,17 +1,26 @@
 import { useEffect, useState } from "react";
 
-import {
-  Bot,
-  Check,
-  ChevronDown,
-  CircleAlert,
-  LoaderCircle,
-  RotateCcw,
-} from "lucide-react";
+import { Bot, Check, CircleAlert, LoaderCircle, RotateCcw } from "lucide-react";
 
 import type { AgentStep, AgentStepEvent } from "@shared/types";
 
 import { Button } from "@/components/ui/button";
+import {
+  CodeBlock,
+  CodeBlockContent,
+  CodeBlockHeader,
+  CodeBlockTitle,
+} from "@/components/ui/code-block";
+import {
+  Trace,
+  TraceCollapsible,
+  TraceCollapsibleContent,
+  TraceCollapsibleTrigger,
+  TraceDescription,
+  TraceIcon,
+  TraceLine,
+  TraceTitle,
+} from "@/components/ui/trace";
 import {
   Empty,
   EmptyDescription,
@@ -129,86 +138,68 @@ function StepRow({
   replaying: boolean;
   onReplay: () => void;
 }) {
-  const [open, setOpen] = useState(false);
   const failed = !step.ok;
   // 提交类步骤不提供重放（必须重新走双重门）；其余失败步骤可重放。
   const replayable = failed && !step.action.startsWith("browser_submit");
 
   return (
-    <li
-      className={cn(
-        "overflow-hidden rounded-lg border bg-muted/30 text-xs",
-        failed ? "border-destructive/40" : "border-border/60",
-      )}
-    >
-      <button
-        type="button"
-        className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left hover:bg-muted/50"
-        onClick={() => setOpen((prev) => !prev)}
-        aria-expanded={open}
-      >
-        {replaying ? (
-          <LoaderCircle className="size-3.5 shrink-0 animate-spin text-muted-foreground" />
-        ) : failed ? (
-          <CircleAlert className="size-3.5 shrink-0 text-destructive" />
-        ) : (
-          <Check className="size-3.5 shrink-0 text-muted-foreground" />
-        )}
-        <span className={cn("shrink-0 font-medium", failed && "text-destructive")}>
-          {step.action}
-        </span>
-        <span className={cn("min-w-0 flex-1 truncate text-muted-foreground", failed && "text-destructive/90")}>
-          {step.summary}
-        </span>
-        <span className="shrink-0 tabular-nums text-muted-foreground/70">
-          {(step.durationMs / 1000).toFixed(1)}s
-        </span>
-        <ChevronDown
-          className={cn(
-            "size-3.5 shrink-0 text-muted-foreground transition-transform",
-            open && "rotate-180",
-          )}
-        />
-      </button>
-      {open && (
-        <div
-          className={cn(
-            "space-y-2 border-t px-2.5 py-2",
-            failed ? "border-destructive/30" : "border-border/60",
-          )}
-        >
-          <div>
-            <p className="mb-1 text-[11px] font-medium text-muted-foreground">命令（argv）</p>
-            <pre className="overflow-auto rounded-md bg-muted/60 p-2 font-mono text-[11px] leading-relaxed whitespace-pre-wrap">
-              {step.command.length > 0 ? step.command.join(" ") : "（系统动作，无 CLI 命令）"}
-            </pre>
-          </div>
-          {step.error !== null && (
-            <div>
-              <p className="mb-1 text-[11px] font-medium text-muted-foreground">错误</p>
-              <pre className="overflow-auto rounded-md bg-destructive/10 p-2 font-mono text-[11px] leading-relaxed whitespace-pre-wrap text-destructive">
-                {step.error}
-              </pre>
+    <li>
+      <Trace>
+        <TraceCollapsible>
+          <TraceCollapsibleTrigger>
+            <TraceLine status={failed ? "error" : replaying ? "running" : undefined}>
+              <TraceIcon>
+                {replaying ? (
+                  <LoaderCircle className="animate-spin" />
+                ) : failed ? (
+                  <CircleAlert />
+                ) : (
+                  <Check />
+                )}
+              </TraceIcon>
+              <TraceTitle>{step.action}</TraceTitle>
+              <span className="min-w-0 flex-1 truncate text-xs">{step.summary}</span>
+              <TraceDescription>{(step.durationMs / 1000).toFixed(1)}s</TraceDescription>
+            </TraceLine>
+          </TraceCollapsibleTrigger>
+          <TraceCollapsibleContent className="text-xs">
+            <div className="flex flex-col gap-2">
+              <CodeBlock size="sm">
+                <CodeBlockHeader>
+                  <CodeBlockTitle>命令（argv）</CodeBlockTitle>
+                </CodeBlockHeader>
+                <CodeBlockContent wrap>
+                  {step.command.length > 0 ? step.command.join(" ") : "（系统动作，无 CLI 命令）"}
+                </CodeBlockContent>
+              </CodeBlock>
+              {step.error !== null && (
+                <CodeBlock size="sm" variant="destructive">
+                  <CodeBlockHeader>
+                    <CodeBlockTitle>错误</CodeBlockTitle>
+                  </CodeBlockHeader>
+                  <CodeBlockContent wrap>{step.error}</CodeBlockContent>
+                </CodeBlock>
+              )}
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-[11px] text-muted-foreground">
+                  {new Date(step.at).toLocaleTimeString()} · {step.key ?? "系统"}
+                </span>
+                {replayable && (
+                  <Button
+                    variant="outline"
+                    size="xs"
+                    disabled={replaying}
+                    onClick={onReplay}
+                  >
+                    {replaying ? <LoaderCircle className="animate-spin" /> : <RotateCcw />}
+                    重试本步
+                  </Button>
+                )}
+              </div>
             </div>
-          )}
-          <div className="flex items-center justify-between gap-2">
-            <span className="text-[11px] text-muted-foreground">
-              {new Date(step.at).toLocaleTimeString()} · {step.key ?? "系统"}
-            </span>
-            {replayable && (
-              <Button
-                variant="outline"
-                size="xs"
-                disabled={replaying}
-                onClick={onReplay}
-              >
-                {replaying ? <LoaderCircle className="animate-spin" /> : <RotateCcw />}
-                重试本步
-              </Button>
-            )}
-          </div>
-        </div>
-      )}
+          </TraceCollapsibleContent>
+        </TraceCollapsible>
+      </Trace>
     </li>
   );
 }
