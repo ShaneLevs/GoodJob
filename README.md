@@ -53,7 +53,7 @@ Company 1──N Job 1──1 Application ── Offer / 模拟面试(逐轮记�
 | 通知 | SMTP 日报 / 周报 / 岗位推荐;关键节点邮件确认(10 分钟回信放行、超时提醒) | 封装为独立工具 |
 | 内嵌浏览器 | `WebContentsView` 原生视图多标签页,Agent 经 [agent-browser] 受控驱动:调研抓 JD、自动搜索(只读)、填表投递 | 白名单动作 + 审批门 + 限速 + 审计日志 |
 
-[agent-browser]: https://github.com/langgptai/agent-browser
+[agent-browser]: https://github.com/vercel-labs/agent-browser
 
 ## 安全与隐私
 
