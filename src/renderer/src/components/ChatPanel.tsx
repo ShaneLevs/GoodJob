@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
   ArrowUp,
@@ -6,19 +6,32 @@ import {
   ChevronDown,
   CircleAlert,
   Clock,
+  Copy,
+  FileText,
   LoaderCircle,
   MessageCircleDashed,
   Plus,
   Settings2,
   Square,
   Wrench,
+  X,
 } from "lucide-react";
 
 import type { ChatStatus, UIMessage } from "ai";
-import type { ModelSelection, ModelsConfig } from "@shared/types";
+import type { ModelSelection, ModelsConfig, UploadedFileMeta } from "@shared/types";
 
 import { Markdown } from "./markdown";
+import { Button } from "./ui/button";
 import { Bubble, BubbleContent } from "./ui/bubble";
+import {
+  Attachment,
+  AttachmentAction,
+  AttachmentActions,
+  AttachmentContent,
+  AttachmentDescription,
+  AttachmentMedia,
+  AttachmentTitle,
+} from "./ui/attachment";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -34,10 +47,9 @@ import {
   InputGroup,
   InputGroupAddon,
   InputGroupButton,
-  InputGroupText,
   InputGroupTextarea,
 } from "./ui/input-group";
-import { Message, MessageContent } from "./ui/message";
+import { Message, MessageContent, MessageFooter } from "./ui/message";
 import {
   MessageScroller,
   MessageScrollerButton,
@@ -53,7 +65,7 @@ interface ChatPanelProps {
   status: ChatStatus;
   errorText: string | null;
   models: ModelsConfig | null;
-  onSend: (text: string) => void;
+  onSend: (text: string, uploads: UploadedFileMeta[]) => void;
   onStop: () => void;
   onSelectModel: (selection: ModelSelection) => void;
   /** 模型下拉里的「模型设置」跳转。 */
@@ -65,10 +77,16 @@ interface ChatPanelProps {
   emptyDescription?: string;
   placeholder?: string;
   /**
-   * 输入框左下角「+」的上传动作：打开文件选择并返回要发送的完整消息文本，
-   * 用户取消返回 null。不传则不显示 + 按钮。
+   * 输入框左下角「+」的上传动作：main 侧完成文件选择并落盘（不解析内容），
+   * 返回上传回执供发送时附带；用户取消返回 null。不传则不显示 + 按钮。
+   * 哪个模块复用对话，就由它决定文件存到哪——这里是唯一的模块差异点。
    */
-  onImportFile?: () => Promise<string | null>;
+  onUploadFile?: () => Promise<UploadedFileMeta[] | null>;
+  /**
+   * 工具审批（P3 M3）：「等待批准」的工具条上给批准 / 拒绝按钮，回填后自动续跑。
+   * 不传时等待态只显示状态、不给按钮。
+   */
+  onApprovalResponse?: (approvalId: string, approved: boolean) => void;
 }
 
 interface ModelOption {
@@ -90,6 +108,18 @@ interface ToolPartView {
   input?: unknown;
   output?: unknown;
   errorText?: string;
+  /** 「等待批准」态才有：approval.id 是批准 / 拒绝要回填的凭据。 */
+  approval?: {
+    id: string;
+    requestReason?: string;
+    isAutomatic?: boolean;
+  };
+}
+
+/** `data-upload` part 的宽松视图（UploadedFileMeta 的线上形态）。 */
+interface UploadPartView {
+  type: "data-upload";
+  data: UploadedFileMeta;
 }
 
 /** 上下文窗口只用来做个徽标，取整到 K/M。 */
@@ -99,15 +129,40 @@ function formatContext(tokens: number | undefined): string | null {
   return `${Math.round(tokens / 1000)}K`;
 }
 
+function formatBytes(size: number): string {
+  if (size < 1024) return `${size} B`;
+  if (size < 1024 * 1024) return `${Math.round(size / 1024)} KB`;
+  return `${(size / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function formatDuration(ms: number): string {
+  const seconds = ms / 1000;
+  if (seconds < 1) return `${seconds.toFixed(1)}s`;
+  if (seconds < 60) return `${seconds < 10 ? seconds.toFixed(1) : Math.round(seconds)}s`;
+  return `${Math.floor(seconds / 60)} 分 ${Math.round(seconds % 60)} 秒`;
+}
+
 function optionKey(providerId: string, modelId: string): string {
   return `${providerId}::${modelId}`;
 }
 
-function userText(message: UIMessage): string {
+function messageText(message: UIMessage): string {
   return message.parts
     .filter((part): part is { type: "text"; text: string } => part.type === "text")
     .map((part) => part.text)
     .join("\n");
+}
+
+function uploadParts(message: UIMessage): UploadedFileMeta[] {
+  return message.parts
+    .filter((part) => (part as { type?: string } | undefined)?.type === "data-upload")
+    .map((part) => (part as unknown as UploadPartView).data);
+}
+
+/** run 结束时由 useModuleChat 写进 metadata 的本轮耗时；旧消息没有就是 null。 */
+function durationOf(message: UIMessage): number | null {
+  const metadata = message.metadata as { durationMs?: unknown } | undefined;
+  return typeof metadata?.durationMs === "number" ? metadata.durationMs : null;
 }
 
 export function ChatPanel({
@@ -123,10 +178,12 @@ export function ChatPanel({
   emptyTitle = "今天想找什么样的工作？",
   emptyDescription = "说说你的目标岗位、城市和年限，我来帮你梳理。",
   placeholder = "说说你想找什么岗位，或者直接问我",
-  onImportFile,
+  onUploadFile,
+  onApprovalResponse,
 }: ChatPanelProps) {
   const [draft, setDraft] = useState("");
-  const [importError, setImportError] = useState<string | null>(null);
+  const [pendingUploads, setPendingUploads] = useState<UploadedFileMeta[]>([]);
+  const [uploadError, setUploadError] = useState<string | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
   const active = models?.activeModel ?? null;
@@ -156,26 +213,38 @@ export function ChatPanel({
   const hasOptions = groups.length > 0;
   const modelLabel = active === null ? "选择模型" : `${active.providerName}/${active.name}`;
   const busy = status === "submitted" || status === "streaming";
-  const canSend = draft.trim() !== "" && !busy;
+  const canSend = (draft.trim() !== "" || pendingUploads.length > 0) && !busy;
+
+  // 发出后到首段文本出现前的空窗：流光占位，否则用户不知道 Agent 是否在动。
+  const lastMessage = messages.at(-1);
+  const lastHasText =
+    lastMessage !== undefined &&
+    lastMessage.role === "assistant" &&
+    lastMessage.parts.some((part) => part.type === "text" && part.text.trim() !== "");
+  const waiting = busy && !lastHasText;
 
   const submit = (): void => {
-    const text = draft.trim();
-    if (text === "" || busy) return;
+    if (!canSend) return;
+    const text =
+      draft.trim() !== ""
+        ? draft.trim()
+        : `我上传了文件 ${pendingUploads.map((file) => `「${file.fileName}」`).join("、")}，请查看。`;
+    onSend(text, pendingUploads);
     setDraft("");
-    onSend(text);
+    setPendingUploads([]);
     inputRef.current?.focus();
   };
 
-  // 「+」上传：文件选择在 main 侧完成，这里只发整理后的消息。
-  const importFile = (): void => {
-    if (onImportFile === undefined || busy) return;
-    setImportError(null);
-    onImportFile()
-      .then((text) => {
-        if (text !== null) onSend(text);
+  // 「+」上传：文件选择与落盘都在 main 侧完成，这里只把回执挂成待发附件。
+  const uploadFiles = (): void => {
+    if (onUploadFile === undefined || busy) return;
+    setUploadError(null);
+    onUploadFile()
+      .then((uploaded) => {
+        if (uploaded !== null) setPendingUploads((prev) => [...prev, ...uploaded]);
       })
       .catch((cause: unknown) => {
-        setImportError(cause instanceof Error ? cause.message : String(cause));
+        setUploadError(cause instanceof Error ? cause.message : String(cause));
       });
   };
 
@@ -190,6 +259,33 @@ export function ChatPanel({
       }}
     >
       <InputGroup>
+        {pendingUploads.length > 0 && (
+          <InputGroupAddon align="block-start" className="flex-wrap">
+            {pendingUploads.map((file) => (
+              <Attachment key={file.fileName} size="sm" className="max-w-60">
+                <AttachmentMedia>
+                  <FileText />
+                </AttachmentMedia>
+                <AttachmentContent>
+                  <AttachmentTitle>{file.fileName}</AttachmentTitle>
+                  <AttachmentDescription>{formatBytes(file.size)}</AttachmentDescription>
+                </AttachmentContent>
+                <AttachmentActions>
+                  <AttachmentAction
+                    aria-label={`移除 ${file.fileName}`}
+                    onClick={() =>
+                      setPendingUploads((prev) =>
+                        prev.filter((item) => item.fileName !== file.fileName),
+                      )
+                    }
+                  >
+                    <X />
+                  </AttachmentAction>
+                </AttachmentActions>
+              </Attachment>
+            ))}
+          </InputGroupAddon>
+        )}
         <InputGroupTextarea
           ref={inputRef}
           value={draft}
@@ -204,21 +300,18 @@ export function ChatPanel({
           }}
         />
         <InputGroupAddon align="block-end" className="gap-1.5">
-          {onImportFile !== undefined && (
+          {onUploadFile !== undefined && (
             <InputGroupButton
               size="icon-sm"
               variant="ghost"
               className="text-muted-foreground"
-              aria-label="上传旧简历（PDF / Word / Markdown）"
+              aria-label="上传参考文件（PDF / Word / Markdown / 文本）"
               disabled={busy}
-              onClick={importFile}
+              onClick={uploadFiles}
             >
               <Plus />
             </InputGroupButton>
           )}
-          <InputGroupText className="text-xs">
-            Enter 发送 · Shift + Enter 换行
-          </InputGroupText>
 
           <DropdownMenu onOpenChange={onOverlayChange}>
             <DropdownMenuTrigger asChild>
@@ -326,20 +419,43 @@ export function ChatPanel({
                   const isLast = index === messages.length - 1;
 
                   if (message.role === "user") {
+                    const uploads = uploadParts(message);
+                    const text = messageText(message);
                     return (
                       <MessageScrollerItem key={message.id} scrollAnchor>
                         <Message align="end">
                           <MessageContent>
-                            <Bubble align="end" variant="muted">
-                              <BubbleContent className="whitespace-pre-wrap">
-                                {userText(message)}
-                              </BubbleContent>
-                            </Bubble>
+                            {text !== "" && (
+                              <Bubble align="end" variant="muted">
+                                <BubbleContent className="whitespace-pre-wrap">{text}</BubbleContent>
+                              </Bubble>
+                            )}
+                            {uploads.map((file, partIndex) => (
+                              <Attachment
+                                key={`${file.fileName}-${partIndex}`}
+                                size="sm"
+                                className="max-w-60"
+                              >
+                                <AttachmentMedia>
+                                  <FileText />
+                                </AttachmentMedia>
+                                <AttachmentContent>
+                                  <AttachmentTitle>{file.fileName}</AttachmentTitle>
+                                  <AttachmentDescription>
+                                    {formatBytes(file.size)}
+                                  </AttachmentDescription>
+                                </AttachmentContent>
+                              </Attachment>
+                            ))}
                           </MessageContent>
                         </Message>
                       </MessageScrollerItem>
                     );
                   }
+
+                  const duration = durationOf(message);
+                  const fullText = messageText(message);
+                  const showFooter = !(isLast && busy) && (duration !== null || fullText !== "");
 
                   return (
                     <MessageScrollerItem key={message.id}>
@@ -361,6 +477,7 @@ export function ChatPanel({
                                 <ToolChip
                                   key={partIndex}
                                   part={part as unknown as ToolPartView}
+                                  onRespond={onApprovalResponse}
                                 />
                               );
                             }
@@ -368,17 +485,25 @@ export function ChatPanel({
                             return null;
                           })}
 
-                          {isLast && status === "submitted" && (
-                            <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                              <LoaderCircle className="size-4 animate-spin" />
-                              思考中…
-                            </div>
+                          {showFooter && (
+                            <MessageFooter className="gap-1 px-0">
+                              {duration !== null && (
+                                <span className="tabular-nums">耗时 {formatDuration(duration)}</span>
+                              )}
+                              <CopyButton text={fullText} />
+                            </MessageFooter>
                           )}
                         </MessageContent>
                       </Message>
                     </MessageScrollerItem>
                   );
                 })}
+
+                {waiting && (
+                  <div className="text-sm text-muted-foreground">
+                    <span className="shimmer">正在思考…</span>
+                  </div>
+                )}
 
                 {status === "error" && errorText !== null && (
                   <div className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
@@ -395,8 +520,8 @@ export function ChatPanel({
 
       <div className="px-4 pb-4">
         <div className="mx-auto w-full max-w-3xl">
-          {importError !== null && (
-            <p className="px-1 pb-1.5 text-xs text-destructive">{importError}</p>
+          {uploadError !== null && (
+            <p className="px-1 pb-1.5 text-xs text-destructive">{uploadError}</p>
           )}
           {promptInput}
         </div>
@@ -405,21 +530,65 @@ export function ChatPanel({
   );
 }
 
-function ToolChip({ part }: { part: ToolPartView }) {
+/** 复制整条回复的 Markdown 原文，成功后图标换成对勾两秒。 */
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    if (!copied) return;
+    const timeout = setTimeout(() => setCopied(false), 2000);
+    return () => clearTimeout(timeout);
+  }, [copied]);
+
+  return (
+    <Button
+      variant="ghost"
+      size="icon-xs"
+      className="text-muted-foreground"
+      aria-label={copied ? "已复制" : "复制"}
+      onClick={() => {
+        const clipboard = navigator.clipboard;
+        if (clipboard === undefined) return;
+        void clipboard
+          .writeText(text)
+          .then(() => setCopied(true))
+          .catch(() => setCopied(false));
+      }}
+    >
+      {copied ? <Check /> : <Copy />}
+    </Button>
+  );
+}
+
+function ToolChip({
+  part,
+  onRespond,
+}: {
+  part: ToolPartView;
+  onRespond?: (approvalId: string, approved: boolean) => void;
+}) {
   const [open, setOpen] = useState(false);
 
   const name = part.type.slice("tool-".length);
   const running = part.state === "input-streaming" || part.state === "input-available";
   const failed = part.state === "output-error";
-  const waiting = part.state === "approval-requested";
+  const waiting =
+    part.state === "approval-requested" && part.approval !== undefined && !part.approval.isAutomatic;
+  // 审批后的中间态：批准了但续跑还没带回输出 / 明确拒绝。
+  const responded = part.state === "approval-responded";
+  const denied = part.state === "output-denied";
 
   const statusLabel = failed
     ? "失败"
     : waiting
       ? "等待批准"
-      : running
-        ? "运行中"
-        : "完成";
+      : denied
+        ? "已拒绝"
+        : responded
+          ? "已批准，执行中"
+          : running
+            ? "运行中"
+            : "完成";
 
   return (
     <div className="w-full overflow-hidden rounded-lg border border-border/60 bg-muted/30 text-xs">
@@ -429,11 +598,13 @@ function ToolChip({ part }: { part: ToolPartView }) {
         onClick={() => setOpen((prev) => !prev)}
         aria-expanded={open}
       >
-        {failed ? (
-          <CircleAlert className="size-3.5 shrink-0 text-destructive" />
+        {failed || denied ? (
+          <CircleAlert
+            className={cn("size-3.5 shrink-0", failed ? "text-destructive" : "text-muted-foreground")}
+          />
         ) : waiting ? (
           <Clock className="size-3.5 shrink-0 text-muted-foreground" />
-        ) : running ? (
+        ) : running || responded ? (
           <LoaderCircle className="size-3.5 shrink-0 animate-spin text-muted-foreground" />
         ) : (
           <Check className="size-3.5 shrink-0 text-muted-foreground" />
@@ -448,6 +619,27 @@ function ToolChip({ part }: { part: ToolPartView }) {
           )}
         />
       </button>
+      {/* 审批动作不收进折叠区：等待批准要一眼可见、一次点按完成（P1 预留位的兑现）。 */}
+      {waiting && onRespond !== undefined && (
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-t border-border/60 bg-background/60 px-2.5 py-2">
+          <span className="min-w-0 flex-1 text-[11px] leading-relaxed text-muted-foreground">
+            {part.approval?.requestReason ?? "这个动作在等你批准后才会执行。"}
+          </span>
+          <div className="flex shrink-0 gap-1.5">
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-7 text-xs"
+              onClick={() => onRespond(part.approval!.id, false)}
+            >
+              拒绝
+            </Button>
+            <Button size="sm" className="h-7 text-xs" onClick={() => onRespond(part.approval!.id, true)}>
+              批准
+            </Button>
+          </div>
+        </div>
+      )}
       {open && (
         <div className="space-y-2 border-t border-border/60 px-2.5 py-2">
           {part.input !== undefined && part.input !== null && (
