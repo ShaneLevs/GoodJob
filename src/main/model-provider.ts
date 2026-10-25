@@ -1,6 +1,7 @@
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { createOpenAI } from "@ai-sdk/openai";
+import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import type { LanguageModel } from "ai";
 
 import type { ModelsStore, ResolvedModel } from "./models-store";
@@ -29,9 +30,13 @@ export function createLanguageModel(target: ResolvedModel): LanguageModel {
       return provider.responses(modelId);
     }
     default: {
-      // OpenAI-compatible Chat Completions: the broadest relay/local-model format.
-      const provider = createOpenAI({ baseURL, apiKey, name });
-      return provider.chat(modelId);
+      // OpenAI-compatible Chat Completions：最通用的中转 / 本地模型格式。
+      // 这里刻意用 openai-compatible 而不是 @ai-sdk/openai 的 .chat()：后者只解析
+      // delta.content / tool_calls / annotations，把中转站塞在同一条 delta 里的
+      // reasoning_content（DeepSeek 系、各家 thinking 模型都这么发）整段丢掉，
+      // 界面上就永远看不到「思考内容」。openai-compatible 会把它转成 reasoning part。
+      const provider = createOpenAICompatible({ baseURL, apiKey, name });
+      return provider.chatModel(modelId);
     }
   }
 }

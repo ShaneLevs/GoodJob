@@ -34,3 +34,5 @@ docs/
 .tmp/
 .pi/
 .zcode/
+.codegraph/
+.workbuddy/
