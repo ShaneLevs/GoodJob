@@ -14,7 +14,10 @@ const electron = path.join(root, "node_modules/.bin/electron");
 const logoSvg = path.join(root, "build/icon-drafts/logo.svg");
 const master = path.join(root, "build/icon.png");
 
-execFileSync(electron, [path.join(root, "scripts/render-svg.mjs"), logoSvg, master, "1024"], {
+// 内容画成 824 居中放进 1024 画布：Apple 的 macOS 图标网格就是
+// 1024 画布 + 824 方形主体（实测系统图标内容占比 ~83.6%，含自带投影）。
+// 画稿本身的圆角 232/1024 缩放后 ≈186，也对得上模板的 185.4。
+execFileSync(electron, [path.join(root, "scripts/render-svg.mjs"), logoSvg, master, "1024", "824"], {
   stdio: "inherit",
 });
 

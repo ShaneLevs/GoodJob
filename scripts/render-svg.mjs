@@ -1,5 +1,9 @@
 // 在 Electron(Chromium) 里把 SVG 渲染成指定尺寸的 PNG（保留透明通道）。
-// 用法：electron scripts/render-svg.mjs <input.svg> <output.png> <size>
+// 用法：electron scripts/render-svg.mjs <input.svg> <output.png> <size> [content]
+//
+// 可选的 content 是内容边长：SVG 先画成 content×content，再居中放进 size×size
+// 的透明画布（size 缺省等于 content，即全出血）。macOS 图标要靠这一步留边——
+// 系统不做遮罩也不缩放，画稿铺满画布 Dock 里就会比别的图标大一圈。
 //
 // 为什么不用 rsvg/sips：logo.svg 用了 feGaussianBlur 滤镜和 mask，Chromium 是
 // 与应用内渲染唯一一致的解释器。roundRect 之外的角必须是 alpha=0（macOS 不做遮罩），
@@ -10,12 +14,13 @@ import os from "node:os";
 import path from "node:path";
 import { inflateSync } from "node:zlib";
 
-const [, , inArg, outArg, sizeArg] = process.argv;
+const [, , inArg, outArg, sizeArg, contentArg] = process.argv;
 if (!inArg || !outArg) {
-  console.error("用法：electron scripts/render-svg.mjs <input.svg> <output.png> <size>");
+  console.error("用法：electron scripts/render-svg.mjs <input.svg> <output.png> <size> [content]");
   process.exit(1);
 }
 const size = Number(sizeArg) || 1024;
+const content = Math.min(Number(contentArg) || size, size);
 
 // 解析 PNG 第 0 行首像素的 alpha。只处理 Chromium 会产出的 8bit RGBA 非隔行格式。
 function cornerAlpha(png) {
@@ -61,13 +66,14 @@ async function capture(offscreen) {
   const tmpDir = path.join(os.tmpdir(), "goodjob-icon-render");
   mkdirSync(tmpDir, { recursive: true });
   const htmlPath = path.join(tmpDir, "render.html");
+  const margin = (size - content) / 2;
   // file:// 页面才能引 file:// 图片；body 透明，圆角外保持 alpha=0。
   writeFileSync(
     htmlPath,
     `<!doctype html><html><head><meta charset="utf-8"><style>` +
       `html,body{margin:0;padding:0;background:transparent;overflow:hidden}` +
       `</style></head><body><img src="${encodeURI("file://" + path.resolve(inArg))}" ` +
-      `width="${size}" height="${size}" style="display:block"></body></html>`,
+      `width="${content}" height="${content}" style="display:block;margin:${margin}px"></body></html>`,
   );
   const win = new BrowserWindow({
     width: size,
