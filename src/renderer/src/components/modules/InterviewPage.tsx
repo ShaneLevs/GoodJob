@@ -466,7 +466,7 @@ function InterviewChatLoaded({
   );
 }
 
-/** 右栏点评卡：总评 Markdown（文档纸面）+ 亮点 / 风险 / 建议 + 逐轮时间线。 */
+/** 点评卡（面试页第三栏）：总评 Markdown（文档纸面）+ 亮点 / 风险 / 建议 + 逐轮时间线。 */
 function ReviewCard({ interview }: { interview: Interview }) {
   const review = interview.review;
   if (review === null) return null;

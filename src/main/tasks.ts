@@ -76,7 +76,7 @@ export class TaskManager {
 
     for (const task of this.registry.values()) {
       if (task.type === type && task.target === trimmed && task.status === "running") {
-        throw new Error("这个任务已经在运行中了，请等它完成（进度会显示在右栏任务区）。");
+        throw new Error("这个任务已经在运行中了，请等它完成（进度会显示在顶栏任务角标）。");
       }
     }
 

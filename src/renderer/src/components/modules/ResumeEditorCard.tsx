@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { CircleAlert, FileDown, Save } from "lucide-react";
+import { CircleAlert, FileDown, Gauge, Save } from "lucide-react";
 
 import type { ResumeDocTarget, ResumeFileEvent } from "@shared/types";
 
@@ -20,6 +20,8 @@ interface ResumeEditorCardProps {
   emptyText: string;
   /** 导出 PDF 的预填文件名（不含扩展名）；缺省用简历名。 */
   exportFileName?: string;
+  /** 提供了才显示「完整性」按钮（打开完整性评分报告弹窗）；只有主简历有报告。 */
+  onOpenReport?: () => void;
 }
 
 /**
@@ -29,7 +31,12 @@ interface ResumeEditorCardProps {
  * 有未保存修改时弹冲突条让用户二选一。用户保存前 main 会自动快照旧版。
  * 工具条右侧的「PDF」把当前内容（含未保存修改）交给 main 的导出管线。
  */
-export function ResumeEditorCard({ target, emptyText, exportFileName }: ResumeEditorCardProps) {
+export function ResumeEditorCard({
+  target,
+  emptyText,
+  exportFileName,
+  onOpenReport,
+}: ResumeEditorCardProps) {
   const [mode, setMode] = useState<EditorMode>("preview");
   /** 磁盘上的内容；null = 还没加载。 */
   const [content, setContent] = useState<string | null>(null);
@@ -164,6 +171,12 @@ export function ResumeEditorCard({ target, emptyText, exportFileName }: ResumeEd
             />
             {dirty ? "未保存" : "已保存"}
           </span>
+          {onOpenReport !== undefined && (
+            <Button variant="ghost" size="sm" className="text-muted-foreground" onClick={onOpenReport}>
+              <Gauge />
+              完整性
+            </Button>
+          )}
           <Button
             variant="ghost"
             size="sm"

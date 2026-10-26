@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 
-import { ArrowLeft, ArrowRight, Bug, Home, Bot, RotateCw, Square } from "lucide-react";
+import { ArrowLeft, ArrowRight, Bug, Home, Bot, RotateCw, Square, X } from "lucide-react";
 
 import type { AgentStepEvent, BrowserState } from "@shared/types";
 
@@ -35,13 +35,20 @@ interface BrowserPanelProps {
    * 挂了 useBrowserTakeover 的会话）；接不住就不显示按钮，免得点了没反应。
    */
   takeoverAvailable?: boolean;
+  /** 关闭浏览器（回到模块页）；提供时工具条尾部出现关闭按钮。 */
+  onClose?: () => void;
 }
 
 /**
  * Reserves a rectangle in the DOM and tells the main process to park the native
  * `WebContentsView` exactly there. The DOM node itself stays empty on purpose.
  */
-export function BrowserPanel({ active, suspended, takeoverAvailable = false }: BrowserPanelProps) {
+export function BrowserPanel({
+  active,
+  suspended,
+  takeoverAvailable = false,
+  onClose,
+}: BrowserPanelProps) {
   const holderRef = useRef<HTMLDivElement>(null);
   const editingRef = useRef(false);
   const [state, setState] = useState<BrowserState>(INITIAL_STATE);
@@ -174,6 +181,11 @@ export function BrowserPanel({ active, suspended, takeoverAvailable = false }: B
         <IconButton label="浏览器 DevTools" onClick={() => browser.toggleDevTools()}>
           <Bug />
         </IconButton>
+        {onClose !== undefined && (
+          <IconButton label="关闭浏览器" onClick={onClose}>
+            <X />
+          </IconButton>
+        )}
       </div>
 
       {/* 原生 WebContentsView 会精确停在这个矩形上，DOM 里刻意留空。 */}

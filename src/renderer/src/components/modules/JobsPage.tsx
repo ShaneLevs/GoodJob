@@ -74,6 +74,7 @@ import { Textarea } from "@/components/ui/textarea";
 
 import { ModelGateDialog } from "./ModelGateDialog";
 import { ModuleLoadingCard, type ModulePageProps } from "./module-page";
+import { ScorecardDialog } from "../ScorecardDialog";
 import { ScriptDialog, ScriptStatusBadge } from "./ScriptDialog";
 import { cmpNumber, cmpText, cmpTime, formatTime, SortableHead, useTableSort } from "./table-bits";
 
@@ -92,8 +93,6 @@ const SCRIPT_DRAFT_PROMPT =
 export interface JobsPageProps extends ModulePageProps {
   /** 生成简历 / 生成话术：进入该岗位的二级工作台（可带自动起草指令）。 */
   onOpenJob: (jobId: string, autoPrompt: string | null) => void;
-  /** 匹配度徽标 / 评分任务完成 → 打开右栏评分卡。 */
-  onOpenScorecard: (target: ScorecardTarget) => void;
   /** 发起模拟面试成功 → 跳到面试模块并选中这场面试。 */
   onOpenInterview: (interviewId: string) => void;
 }
@@ -117,7 +116,6 @@ function JobsPageLoaded({
   onOpenModelSettings,
   onOverlayChange,
   onOpenJob,
-  onOpenScorecard,
   onOpenInterview,
 }: JobsPageProps & { initialMessages: UIMessage[] }) {
   const chat = useModuleChat("jobs", initialMessages);
@@ -134,6 +132,8 @@ function JobsPageLoaded({
   const [deleting, setDeleting] = useState<Job | null>(null);
   const [scriptJob, setScriptJob] = useState<Job | null>(null);
   const [interviewJob, setInterviewJob] = useState<Job | null>(null);
+  /** 评分卡弹窗的定位；null = 关着。 */
+  const [scorecard, setScorecard] = useState<ScorecardTarget | null>(null);
   const [gateOpen, setGateOpen] = useState(false);
 
   const sort = useTableSort<JobField>("updatedAt", "desc");
@@ -373,7 +373,7 @@ function JobsPageLoaded({
                               type="button"
                               className="rounded-md outline-none focus-visible:ring-[3px] focus-visible:ring-ring/30"
                               aria-label={`查看「${job.title}」的评分卡`}
-                              onClick={() => onOpenScorecard({ kind: "job", jobId: job.id })}
+                              onClick={() => setScorecard({ kind: "job", jobId: job.id })}
                             >
                               <MatchBadge score={job.matchReport.score} />
                             </button>
@@ -466,6 +466,11 @@ function JobsPageLoaded({
         open={gateOpen}
         onClose={() => setGateOpen(false)}
         onOpenSettings={onOpenModelSettings}
+        onOverlayChange={onOverlayChange}
+      />
+      <ScorecardDialog
+        target={scorecard}
+        onClose={() => setScorecard(null)}
         onOverlayChange={onOverlayChange}
       />
     </ResizablePanelGroup>

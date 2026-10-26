@@ -80,30 +80,32 @@ AI SDK 4/5，本项目跑 Tailwind 4 + AI SDK 7，都是破坏性版本）。
 
 ```
 ┌───────────────────────────────────────────────────────────────┐
-│ ● ● ●   ⧉ ⧉                                        ← 顶栏 48px │  ← 只有自己的操作按钮
+│ ● ● ●   ⧉ ⧉                                    ← 顶栏 48px │  ← 只有自己的操作按钮
 ├──────────────────┬────────────────────────────────────────────┤
-│ GoodJob          │ ╭──────────────────────╮ ╭───────────────╮ │
-│ 工作区            │ │                      │ │ 工作台         │ │
-│ ▸ 个人简历        │ │   对话 / 空状态        │ │───────────────│ │
-│                  │ │                      │ │ Agent 打开的   │ │
-│                  │ │  ╭────────────────╮  │ │ 标签页         │ │
-│ 默认工作区 ▾ ⚙    │ │  ╰────────────────╯  │ │               │ │
-└──────────────────┴─╰──────────────────────╯ ╰───────────────╯─┘
-   铺在 bg-shell 上        白色卡片（rounded-2xl）      白色卡片
+│ GoodJob          │ ╭────────────────────────────────────────╮ │
+│ 工作区            │ │                                        │ │
+│ ▸ 个人简历        │ │           对话 / 空状态                  │ │
+│                  │ │                                        │ │
+│                  │ │  ╭──────────────────────────────────╮  │ │
+│ 默认工作区 ▾ ⚙    │ │  ╰──────────────────────────────────╯  │ │
+└──────────────────┴─╰────────────────────────────────────────╯─┘
+   铺在 bg-shell 上        白色卡片（rounded-2xl）
 ```
 
-- **顶栏是唯一放操作按钮的地方**：左栏开关贴左、右栏开关贴右（按钮永远在它控制的那一侧），
-  中间留给以后新加的功能。
+- **顶栏是唯一放操作按钮的地方**：左栏开关贴左，任务角标与浏览器开关贴右
+  （按钮永远在它控制的那一侧），中间留给以后新加的功能。
   它 48px 高，`pl-[92px]` 让出 macOS 交通灯（实测窗口 x 16–75 / y 19–30.5，
   中心 y≈24.5，正好落在 48px 的中线上）。顶栏本身就是 `drag` 区，body 是 `no-drag`；
   按钮里 `variant` 用 `secondary` 表示"当前是展开的"。
 - **左栏不是卡片**：直接铺在 `bg-shell` 上，没有描边没有阴影 —— 它属于窗口本身，
   而内容块才是被呈现的东西。选中项用 `bg-foreground/[0.07]`（`bg-accent` 在这个底色上看不出来）。
 - **内容块是白色卡片**：`rounded-2xl bg-card shadow-sm`，不带描边（靠 `--shell` 与 `--card`
-  的明度差区分）。对话和右栏是两块并列的卡，中间 8px 间隙里是一条 1px 可拖拽线。
-- **不要往卡片里塞折叠把手**：收起/展开只在顶栏，卡片内部只放内容自身的控件
-  （右栏的标签页关闭按钮除外）。
-- 对话内容列 `max-w-3xl` 居中，右栏展开时只收窄容器，不改变内容列宽。
+  的明度差区分）。只有一块 —— 模块页独占它，没有并列的第二块。
+- **浏览器是盖在内容块上的浮层**：顶栏地球图标或 `agent:pane-open` 事件打开，
+  用 `absolute inset-0` 铺满同一个矩形（WebContentsView 需要一块矩形落位），
+  模块页留在下层不卸载，否则它的会话与「让 Agent 接管」监听会断。
+- **不要往卡片里塞折叠把手**：收起/展开只在顶栏，卡片内部只放内容自身的控件。
+- 对话内容列 `max-w-3xl` 居中，容器变窄只收窄容器，不改变内容列宽。
 
 ## 目录
 
@@ -132,8 +134,6 @@ src/renderer/   React + shadcn/ui + Tailwind 4
   globals.css     唯一的样式入口：token、状态变体桥接、markdown 排版
                   （文档模板 CSS 是唯一例外：scoped 到预览纸面、随用随注入，见 markdown/）
   modules.tsx     左栏模块菜单注册表（简历/岗位/投递/面试/公司；没有独立「对话」页）
-  panes.tsx       右栏标签内容注册表（browser/markdown/editor/scorecard/log）；PaneKey
-                  真值在 shared/types.ts（agent:pane-open 事件跨进程要用）
   components/ui/  shadcn 组件源码（可改）；工具调用与思考过程用 trace.tsx（AI Elements
                   的 tool / chain-of-thought 结构）+ code-block.tsx，不要再自制折叠卡片
   components/chat/   IPC ChatTransport + 滚动会话 hook；上传附件（data-upload part，
@@ -148,8 +148,10 @@ src/renderer/   React + shadcn/ui + Tailwind 4
                      会话 + 总评点评卡）；ResumeEditorCard 按 ResumeDocTarget 参数化
                      （主简历 / 定制稿共用，带 PDF 导出）；table-bits 是三张表共用的
                      内存排序小件；所有弹层经 onOverlayChange 让位内嵌浏览器
-  components/     Workbench（右栏标签壳 + TasksBadge 后台任务角标）、ScorecardPane（评分卡）、
-                  ExportRoute（#export 导出路由；main.tsx 按 hash 分流，导出窗不挂 App）
+  components/     BrowserPanel（内嵌浏览器 + 工具条，顶栏开关控制）、TasksBadge（顶栏后台
+                  任务角标）、ScorecardDialog（评分卡弹层：岗位匹配度 / 简历完整性，
+                  是报告唯一的展示入口）、ExportRoute（#export 导出路由；main.tsx 按 hash
+                  分流，导出窗不挂 App）
   markdown/       通用文档渲染：render.ts（marked 扩展+消毒）、templates/（一模板一份 CSS 串）；
                   MarkdownPreview 组件（components/MarkdownPreview.tsx）是所有文档展示的复用入口
 src/shared/     三进程共用的类型与 IPC 频道名（保持零依赖）

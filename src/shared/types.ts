@@ -452,11 +452,11 @@ export interface DigestRunResult {
  * —— 浏览器自动化（P4）——
  *
  * main 侧的 src/main/agent/（agent-browser 四件套）驱动内嵌浏览器；每一步 CLI
- * 都是一条受控动作（actions.ts 白名单），审计 = 右栏「工作日志」标签 + 工作区
- * logs/agent.log（不含页面正文）。渲染层只消费 AgentStep / 状态事件，拼不了命令。
+ * 都是一条受控动作（actions.ts 白名单），审计 = 工作区 logs/agent.log（不含页面正文）。
+ * 渲染层只消费 AgentStep / 状态事件，拼不了命令。
  */
 
-/** 一步浏览器动作的审计记录（agent:step 事件与 agent:log-list 共用形状）。 */
+/** 一步浏览器动作的审计记录（agent:step 事件与 logs/agent.log 共用形状）。 */
 export interface AgentStep {
   id: string;
   /** 发起会话（ConversationKey）；系统动作（tab 锁定 / 中止）为 null。 */
@@ -534,27 +534,19 @@ export type TaskEvent =
   | { type: "update"; task: TaskState }
   | { type: "finish"; task: TaskState };
 
-/*
- * —— 右栏工作台事件（P2）——
- *
- * BROWSER-AGENT §6 预留的 main → renderer 事件：main 侧（后台任务等）
- * 请求渲染层打开右栏与对应标签。渲染层 panes.tsx 注册标签内容，
- * 这里只放跨进程的那部分类型。
+/**
+ * 评分卡要展示的报告定位：岗位匹配度报告，或主简历完整性报告。
+ * 报告本体在渲染层的 Dialog 里展示（岗位表点匹配度徽标 / 简历页点完整性报告）。
  */
-
-/** 右栏工作台标签的 key（渲染层 panes.tsx 是内容注册表，两边保持同步）。 */
-export type PaneKey = "browser" | "markdown" | "editor" | "log" | "scorecard";
-
-/** 评分卡要展示的报告定位：岗位匹配度报告，或主简历完整性报告。 */
 export type ScorecardTarget =
   | { kind: "job"; jobId: string }
   | { kind: "integrity"; resumeId: string };
 
-/** agent:pane-open 的载荷：scorecard 标签必须带定位，其余标签无参数。 */
-export type AgentPaneOpenEvent = {
-  pane: PaneKey;
-  scorecard?: ScorecardTarget;
-};
+/**
+ * agent:pane-open 的载荷：main 侧（浏览器任务开场等）请求渲染层把浏览器铺满内容区。
+ * 右栏工作台已删除，这是该通道唯一剩下的用途。
+ */
+export type AgentPaneOpenEvent = { pane: "browser" };
 
 /** 话术当前版（scripts/<jobId>.md）+ 定稿 sidecar 汇总出的列表项。 */
 export interface ScriptDoc {
@@ -770,10 +762,8 @@ export const IPC = {
   tasksRerun: "tasks:rerun",
   taskEvent: "task:event",
   agentPaneOpen: "agent:pane-open",
-  agentLogList: "agent:log-list",
   agentStepEvent: "agent:step",
   agentAbort: "agent:abort",
-  agentReplayStep: "agent:replay-step",
   agentSettingsGet: "agent:settings-get",
   agentSettingsSave: "agent:settings-save",
   pdfExport: "pdf:export",
@@ -809,6 +799,8 @@ export interface GoodjobApi {
     stop: () => void;
     toggleDevTools: () => void;
     onState: (listener: (state: BrowserState) => void) => () => void;
+    /** main 侧请求把浏览器铺满内容区（agent:pane-open，浏览器任务开场触发）。 */
+    onRequestOpen: (listener: (event: AgentPaneOpenEvent) => void) => () => void;
   };
   chat: {
     /** 发起一次 agent run；chunk 流从 onChunk 订阅（按 key + runId 过滤）。 */
@@ -914,19 +906,13 @@ export interface GoodjobApi {
     /** 立即生成一次日报 / 周报（调度之外的手动入口）。 */
     runDigest: (kind: DigestKind) => Promise<DigestRunResult>;
   };
-  /** 右栏工作台：main（后台任务 / 后续 Agent）请求打开某个标签。 */
-  workbench: {
-    onPaneOpen: (listener: (event: AgentPaneOpenEvent) => void) => () => void;
-  };
   /**
    * 浏览器自动化（P4）：审计日志读取与订阅、中止 / 单步重放（main 侧只重放
    * 非提交类步骤），以及设置读写。命令组装全在 main，渲染层拼不了 CLI。
    */
   agent: {
-    listLog: () => Promise<AgentStep[]>;
     onStep: (listener: (event: AgentStepEvent) => void) => () => void;
     abort: () => void;
-    replayStep: (stepId: string) => Promise<void>;
     getSettings: () => Promise<BrowserAgentSettings>;
     saveSettings: (draft: BrowserAgentSettingsDraft) => Promise<BrowserAgentSettings>;
   };

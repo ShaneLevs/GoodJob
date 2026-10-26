@@ -1,7 +1,10 @@
 import { useEffect, useState } from "react";
 
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
-import CodeMirror from "@uiw/react-codemirror";
+import CodeMirror, { EditorView } from "@uiw/react-codemirror";
+
+/** 固定扩展只建一次：每次渲染新建数组会让 useCodeMirror 反复重新配置编辑器。 */
+const EXTENSIONS = [markdown({ base: markdownLanguage, addKeymap: true }), EditorView.lineWrapping];
 
 interface ResumeMarkdownEditorProps {
   value: string;
@@ -18,13 +21,17 @@ export function ResumeMarkdownEditor({ value, onChange, placeholder }: ResumeMar
   const dark = useHtmlDark();
 
   return (
-    <div className="h-full [&_.cm-editor]:h-full [&_.cm-scroller]:font-mono [&_.cm-scroller]:px-5 [&_.cm-scroller]:py-4">
+    <div className="h-full min-h-0 overflow-hidden [&_.cm-editor]:h-full [&_.cm-scroller]:font-mono [&_.cm-scroller]:px-5 [&_.cm-scroller]:py-4">
+      {/* className 落在 CodeMirror 自己的包装层（.cm-theme-light/.cm-theme-dark）上：
+          它必须是确定高度，里面的 .cm-editor 的 height:100% 才有百分比基准，
+          否则编辑器会长成整篇文档的高度而不是在容器里滚动。 */}
       <CodeMirror
+        className="h-full min-h-0"
         value={value}
         onChange={onChange}
         height="100%"
         theme={dark ? "dark" : "light"}
-        extensions={[markdown({ base: markdownLanguage, addKeymap: true })]}
+        extensions={EXTENSIONS}
         placeholder={placeholder ?? "在这里用 Markdown 编辑简历，或让左边的 Agent 帮你起草"}
         basicSetup={{
           lineNumbers: false,

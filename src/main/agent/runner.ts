@@ -17,8 +17,8 @@ import type { BrowserAgentSettingsStore } from "./settings-store";
  *
  * - tab 锁定：任务开始先解析并锁定面板 target（target.ts），之后所有命令都跑在
  *   这个 tab 上（--pin-tab 兜底），UI 窗口 target 永不进入命令范围；
- * - 审计：每步的命令 argv + 结果摘要（不含页面正文）→ 右栏「工作日志」（agent:step
- *   事件 + 内存缓冲）+ `<workspace>/logs/agent.log`（JSONL，0700 目录内）；
+ * - 审计：每步的命令 argv + 结果摘要（不含页面正文）→ `<workspace>/logs/agent.log`
+ *   （JSONL，0700 目录内）+ agent:step 事件（浏览器工具条据此切换运行态）；
  * - 中止：SIGTERM 必要时 SIGKILL 杀命令进程 + 收 daemon（M5）；before-quit 走
  *   killAll 兜底（M6）；
  * - 一次只放一个任务：浏览器面板与 tab 锁都是全局唯一的，第二个会话要等或中止。
@@ -26,8 +26,6 @@ import type { BrowserAgentSettingsStore } from "./settings-store";
 
 /** 喂给模型的 snapshot 上限：字符数（审计只记摘要，这里限的是模型上下文）。 */
 const SNAPSHOT_MODEL_LIMIT = 24_000;
-/** 工作日志内存缓冲上限（旧的丢弃，磁盘上 agent.log 保留全量）。 */
-const STEP_BUFFER_LIMIT = 400;
 /** 供审计摘要使用的单值上限。 */
 const SUMMARY_LIMIT = 200;
 
@@ -62,9 +60,6 @@ interface CurrentTask {
 }
 
 export class BrowserAgentService {
-  private readonly steps: AgentStep[] = [];
-  /** stepId → 原始动作（单步重放用；提交类动作不可重放）。 */
-  private readonly replayable = new Map<string, { tool: "browser_read" | "browser_act"; action: BrowserReadAction | BrowserActAction; key: string }>();
   private current: CurrentTask | null = null;
   private lastPanelUrl = "";
 
@@ -95,7 +90,7 @@ export class BrowserAgentService {
     const argv = await this.prepare(input);
     const started = Date.now();
     const result = await this.deps.cli.run(argv, input.signal);
-    const step = this.record({
+    this.record({
       key: input.key,
       action: `${input.tool}.${input.action.kind}`,
       command: argv,
@@ -104,9 +99,6 @@ export class BrowserAgentService {
       error: result.error,
       durationMs: Date.now() - started,
     });
-    if (input.tool !== "browser_submit" && step !== null) {
-      this.replayable.set(step.id, { tool: input.tool, action: input.action as BrowserReadAction | BrowserActAction, key: input.key });
-    }
     if (!result.ok) throw new Error(result.error ?? "浏览器命令执行失败。");
     return modelView(input.action.kind, result);
   }
@@ -121,11 +113,7 @@ export class BrowserAgentService {
     this.pushStatus();
   }
 
-  // ———————————————————— 用户面（右栏 / 工具条） ————————————————————
-
-  listSteps(): AgentStep[] {
-    return [...this.steps];
-  }
+  // ———————————————————— 用户面（顶栏开关 / 浏览器工具条） ————————————————————
 
   status(): { running: boolean; key: string | null } {
     return { running: this.current !== null, key: this.current?.key ?? null };
@@ -151,20 +139,6 @@ export class BrowserAgentService {
     this.pushStatus();
   }
 
-  /** 单步重放：重放同一条受控动作（只读 / 已审批过的写动作）。提交类步骤
-   * 不重放——必须重新走 browser_submit 的双重门。 */
-  async replayStep(stepId: string): Promise<void> {
-    const entry = this.replayable.get(stepId);
-    if (entry === undefined) {
-      const step = this.steps.find((item) => item.id === stepId);
-      if (step !== undefined && step.action.startsWith("browser_submit")) {
-        throw new Error("提交类步骤不能重放：请重新走 browser_submit（它会再次走确认门与限速）。");
-      }
-      throw new Error("找不到可重放的步骤（可能来自上一次启动，重放只在本次会话内可用）。");
-    }
-    await this.execute({ tool: entry.tool, action: entry.action, key: entry.key });
-  }
-
   /** before-quit 兜底（M6）：close + 按 pid kill daemon。 */
   cleanup(): void {
     this.deps.cli.killAll();
@@ -173,8 +147,6 @@ export class BrowserAgentService {
   /** 切工作区：当前任务按中止处理；日志与缓存路径经 deps 的懒访问自动跟上。 */
   onWorkspaceSwitch(): void {
     if (this.current !== null) this.abort();
-    this.steps.length = 0;
-    this.replayable.clear();
     this.pushStatus();
   }
 
@@ -200,11 +172,11 @@ export class BrowserAgentService {
         error: null,
         durationMs: 0,
       });
-      // 任务开场把右栏「工作日志」打开（P2 兑现的 agent:pane-open 链路）。
-      this.deps.sendToUi(IPC.agentPaneOpen, { pane: "log" });
+      // 浏览器任务开场把内容区的浏览器打开，让用户看得见它在干什么。
+      this.deps.sendToUi(IPC.agentPaneOpen, { pane: "browser" });
       this.pushStatus();
     } else if (this.current.key !== input.key) {
-      throw new Error("另一个会话正在操作浏览器（一次只允许一个浏览器任务）。请等它完成或在右栏中止。");
+      throw new Error("另一个会话正在操作浏览器（一次只允许一个浏览器任务）。请等它完成或在浏览器工具条中止。");
     }
     return buildArgv(input.action, {
       screenshotPath: input.action.kind === "screenshot" ? this.nextScreenshotPath() : undefined,
@@ -217,24 +189,19 @@ export class BrowserAgentService {
     return path.join(dir, `${new Date().toISOString().replace(/[:.]/g, "-")}.png`);
   }
 
-  /** 记一步审计：内存缓冲（推给右栏）+ logs/agent.log 追加一行 JSONL。 */
+  /** 记一步审计：推给工具条（停止按钮凭 status 事件）+ logs/agent.log 追加一行 JSONL。 */
   private record(input: Omit<AgentStep, "id" | "at">): AgentStep {
     const step: AgentStep = {
       ...input,
       id: `step_${randomUUID().replace(/-/g, "").slice(0, 12)}`,
       at: new Date().toISOString(),
     };
-    this.steps.push(step);
-    if (this.steps.length > STEP_BUFFER_LIMIT) {
-      const dropped = this.steps.splice(0, this.steps.length - STEP_BUFFER_LIMIT);
-      for (const item of dropped) this.replayable.delete(item.id);
-    }
     this.deps.sendToUi(IPC.agentStepEvent, { type: "step", step });
     try {
       fs.mkdirSync(this.deps.logsDir(), { recursive: true, mode: 0o700 });
       fs.appendFileSync(this.deps.logsDir() + "/agent.log", `${JSON.stringify(step)}\n`, { mode: 0o600 });
     } catch {
-      // 日志写不进去不影响任务（右栏缓冲还在），下不为例即可。
+      // 日志写不进去不影响任务（审计流已推给 UI），下不为例即可。
     }
     return step;
   }

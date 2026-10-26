@@ -97,7 +97,7 @@ export async function lockPanelTarget(
 ): Promise<{ targetId: string; url: string }> {
   const contents = panel.getContents();
   if (contents === null || contents.isDestroyed()) {
-    throw new Error("内嵌浏览器面板还没有就绪，先打开右栏浏览器面板再试。");
+    throw new Error("内嵌浏览器面板还没有就绪，先打开浏览器（顶栏地球图标）再试。");
   }
   const panelUrl = contents.getURL();
   const panelTitle = contents.getTitle();

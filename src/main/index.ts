@@ -179,9 +179,8 @@ if (!app.requestSingleInstanceLock()) {
         mainWindow.webContents.send(channel, payload);
       },
     });
-    // 后台任务（简历评估 / 完整性评分）：状态事件推给渲染层的「任务」角标。
-    // 评分类任务成功完成时再发 agent:pane-open（BROWSER-AGENT §6 预留的事件），
-    // 让渲染层打开右栏评分卡——这就是 P2 兑现的第一条链路，后续浏览器 / 日志同法。
+    // 后台任务（简历评估 / 完整性评分）：状态事件推给渲染层的「任务」角标；
+    // 报告本体由渲染层在任务完成后自己拉（岗位表 / 简历页的弹窗）。
     taskManager = new TaskManager({
       models,
       jobs,
@@ -189,15 +188,6 @@ if (!app.requestSingleInstanceLock()) {
       emit: (event) => {
         if (mainWindow === null || mainWindow.isDestroyed()) return;
         mainWindow.webContents.send(IPC.taskEvent, event);
-        if (event.type !== "finish" || event.task.status !== "done") return;
-        if (event.task.type !== "job-match" && event.task.type !== "resume-integrity") return;
-        mainWindow.webContents.send(IPC.agentPaneOpen, {
-          pane: "scorecard",
-          scorecard:
-            event.task.type === "job-match"
-              ? { kind: "job", jobId: event.task.target }
-              : { kind: "integrity", resumeId: event.task.target },
-        });
       },
     });
     agentRuntime = new AgentRuntime({

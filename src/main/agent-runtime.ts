@@ -815,7 +815,7 @@ export class AgentRuntime {
       }),
       resume_job_evaluate: tool({
         description:
-          "发起简历评估后台任务（JD 匹配度评分）：结果写进该岗位的匹配度报告，完成后岗位表与评分卡会更新。",
+          "发起简历评估后台任务（JD 匹配度评分）：结果写进该岗位的匹配度报告，完成后岗位表的分数会刷新（点分数看评分卡）。",
         inputSchema: z.object({ jobId: z.string() }),
         execute: ({ jobId }) => {
           if (jobs.get(jobId) === null) throw new Error(`岗位不存在：${jobId}（可用 job_list 查 id）`);
@@ -830,7 +830,7 @@ export class AgentRuntime {
       }),
       resume_integrity_check: tool({
         description:
-          "发起主简历完整性评分后台任务：报告存进这份简历的 reports/ 目录，完成后评分卡可看。",
+          "发起主简历完整性评分后台任务：报告存进这份简历的 reports/ 目录，完成后简历页的「完整性」按钮可看。",
         inputSchema: z.object({}),
         execute: () => {
           const currentId = resumes.list().currentId;
@@ -893,7 +893,10 @@ export class AgentRuntime {
           source: z.string().optional(),
           research: z.string().optional(),
         }),
-        execute: ({ id, ...patch }) => companies.update(id, patch),
+        execute: ({ id, ...patch }) => {
+          const company = companies.update(id, patch);
+          return company;
+        },
       }),
       company_delete: tool({
         description: "删除公司。不会级联：引用它的岗位会变成悬空引用，删前先和用户确认。",
@@ -936,7 +939,10 @@ export class AgentRuntime {
           salaryBand: z.string().optional(),
           jd: z.string().optional(),
         }),
-        execute: (patch) => jobs.create(patch),
+        execute: (patch) => {
+          const job = jobs.create(patch);
+          return job;
+        },
       }),
       job_update: tool({
         description: "更新岗位资料，只传要改的字段。匹配度报告由评估任务写入，不在这里改。",
@@ -948,7 +954,10 @@ export class AgentRuntime {
           salaryBand: z.string().optional(),
           jd: z.string().optional(),
         }),
-        execute: ({ id, ...patch }) => jobs.update(id, patch),
+        execute: ({ id, ...patch }) => {
+          const job = jobs.update(id, patch);
+          return job;
+        },
       }),
       job_delete: tool({
         description: "删除岗位。不会级联：定制简历、话术、投递记录保留为悬空引用，删前先和用户确认。",

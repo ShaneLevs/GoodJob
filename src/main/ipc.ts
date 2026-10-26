@@ -234,12 +234,8 @@ export function registerIpc(deps: IpcDeps): void {
   );
   ipcMain.handle(IPC.notifyDigestRun, (_event, kind: DigestKind) => runtime.runDigest(kind));
 
-  // —— 浏览器自动化（P4）：审计日志 / 中止 / 单步重放（main 只重放非提交类步骤）——
-  ipcMain.handle(IPC.agentLogList, () => browser.listSteps());
+  // —— 浏览器自动化（P4）：中止 + 设置（审计日志仍逐条写 logs/agent.log）——
   ipcMain.on(IPC.agentAbort, () => browser.abort());
-  ipcMain.handle(IPC.agentReplayStep, async (_event, stepId: string) => {
-    await browser.replayStep(stepId);
-  });
   ipcMain.handle(IPC.agentSettingsGet, () => browserSettings.toPublic());
   ipcMain.handle(IPC.agentSettingsSave, (_event, draft: BrowserAgentSettingsDraft) =>
     browserSettings.save(draft),

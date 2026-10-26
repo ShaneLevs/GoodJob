@@ -2,7 +2,6 @@ import { contextBridge, ipcRenderer } from "electron";
 
 import type {
   AgentPaneOpenEvent,
-  AgentStep,
   AgentStepEvent,
   AppearanceSettings,
   AppInfo,
@@ -76,6 +75,8 @@ const api: GoodjobApi = {
     stop: () => ipcRenderer.send(IPC.browserStop),
     toggleDevTools: () => ipcRenderer.send(IPC.browserToggleDevTools),
     onState: (listener: (state: BrowserState) => void) => subscribe(IPC.browserState, listener),
+    onRequestOpen: (listener: (event: AgentPaneOpenEvent) => void) =>
+      subscribe(IPC.agentPaneOpen, listener),
   },
   chat: {
     send: (payload: ChatSendPayload) =>
@@ -181,17 +182,10 @@ const api: GoodjobApi = {
     runDigest: (kind: DigestKind) =>
       ipcRenderer.invoke(IPC.notifyDigestRun, kind) as Promise<DigestRunResult>,
   },
-  workbench: {
-    onPaneOpen: (listener: (event: AgentPaneOpenEvent) => void) =>
-      subscribe(IPC.agentPaneOpen, listener),
-  },
   agent: {
-    listLog: () => ipcRenderer.invoke(IPC.agentLogList) as Promise<AgentStep[]>,
     onStep: (listener: (event: AgentStepEvent) => void) =>
       subscribe(IPC.agentStepEvent, listener),
     abort: () => ipcRenderer.send(IPC.agentAbort),
-    replayStep: (stepId: string) =>
-      ipcRenderer.invoke(IPC.agentReplayStep, stepId) as Promise<void>,
     getSettings: () =>
       ipcRenderer.invoke(IPC.agentSettingsGet) as Promise<BrowserAgentSettings>,
     saveSettings: (draft: BrowserAgentSettingsDraft) =>

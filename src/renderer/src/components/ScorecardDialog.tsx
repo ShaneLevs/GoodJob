@@ -1,58 +1,68 @@
 import { useCallback, useEffect, useState } from "react";
 
-import { Gauge } from "lucide-react";
-
 import type { IntegrityReport, JobMatchReport, ScorecardTarget } from "@shared/types";
 
 import { Badge } from "@/components/ui/badge";
 import {
-  Empty,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyMedia,
-  EmptyTitle,
-} from "@/components/ui/empty";
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 
 import { formatTime } from "./modules/table-bits";
 
+type Loaded =
+  | { kind: "job"; title: string; subtitle: string; report: JobMatchReport }
+  | { kind: "integrity"; title: string; subtitle: string; report: IntegrityReport }
+  | { kind: "missing"; message: string };
+
 /**
- * 右栏「评分卡」：展示后台评分类任务写回的报告。
+ * 评分卡弹窗：后台评分类任务写回的报告。
  * 两种定位：岗位匹配度（Job.matchReport，由 job-match 任务写回）与
  * 主简历完整性（resumes/<id>/reports/，由 resume-integrity 任务写入）。
- * 任务完成时 main 会发 agent:pane-open 把这个标签带着定位打开。
+ * 右栏工作台删除后，这里是报告唯一的展示入口（岗位表点匹配度徽标 / 简历页点完整性报告）。
  */
-export function ScorecardPane({
+export function ScorecardDialog({
   target,
-  active,
+  onClose,
+  onOverlayChange,
 }: {
+  /** null = 弹窗关闭；带定位即打开并读这份报告。 */
   target: ScorecardTarget | null;
-  /** 只在可见时拉数据；后台任务事件来了由 App 触发 refetch。 */
-  active: boolean;
+  onClose: () => void;
+  /** 弹窗打开时告知 App 隐藏内嵌浏览器（原生视图会盖住 Dialog）。 */
+  onOverlayChange?: (open: boolean) => void;
 }) {
-  const [report, setReport] = useState<
-    | { kind: "job"; title: string; subtitle: string; report: JobMatchReport }
-    | { kind: "integrity"; title: string; subtitle: string; report: IntegrityReport }
-    | { kind: "missing"; message: string }
-    | null
-  >(null);
+  const [report, setReport] = useState<Loaded | null>(null);
+
+  const open = target !== null;
+  useEffect(() => {
+    onOverlayChange?.(open);
+    return () => onOverlayChange?.(false);
+  }, [open, onOverlayChange]);
 
   const load = useCallback(async (wanted: ScorecardTarget) => {
     if (wanted.kind === "job") {
-      const jobs = await window.goodjob.jobs.list();
+      const [jobs, companies] = await Promise.all([
+        window.goodjob.jobs.list(),
+        window.goodjob.companies.list(),
+      ]);
       const job = jobs.find((item) => item.id === wanted.jobId) ?? null;
       if (job === null) {
         setReport({ kind: "missing", message: "这个岗位已被删除，报告找不到了。" });
         return;
       }
       if (job.matchReport === null) {
-        setReport({ kind: "missing", message: `「${job.title}」还没有匹配度报告：在岗位表点「简历评估」。` });
+        setReport({
+          kind: "missing",
+          message: `「${job.title}」还没有匹配度报告：在岗位表点「简历评估」。`,
+        });
         return;
       }
-      const companyName =
-        job.companyId === null
-          ? ""
-          : (await window.goodjob.companies.list()).find((item) => item.id === job.companyId)?.name ?? "";
+      const companyName = companies.find((item) => item.id === job.companyId)?.name ?? "";
       setReport({
         kind: "job",
         title: job.title,
@@ -61,6 +71,7 @@ export function ScorecardPane({
       });
       return;
     }
+
     const [reports, resumeState] = await Promise.all([
       window.goodjob.resume.integrityReports(wanted.resumeId),
       window.goodjob.resume.list(),
@@ -74,52 +85,78 @@ export function ScorecardPane({
     setReport({ kind: "integrity", title: name, subtitle: "主简历完整性", report: latest });
   }, []);
 
+  // 打开时读一次；定位变了（换了岗位 / 简历）重新读。
   useEffect(() => {
-    if (!active) return;
     setReport(null);
     if (target === null) return;
     void load(target).catch(() => setReport({ kind: "missing", message: "报告读取失败。" }));
-  }, [active, target, load]);
+  }, [target, load]);
 
-  // 任务事件（评分完成写回）→ 可见时重拉当前定位。
+  // 弹窗开着时又跑完一次评分：重拉，免得停在旧分数上。
   useEffect(() => {
-    if (!active) return;
+    if (target === null) return;
     return window.goodjob.tasks.onEvent((event) => {
       if (event.type !== "finish" || event.task.status !== "done") return;
-      if (target === null) return;
-      if (
-        (target.kind === "job" && event.task.type === "job-match" && event.task.target === target.jobId) ||
-        (target.kind === "integrity" && event.task.type === "resume-integrity" && event.task.target === target.resumeId)
-      ) {
-        void load(target).catch(() => undefined);
-      }
+      const hit =
+        (target.kind === "job" &&
+          event.task.type === "job-match" &&
+          event.task.target === target.jobId) ||
+        (target.kind === "integrity" &&
+          event.task.type === "resume-integrity" &&
+          event.task.target === target.resumeId);
+      if (hit) void load(target).catch(() => undefined);
     });
-  }, [active, target, load]);
-
-  if (target === null) {
-    return (
-      <PaneEmpty
-        title="还没有要展示的评分"
-        description="在岗位表点匹配度徽标、或发起「简历评估」后台任务；完成后会自动打开在这里。"
-      />
-    );
-  }
-  if (report === null) {
-    return <PaneEmpty title="正在读取报告…" description="" />;
-  }
-  if (report.kind === "missing") {
-    return <PaneEmpty title="没有报告" description={report.message} />;
-  }
-
-  const { title, subtitle, report: data } = report;
+  }, [target, load]);
 
   return (
-    <div className="h-full overflow-y-auto px-5 py-4">
-      <header className="mb-4">
-        <p className="text-xs text-muted-foreground">{subtitle}</p>
-        <h2 className="truncate text-base font-medium">{title}</h2>
-      </header>
+    <Dialog open={open} onOpenChange={(next) => !next && onClose()}>
+      <DialogContent className="flex max-h-[86vh] flex-col gap-4 overflow-hidden sm:max-w-lg">
+        {report === null ? (
+          <ReportShell title="正在读取报告…" subtitle="">
+            <p className="py-6 text-center text-sm text-muted-foreground">正在读取…</p>
+          </ReportShell>
+        ) : report.kind === "missing" ? (
+          <ReportShell title="没有报告" subtitle="">
+            <p className="py-6 text-center text-sm text-muted-foreground">{report.message}</p>
+          </ReportShell>
+        ) : (
+          <ReportShell title={report.title} subtitle={report.subtitle}>
+            <ReportBody report={report} />
+          </ReportShell>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
 
+function ReportShell({
+  title,
+  subtitle,
+  children,
+}: {
+  title: string;
+  subtitle: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <>
+      <DialogHeader className="shrink-0">
+        <DialogTitle className="truncate">{title}</DialogTitle>
+        {subtitle !== "" && <DialogDescription>{subtitle}</DialogDescription>}
+      </DialogHeader>
+      <div className="min-h-0 flex-1 overflow-y-auto">{children}</div>
+    </>
+  );
+}
+
+function ReportBody({
+  report,
+}: {
+  report: Extract<Loaded, { kind: "job" | "integrity" }>;
+}) {
+  const data = report.report;
+  return (
+    <>
       <div className="mb-4 flex items-center gap-4 rounded-2xl bg-muted/40 p-4">
         <ScoreDial score={data.score} />
         <p className="min-w-0 flex-1 text-sm leading-relaxed text-muted-foreground">
@@ -132,7 +169,11 @@ export function ScorecardPane({
           <div key={dimension.name} className="rounded-xl border border-border/60 p-3">
             <div className="mb-1.5 flex items-center gap-2">
               <span className="min-w-0 flex-1 truncate text-sm font-medium">{dimension.name}</span>
-              <Badge variant={dimension.score >= 75 ? "default" : dimension.score >= 50 ? "secondary" : "outline"}>
+              <Badge
+                variant={
+                  dimension.score >= 75 ? "default" : dimension.score >= 50 ? "secondary" : "outline"
+                }
+              >
                 <span className="tabular-nums">{dimension.score}</span>
               </Badge>
             </div>
@@ -155,12 +196,12 @@ export function ScorecardPane({
         ))}
       </div>
 
-      <p className="mt-4 pb-2 text-[11px] text-muted-foreground">
+      <p className="mt-4 pb-1 text-[11px] text-muted-foreground">
         {report.kind === "job"
           ? `评估于 ${formatTime(report.report.evaluatedAt)}`
           : `报告生成于 ${formatTime(report.report.createdAt)}`}
       </p>
-    </div>
+    </>
   );
 }
 
@@ -175,22 +216,6 @@ function ScoreDial({ score }: { score: number }) {
     <div className="flex shrink-0 flex-col items-center">
       <span className={cn("text-3xl leading-none font-semibold tabular-nums", tone)}>{score}</span>
       <span className="mt-1 text-[11px] text-muted-foreground">/ 100</span>
-    </div>
-  );
-}
-
-function PaneEmpty({ title, description }: { title: string; description: string }) {
-  return (
-    <div className="grid h-full place-items-center p-6">
-      <Empty className="max-w-xs">
-        <EmptyHeader>
-          <EmptyMedia variant="icon">
-            <Gauge />
-          </EmptyMedia>
-          <EmptyTitle>{title}</EmptyTitle>
-          {description !== "" && <EmptyDescription>{description}</EmptyDescription>}
-        </EmptyHeader>
-      </Empty>
     </div>
   );
 }

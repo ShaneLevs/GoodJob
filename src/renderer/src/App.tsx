@@ -1,22 +1,21 @@
 import { useEffect, useState } from "react";
 
-import { PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen } from "lucide-react";
+import { Globe, PanelLeftClose, PanelLeftOpen } from "lucide-react";
 
 import type {
   AppearanceSettings,
   ModelSelection,
   ModelsConfig,
-  ScorecardTarget,
   TaskState,
   WorkspacesState,
 } from "@shared/types";
 
+import { BrowserPanel } from "./components/BrowserPanel";
 import { SettingsModal, type SettingsSection } from "./components/SettingsModal";
 import { Sidebar } from "./components/Sidebar";
+import { TasksBadge } from "./components/TasksBadge";
 import { ThemeApplier } from "./components/theme-applier";
-import { Workbench } from "./components/Workbench";
 import { Button } from "./components/ui/button";
-import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "./components/ui/resizable";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./components/ui/tooltip";
 import { cn } from "./lib/utils";
 import { ApplicationsPage } from "./components/modules/ApplicationsPage";
@@ -26,14 +25,7 @@ import { JobWorkbenchPage } from "./components/modules/JobWorkbenchPage";
 import { JobsPage } from "./components/modules/JobsPage";
 import { ResumePage } from "./components/modules/ResumePage";
 import type { ModuleKey } from "./modules";
-import type { PaneKey } from "./panes";
 import { resolveDark } from "./theme";
-
-/** 右栏默认宽度（px）。拖拽后会记住用户自己拖出来的宽度。 */
-const WORKBENCH_DEFAULT_WIDTH = 560;
-/** 拖拽分栏时的最小宽度：再窄对话区和标签页就没法用了。 */
-const CHAT_MIN_WIDTH = 420;
-const WORKBENCH_MIN_WIDTH = 340;
 
 export function App() {
   const [models, setModels] = useState<ModelsConfig | null>(null);
@@ -61,15 +53,11 @@ export function App() {
    */
   const [interviewFocus, setInterviewFocus] = useState<string | null>(null);
   /*
-   * 右栏默认收起：首次启动时界面只需要对话，右栏由 Agent 需要时自己打开，
-   * 顶栏右侧那个按钮随时可以手动展开。
+   * 内嵌浏览器铺满内容区（原生 WebContentsView）：默认关着，Agent 的浏览器任务
+   * 开场会用 agent:pane-open 把它打开，顶栏的浏览器按钮也能手动开。
    */
-  const [workbenchOpen, setWorkbenchOpen] = useState(false);
-  const [openPanes, setOpenPanes] = useState<PaneKey[]>([]);
-  const [activePane, setActivePane] = useState<PaneKey | null>(null);
-  /** 评分卡标签当前展示的报告定位。 */
-  const [scorecardTarget, setScorecardTarget] = useState<ScorecardTarget | null>(null);
-  /** 后台任务注册表快照（右栏「任务」角标汇总用）。 */
+  const [browserOpen, setBrowserOpen] = useState(false);
+  /** 后台任务注册表快照（顶栏「任务」角标汇总用）。 */
   const [tasks, setTasks] = useState<TaskState[]>([]);
   /** 对话区里的浮层（模型下拉）打开期间为 true，原生浏览器视图要让位。 */
   const [overlayOpen, setOverlayOpen] = useState(false);
@@ -97,14 +85,13 @@ export function App() {
   }, []);
 
   // 工作区切换由 main 广播：重读模型配置与任务注册表；模块页通过 remount key 换整套数据。
-  // 岗位工作台、面试定位与评分卡指向的是旧工作区的数据，一并退出。
+  // 岗位工作台与面试定位指向的是旧工作区的数据，一并退出。
   useEffect(
     () =>
       window.goodjob.workspace.onChanged((state) => {
         setWorkspaces(state);
         setJobWorkbench(null);
         setInterviewFocus(null);
-        setScorecardTarget(null);
         void window.goodjob.models.get().then(setModels);
         void window.goodjob.tasks.list().then(setTasks);
       }),
@@ -154,12 +141,15 @@ export function App() {
         {sidebarOpen ? <PanelLeftClose /> : <PanelLeftOpen />}
       </IconToggle>
       <div className="flex-1" />
+      <div className="no-drag mr-1">
+        <TasksBadge tasks={tasks} onOverlayChange={setOverlayOpen} />
+      </div>
       <IconToggle
-        label={workbenchOpen ? "收起右栏" : "展开右栏"}
-        active={workbenchOpen}
-        onClick={() => setWorkbenchOpen(!workbenchOpen)}
+        label={browserOpen ? "收起浏览器" : "打开浏览器"}
+        active={browserOpen}
+        onClick={() => setBrowserOpen(!browserOpen)}
       >
-        {workbenchOpen ? <PanelRightClose /> : <PanelRightOpen />}
+        <Globe />
       </IconToggle>
     </div>
   );
@@ -197,7 +187,6 @@ export function App() {
           <JobsPage
             key={workspaceVersion}
             onOpenJob={(jobId, autoPrompt) => setJobWorkbench({ jobId, autoPrompt })}
-            onOpenScorecard={(target) => openPane("scorecard", target)}
             onOpenInterview={(interviewId) => {
               setInterviewFocus(interviewId);
               setActiveModule("interview");
@@ -221,54 +210,15 @@ export function App() {
     }
   })();
 
-  // 右栏不提供手动创建标签的入口：openPane 留给 Agent 侧通道（评分卡可带定位）。
-  const openPane = (key: PaneKey, scorecard?: ScorecardTarget): void => {
-    setOpenPanes((prev) => (prev.includes(key) ? prev : [...prev, key]));
-    setActivePane(key);
-    setWorkbenchOpen(true);
-    if (key === "scorecard" && scorecard !== undefined) setScorecardTarget(scorecard);
-  };
+  // agent:pane-open（BROWSER-AGENT §6 预留事件）的兑现：main（Agent / 后台任务）
+  // 请求把浏览器铺满内容区。右栏已移除，这个事件只服务于浏览器。
+  useEffect(() => window.goodjob.browser.onRequestOpen(() => setBrowserOpen(true)), []);
 
-  // agent:pane-open（BROWSER-AGENT §6 预留事件）的兑现：main（后台任务等）
-  // 请求打开右栏与对应标签——评分类任务完成时带评分卡定位。
-  useEffect(
-    () =>
-      window.goodjob.workbench.onPaneOpen((event) => {
-        setOpenPanes((prev) => (prev.includes(event.pane) ? prev : [...prev, event.pane]));
-        setActivePane(event.pane);
-        setWorkbenchOpen(true);
-        if (event.pane === "scorecard" && event.scorecard !== undefined) {
-          setScorecardTarget(event.scorecard);
-        }
-      }),
-    [],
-  );
-
-  const closePane = (key: PaneKey): void => {
-    const next = openPanes.filter((pane) => pane !== key);
-    setOpenPanes(next);
-    if (activePane === key) setActivePane(next[next.length - 1] ?? null);
-  };
-
-  const workbench = (
-    <Workbench
-      openPanes={openPanes}
-      activePane={activePane}
-      suspended={settingsOpen || overlayOpen || !workbenchOpen}
-      scorecardTarget={scorecardTarget}
-      tasks={tasks}
-      // 「让 Agent 接管」只在挂了 useBrowserTakeover 的会话里出现
-      // （companies / jobs / applications；岗位二级工作台的 job:<id> 会话没有浏览器工具）。
-      takeoverAvailable={
-        (activeModule === "companies" || activeModule === "jobs" || activeModule === "applications") &&
-        !(activeModule === "jobs" && jobWorkbench !== null)
-      }
-      onSelect={setActivePane}
-      onOpen={openPane}
-      onClose={closePane}
-      onOverlayChange={setOverlayOpen}
-    />
-  );
+  // 「让 Agent 接管」只在挂了 useBrowserTakeover 的会话里出现
+  // （companies / jobs / applications；岗位二级工作台的 job:<id> 会话没有浏览器工具）。
+  const takeoverAvailable =
+    (activeModule === "companies" || activeModule === "jobs" || activeModule === "applications") &&
+    !(activeModule === "jobs" && jobWorkbench !== null);
 
   return (
     <TooltipProvider delayDuration={300}>
@@ -276,7 +226,7 @@ export function App() {
       {/*
        * 窗口 = 48px 顶栏（交通灯 + 我们的操作按钮）+ 下面分块的内容。
        * 左栏直接铺在窗口底色上（没有卡片、没有描边），只有内容块是白色卡片，
-       * 层级因此是：窗口底 → 侧栏（导航）→ 内容卡（模块页 / 右栏）。
+       * 层级因此是：窗口底 → 侧栏（导航）→ 内容卡（模块页 / 浏览器面板）。
        */}
       <div className="flex h-screen flex-col overflow-hidden bg-shell text-foreground">
         {topbar}
@@ -288,6 +238,8 @@ export function App() {
                 activeModule={activeModule}
                 onSelectModule={(key) => {
                   setActiveModule(key);
+                  // 浏览器是为当前模块打开的，换模块就收起来（否则它盖住新页面，看着像没反应）。
+                  setBrowserOpen(false);
                   // 离开岗位模块即退出二级工作台（回来落在岗位表）。
                   if (key !== "jobs") setJobWorkbench(null);
                 }}
@@ -301,22 +253,21 @@ export function App() {
             </div>
           )}
 
-          <main className="min-h-0 min-w-0 flex-1">
-            {workbenchOpen ? (
-              <ResizablePanelGroup orientation="horizontal">
-                <ResizablePanel minSize={CHAT_MIN_WIDTH} defaultSize="56%">
-                  {moduleContent}
-                </ResizablePanel>
-                {/* 8px 间隙里的一条可拖拽细线：既是分隔提示，也是拖拽热区。 */}
-                <ResizableHandle className="mx-1 w-1 justify-self-center rounded-full bg-border/60 transition-colors after:hidden hover:bg-border data-[separator]:bg-border/60" />
-                <ResizablePanel minSize={WORKBENCH_MIN_WIDTH} defaultSize={WORKBENCH_DEFAULT_WIDTH}>
-                  <div className="h-full overflow-hidden rounded-2xl bg-card shadow-sm">
-                    {workbench}
-                  </div>
-                </ResizablePanel>
-              </ResizablePanelGroup>
-            ) : (
-              moduleContent
+          <main className="relative min-h-0 min-w-0 flex-1">
+            {moduleContent}
+            {/*
+             * 浏览器铺满整个内容块（原生 WebContentsView 停在其中留出的矩形上）。
+             * 模块页留在下层不卸载：它的会话与「让 Agent 接管」监听都要继续活着。
+             */}
+            {browserOpen && (
+              <div className="absolute inset-0 overflow-hidden rounded-2xl bg-card shadow-sm">
+                <BrowserPanel
+                  active
+                  suspended={settingsOpen || overlayOpen}
+                  takeoverAvailable={takeoverAvailable}
+                  onClose={() => setBrowserOpen(false)}
+                />
+              </div>
             )}
           </main>
         </div>

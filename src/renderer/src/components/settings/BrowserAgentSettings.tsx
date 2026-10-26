@@ -114,7 +114,7 @@ export function BrowserAgentSettings() {
               <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
                 开启后，公司 / 岗位 / 投递三个对话里会出现浏览器工具（browser_read /
                 browser_act / browser_submit），Agent 通过内嵌浏览器面板操作页面；每一步
-                都会记进右栏「工作日志」，写动作逐条弹界面审批。
+                都会记进工作区 logs/agent.log，写动作逐条弹界面审批。
               </p>
             </div>
             <Switch
@@ -183,8 +183,8 @@ export function BrowserAgentSettings() {
                 （不在 ~/.goodjob 工作区里）：这是它的会话恢复机制所在，本应用不迁移也不清空它。
               </li>
               <li>
-                命令白名单不含 cookies / 存储 / eval / 网络劫持等能力；每一步的完整命令都可在
-                「工作日志」里复查，工作区 logs/agent.log 留有全量审计（不含页面正文）。
+                命令白名单不含 cookies / 存储 / eval / 网络劫持等能力；每一步的完整命令都会写进工作区
+                logs/agent.log（全量审计，不含页面正文）。
               </li>
               <li>
                 投递平台适配指令模板在{" "}
