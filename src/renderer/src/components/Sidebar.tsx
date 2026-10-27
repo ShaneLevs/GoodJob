@@ -32,7 +32,7 @@ export function Sidebar({
   onSwitchWorkspace,
 }: SidebarProps) {
   return (
-    <aside className="flex h-full w-full flex-col px-3 pb-2 pt-1">
+    <aside className="flex h-full w-full select-none flex-col px-3 pb-2 pt-1">
       {/* 左栏平铺在窗口底色上：没有卡片、没有描边，收起/展开交给顶栏。 */}
       <div className="flex h-11 shrink-0 items-center gap-2 px-2">
         <img src={beeUrl} alt="" draggable={false} className="size-6 shrink-0" />
