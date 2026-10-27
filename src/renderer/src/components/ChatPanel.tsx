@@ -911,9 +911,32 @@ function WorkBlock({
   );
 }
 
-/** 思考内容：标题写状态，展开是模型的原始推理文本；无图标，完成后默认收起。 */
+/**
+ * 思考内容：标题写状态，展开是模型的原始推理文本；无图标，完成后默认收起。
+ * 正文最多露 10 行，超出在框内滚动（跟随到底部，用户往上翻后不再抢滚动），
+ * 否则长思考会把下面的工具行和正文一直往下推。
+ */
 function ReasoningRow({ text, streaming }: { text: string; streaming: boolean }) {
   const [open, setOpen] = useState<boolean>();
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const lastHeightRef = useRef(0);
+  const wasStreamingRef = useRef(streaming);
+
+  // 思考一结束就收起：即使读者在流式过程中手动展开过，也回到默认的折叠态。
+  useEffect(() => {
+    if (wasStreamingRef.current && !streaming) setOpen(undefined);
+    wasStreamingRef.current = streaming;
+  }, [streaming]);
+
+  useEffect(() => {
+    const body = bodyRef.current;
+    if (body === null) return;
+    // 用「这次增长之前」的高度判断读者是否停在底部：scroll 事件是异步派发的，
+    // 靠它记跟随状态会被下一段 delta 抢先，读者往上翻也会被拽回底部。
+    const atBottom = body.scrollTop + body.clientHeight >= lastHeightRef.current - 8;
+    if (streaming && atBottom) body.scrollTop = body.scrollHeight;
+    lastHeightRef.current = body.scrollHeight;
+  }, [text, streaming]);
 
   const line = (
     <TraceLine status={streaming ? "running" : undefined}>
@@ -924,10 +947,19 @@ function ReasoningRow({ text, streaming }: { text: string; streaming: boolean })
   if (text.length === 0) return line;
 
   return (
-    <TraceCollapsible open={open ?? streaming} onOpenChange={setOpen}>
+    <TraceCollapsible
+      open={open ?? streaming}
+      onOpenChange={(next) => {
+        setOpen(next);
+        // 重新展开时按「从底部继续跟随」处理，而不是沿用折叠前的高度。
+        if (next) lastHeightRef.current = 0;
+      }}
+    >
       <TraceCollapsibleTrigger>{line}</TraceCollapsibleTrigger>
       <TraceCollapsibleContent className="whitespace-pre-wrap">
-        {text}
+        <div ref={bodyRef} className="max-h-[10lh] overflow-y-auto overscroll-contain">
+          {text}
+        </div>
       </TraceCollapsibleContent>
     </TraceCollapsible>
   );
