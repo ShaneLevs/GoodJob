@@ -28,7 +28,6 @@ data/
 *.sqlite3
 logs/
 *.log
-docs/
 
 # Local scratch
 .tmp/
