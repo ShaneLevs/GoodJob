@@ -603,7 +603,14 @@ export function ChatPanel({
 
   return (
     <div className="flex h-full min-w-0 flex-1 flex-col bg-card">
-      <MessageScrollerProvider>
+      {/*
+        autoScroll 是必须的，不是可选装饰：消息行带 content-visibility:auto，
+        markdown / 代码块 / 图片是挂载后才撑高的，打开会话那一刻算出来的
+        scrollHeight 偏小，默认的「滚到底」落地后内容继续变高，就会停在离底部
+        差一截的位置（真实会话实测差 173px，之后再也不动）。开着 autoScroll
+        时，只有读者停在底部才跟着长，往上翻就自动退出跟随——不会抢滚动。
+      */}
+      <MessageScrollerProvider autoScroll>
         {empty ? (
           <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-6 px-6">
             <Empty className="max-w-md">
