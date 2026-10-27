@@ -23,11 +23,18 @@ GoodJob：一个带内嵌浏览器的求职助手桌面端。技术栈与理由�
    （目录 0700 / 文件 0600），不进渲染层、不进日志、不进仓库。
 4. **不伪造回复。** 未配置模型时返回 `llm_not_configured` 并引导用户去设置，
    不要内置 mock provider 或示例数据。
-5. **内嵌浏览器是 `WebContentsView`（原生视图）。** 任何 Dialog / Dropdown / Popover
-   打开前必须隐藏它，否则会被它盖住。布局给浏览器留矩形区域，不要指望 CSS 裁剪。
+5. **内嵌浏览器是 `WebContentsView`（原生视图），并且是多标签的。** 任何 Dialog /
+   Dropdown / Popover 打开前必须隐藏它，否则会被它盖住。布局给浏览器留矩形区域，
+   不要指望 CSS 裁剪。标签池是 `main/browser.ts` 的一个 `Map<tabId, WebContentsView>`，
+   **只有活动标签那个 view 挂在窗口上**，其余 detach 但 webContents 活着（页面状态保留）。
+   Agent 的建/关/切标签必须走 `PanelDescriptor`（构造进 `BrowserPanel`），**绝不直接调
+   CLI 的 `tab new`**——那会在同一个 Chromium 里造一个我们拿不到 view 的隐形页面。
 6. **preload 必须打成 CommonJS。** 沙箱化 preload 不支持 ESM，产物固定 `out/preload/index.cjs`。
 7. **浏览器自动化走 agent-browser，且必须锁 tab。** CDP 端口会同时暴露我们自己的 UI 窗口，
-   模型不能直接拼 CLI：只允许白名单动作，永远先 `tab` 锁定面板 target 再执行。
+   模型不能直接拼 CLI：只允许白名单动作，永远先 `tab list` 再显式 `tab <targetId>` 绑定。
+   标签↔target 的对账靠 `webContents.debugger` 的 `Target.getTargetInfo`（确定性，同站
+   多标签也不会串）。⚠️ **会话未绑定时第一条命令不能带 `--pin-tab`**：它会尝试
+   `Target.createTarget`，Electron 不支持该 CDP 命令，会直接报错。
    禁止 `eval` / `cookies` / `storage` / `state` / `network route` / `install` / `upgrade`。
    细节见 `docs/BROWSER-AGENT.md`。
 8. **AI 能力只走 AI SDK。** 模型调用、流式、工具循环、结构化输出、embedding、
@@ -112,12 +119,13 @@ AI SDK 4/5，本项目跑 Tailwind 4 + AI SDK 7，都是破坏性版本）。
 ```
 .agents/        迁移前的 antd / X 知识库（历史归档，勿参考）
 docs/           PRODUCT.md（产品方案）、ARCHITECTURE.md（技术方案定案）、STACK.md（选型）、BROWSER-AGENT.md（浏览器安全）、plan/（分期实施计划）
-src/main/       窗口、BrowserPanel(WebContentsView)、AgentRuntime(ToolLoopAgent，toolsFor 按
+src/main/       窗口、BrowserPanel(多标签 WebContentsView 池)、AgentRuntime(ToolLoopAgent，toolsFor 按
                  会话 key 分发工具；job:<jobId> 岗位工作台与 interview:<id> 模拟面试为
                  复合会话；companies/jobs/applications 会话另有 notify /
                  request_confirmation（applications）与 browser_read/act/submit（三个
                  领域会话，P4）工具，notify 与 browser_act 挂 toolApproval 界面审批)、
-                 Conversations/Resume/Memory/
+                 Conversations/Resume（含 resume-format.ts：简历 Markdown 格式说明 +
+                 starter，简历会话与岗位工作台提示词共用）/Memory/
                  Models/Workspaces store、domain-store（companies/jobs/applications +
                  pipeline，通用 JSON 集合底座导出给 interviews-store 复用）、
                  interviews-store（模拟面试记录：逐轮落账与总评收束是仅有的两个写入口）、
@@ -148,11 +156,14 @@ src/renderer/   React + shadcn/ui + Tailwind 4
                      会话 + 总评点评卡）；ResumeEditorCard 按 ResumeDocTarget 参数化
                      （主简历 / 定制稿共用，带 PDF 导出）；table-bits 是三张表共用的
                      内存排序小件；所有弹层经 onOverlayChange 让位内嵌浏览器
-  components/     BrowserPanel（内嵌浏览器 + 工具条，顶栏开关控制）、TasksBadge（顶栏后台
+  components/     BrowserPanel（内嵌多标签浏览器：标签条 + 工具条，顶栏开关控制）、TasksBadge（顶栏后台
                   任务角标）、ScorecardDialog（评分卡弹层：岗位匹配度 / 简历完整性，
                   是报告唯一的展示入口）、ExportRoute（#export 导出路由；main.tsx 按 hash
                   分流，导出窗不挂 App）
-  markdown/       通用文档渲染：render.ts（marked 扩展+消毒）、templates/（一模板一份 CSS 串）；
+  markdown/       通用文档渲染：render.ts（marked 扩展 + DOMPurify + 图标后处理；
+                  支持 ==高亮==、A | B | C、左:::右、icon:name、photo: 指令）、
+                  icons.ts（lucide + simple-icons 注册表）、templates/（一个 CSS 文件
+                  一套主题，?inline 注入；当前 mint.css）；
                   MarkdownPreview 组件（components/MarkdownPreview.tsx）是所有文档展示的复用入口
 src/shared/     三进程共用的类型与 IPC 频道名（保持零依赖）
 scripts/        图标管线：make-icons.mjs 用 Electron 渲染 build/icon-drafts/logo.svg
