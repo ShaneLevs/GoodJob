@@ -15,19 +15,20 @@ const here = new URL(".", import.meta.url).pathname;
 const jiti = createJiti(here, {
   alias: {
     electron: path.join(here, "p3-smoke-electron-stub.mjs"),
-    // 类型都走 type-only import（编译期擦除），agent-runtime 是第一个运行时
+    // 类型都走 type-only import（编译期擦除），agent/runtime 是第一个运行时
     // require @shared/types 的模块：给 jiti 补上 tsconfig paths 同款别名。
     "@shared": path.join(here, "..", "src", "shared"),
   },
 });
 
-const { InterviewsStore } = await jiti.import("../src/main/interviews-store.ts");
-const { ApplicationsStore, CompaniesStore, JobsStore, PipelineStore } = await jiti.import(
-  "../src/main/domain-store.ts",
-);
-const { ResumeStore } = await jiti.import("../src/main/resume-store.ts");
-const { ConversationsStore } = await jiti.import("../src/main/conversations-store.ts");
-const { ensureWorkspaceDirs, workspacePaths } = await jiti.import("../src/main/paths.ts");
+const { InterviewsStore } = await jiti.import("../src/main/stores/domain/interviews.ts");
+const { CompaniesStore } = await jiti.import("../src/main/stores/domain/companies.ts");
+const { JobsStore } = await jiti.import("../src/main/stores/domain/jobs.ts");
+const { ApplicationsStore } = await jiti.import("../src/main/stores/domain/applications.ts");
+const { PipelineStore } = await jiti.import("../src/main/stores/domain/pipeline.ts");
+const { ResumeStore } = await jiti.import("../src/main/stores/resumes.ts");
+const { ConversationsStore } = await jiti.import("../src/main/stores/conversations.ts");
+const { ensureWorkspaceDirs, workspacePaths } = await jiti.import("../src/main/workspace/paths.ts");
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "goodjob-interviews-smoke-"));
 const paths = workspacePaths(tmp, "ws_smoke0000");
@@ -150,10 +151,10 @@ assert.equal(encodeURIComponent(key), "interview%3A" + interview.id);
 
 // —— AgentRuntime 的 interview 会话装配：工具白名单 / 指令 / 工具写入口（不调真模型）——
 
-const { AgentRuntime } = await jiti.import("../src/main/agent-runtime.ts");
-const { MemoryStore } = await jiti.import("../src/main/memory.ts");
-const { ModelsStore } = await jiti.import("../src/main/models-store.ts");
-const { TaskManager } = await jiti.import("../src/main/tasks.ts");
+const { AgentRuntime } = await jiti.import("../src/main/agent/runtime.ts");
+const { MemoryStore } = await jiti.import("../src/main/stores/memory.ts");
+const { ModelsStore } = await jiti.import("../src/main/stores/models.ts");
+const { TaskManager } = await jiti.import("../src/main/services/tasks.ts");
 
 const pipeline = new PipelineStore(paths);
 const applications = new ApplicationsStore(paths, jobs, pipeline);

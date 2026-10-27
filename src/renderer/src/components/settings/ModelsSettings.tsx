@@ -62,6 +62,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
+import { formatContext } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 import { PROTOCOL_OPTIONS, PROVIDER_PRESETS, type PresetModel } from "./presets";
@@ -457,7 +458,7 @@ function ProviderForm({
               </span>
               {model.contextWindow !== undefined && (
                 <Badge variant="secondary" className="text-[10px]">
-                  {formatContext(model.contextWindow)}
+                  {formatContext(model.contextWindow) ?? "0"}
                 </Badge>
               )}
               {model.vision === true && (
@@ -711,15 +712,6 @@ function fromPresetModel(preset: PresetModel): ModelEntry {
     vision: preset.vision,
     reasoning: preset.reasoning,
   };
-}
-
-function formatContext(tokens: number): string {
-  if (tokens >= 1000000) {
-    const millions = tokens / 1000000;
-    return `${Number.isInteger(millions) ? millions : millions.toFixed(1)}M`;
-  }
-  if (tokens >= 1000) return `${Math.round(tokens / 1000)}K`;
-  return String(tokens);
 }
 
 /** 官方端点一定会校验 Key；其他地址按自建/中转处理。 */

@@ -10,22 +10,22 @@ import type {
   WorkspacesState,
 } from "@shared/types";
 
-import { BrowserPanel } from "./components/BrowserPanel";
-import { SettingsModal, type SettingsSection } from "./components/SettingsModal";
-import { Sidebar } from "./components/Sidebar";
-import { TasksBadge } from "./components/TasksBadge";
-import { ThemeApplier } from "./components/theme-applier";
-import { Button } from "./components/ui/button";
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./components/ui/tooltip";
-import { cn } from "./lib/utils";
-import { ApplicationsPage } from "./components/modules/ApplicationsPage";
-import { CompaniesPage } from "./components/modules/CompaniesPage";
-import { InterviewPage } from "./components/modules/InterviewPage";
-import { JobWorkbenchPage } from "./components/modules/JobWorkbenchPage";
-import { JobsPage } from "./components/modules/JobsPage";
-import { ResumePage } from "./components/modules/ResumePage";
-import type { ModuleKey } from "./modules";
-import { resolveDark } from "./theme";
+import { BrowserPanel } from "@/components/browser/BrowserPanel";
+import { SettingsModal, type SettingsSection } from "@/components/settings/SettingsModal";
+import { Sidebar } from "@/components/shell/Sidebar";
+import { TasksBadge } from "@/components/shell/TasksBadge";
+import { ThemeApplier } from "@/components/shell/ThemeApplier";
+import { Button } from "@/components/ui/button";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { cn } from "@/lib/utils";
+import { ApplicationsPage } from "@/components/modules/applications/ApplicationsPage";
+import { CompaniesPage } from "@/components/modules/companies/CompaniesPage";
+import { InterviewPage } from "@/components/modules/interview/InterviewPage";
+import { JobWorkbenchPage } from "@/components/modules/jobs/JobWorkbenchPage";
+import { JobsPage } from "@/components/modules/jobs/JobsPage";
+import { ResumePage } from "@/components/modules/resume/ResumePage";
+import type { ModuleKey } from "@/config/modules";
+import { resolveDark } from "@/lib/theme";
 
 export function App() {
   const [models, setModels] = useState<ModelsConfig | null>(null);
@@ -205,8 +205,6 @@ export function App() {
             {...moduleProps}
           />
         );
-      case "companies":
-        return <CompaniesPage key={workspaceVersion} {...moduleProps} />;
     }
   })();
 

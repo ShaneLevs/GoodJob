@@ -24,9 +24,9 @@ const jiti = createJiti(here, {
   },
 });
 
-const { NotifyStore } = await jiti.import("../src/main/notify-store.ts");
-const { NotifyService, isDigestDue } = await jiti.import("../src/main/notify-service.ts");
-const { ensureWorkspaceDirs, workspacePaths } = await jiti.import("../src/main/paths.ts");
+const { NotifyStore } = await jiti.import("../src/main/stores/notify.ts");
+const { NotifyService, isDigestDue } = await jiti.import("../src/main/services/notify.ts");
+const { ensureWorkspaceDirs, workspacePaths } = await jiti.import("../src/main/workspace/paths.ts");
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "goodjob-notify-smoke-"));
 const paths = workspacePaths(tmp, "ws_smoke0000");

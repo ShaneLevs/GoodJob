@@ -25,7 +25,7 @@ GoodJob：一个带内嵌浏览器的求职助手桌面端。技术栈与理由�
    不要内置 mock provider 或示例数据。
 5. **内嵌浏览器是 `WebContentsView`（原生视图），并且是多标签的。** 任何 Dialog /
    Dropdown / Popover 打开前必须隐藏它，否则会被它盖住。布局给浏览器留矩形区域，
-   不要指望 CSS 裁剪。标签池是 `main/browser.ts` 的一个 `Map<tabId, WebContentsView>`，
+   不要指望 CSS 裁剪。标签池是 `main/browser/panel.ts` 的一个 `Map<tabId, WebContentsView>`，
    **只有活动标签那个 view 挂在窗口上**，其余 detach 但 webContents 活着（页面状态保留）。
    Agent 的建/关/切标签必须走 `PanelDescriptor`（构造进 `BrowserPanel`），**绝不直接调
    CLI 的 `tab new`**——那会在同一个 Chromium 里造一个我们拿不到 view 的隐形页面。
@@ -119,58 +119,48 @@ AI SDK 4/5，本项目跑 Tailwind 4 + AI SDK 7，都是破坏性版本）。
 ```
 .agents/        迁移前的 antd / X 知识库（历史归档，勿参考）
 docs/           PRODUCT.md（产品方案）、ARCHITECTURE.md（技术方案定案）、STACK.md（选型）、BROWSER-AGENT.md（浏览器安全）、plan/（分期实施计划）
-src/main/       窗口、BrowserPanel(多标签 WebContentsView 池)、AgentRuntime(ToolLoopAgent，toolsFor 按
-                 会话 key 分发工具；job:<jobId> 岗位工作台与 interview:<id> 模拟面试为
-                 复合会话；companies/jobs/applications 会话另有 notify /
-                 request_confirmation（applications）与 browser_read/act/submit（三个
-                 领域会话，P4）工具，notify 与 browser_act 挂 toolApproval 界面审批)、
-                 Conversations/Resume（含 resume-format.ts：简历 Markdown 格式说明 +
-                 starter，简历会话与岗位工作台提示词共用）/Memory/
-                 Models/Workspaces store、domain-store（companies/jobs/applications +
-                 pipeline，通用 JSON 集合底座导出给 interviews-store 复用）、
-                 interviews-store（模拟面试记录：逐轮落账与总评收束是仅有的两个写入口）、
-                 notify-store / notify-service（通知：notifications.json 密文凭据 +
-                 nodemailer 发送 + imapflow 收信监控 + 确认门 sent→waiting→reminded→
-                 approved|timeout + 分钟级 tick 日报调度，日报/周报到点跑一次
-                 AgentRuntime.runDigest）、agent/（P4 浏览器自动化：agent-browser.ts
-                 二进制定位与 spawn、actions.ts 受控动作枚举与 argv 组装、target.ts
-                 tab 锁定、runner.ts 任务包络与审计、settings-store.ts 开关与限速）、
-                 tasks（后台任务：简历评估 / 完整性评分，
-                 task:event）、pdf-export（printToPDF）、model-provider、paths、IPC
+src/main/       Electron 主进程
+  index.ts      Electron 入口：单实例、窗口生命周期、启动/退出编排
+  app/          窗口装配（window.ts）、安全硬化（security.ts）、store/service 构造（context.ts）
+  agent/        LLM Agent：runtime.ts（run / abort / context / compact / runDigest）、
+                context.ts（预算 / 压缩 / 摘要）、instructions.ts（会话指令）、
+                prompts/resume-format.ts、model-provider.ts、deps.ts、
+                tools/（shared / resume / domain / job / interview 按会话组装）
+  browser/      内嵌浏览器：panel.ts（多标签 WebContentsView 池）；
+                automation/（cli.ts 二进制定位与 spawn、actions.ts 受控动作与 argv、
+                target.ts tab 锁定、runner.ts 任务包络与审计、settings-store.ts 开关与限速）
+  stores/       持久化：json-collection.ts 通用底座、conversations / resumes / models /
+                notify / preferences / workspaces / memory、domain/（companies / jobs /
+                applications / pipeline / interviews 一个实体一个文件）
+  services/     tasks.ts（后台任务：简历评估 / 完整性评分）、notify.ts（SMTP / IMAP /
+                确认门 / 日报调度）、pdf-export.ts（printToPDF）
+  ipc/          index.ts + browser / chat / resume / domain / settings / workspace 分域注册
+  workspace/    paths.ts（WorkspacePaths 登记）、uploads.ts（会话上传目录与文件读取）
 src/preload/    contextBridge -> window.goodjob
 src/renderer/   React + shadcn/ui + Tailwind 4
-  globals.css     唯一的样式入口：token、状态变体桥接、markdown 排版
-                  （文档模板 CSS 是唯一例外：scoped 到预览纸面、随用随注入，见 markdown/）
-  modules.tsx     左栏模块菜单注册表（简历/岗位/投递/面试/公司；没有独立「对话」页）
-  components/ui/  shadcn 组件源码（可改）；工具调用与思考过程用 trace.tsx（AI Elements
-                  的 tool / chain-of-thought 结构）+ code-block.tsx，不要再自制折叠卡片
-  components/chat/   IPC ChatTransport + 滚动会话 hook；上传附件（data-upload part，
-                     不进模型输入）、耗时 metadata 与工具审批（sendAutomaticallyWhen +
-                     addToolApprovalResponse，批准/拒绝后续跑）在这里接
-  components/settings/  设置分区：外观 / 模型 / 通知（NotifySettings：SMTP / IMAP 表单 +
-                     逐项测试连接 + 日报周报调度）
-  components/modules/  各模块页：ResumePage / CompaniesPage / JobsPage（操作枢纽，含
-                     ScriptDialog 话术定稿与「模拟面试」发起弹窗）/ JobWorkbenchPage（岗位
-                     二级工作台，会话 key=job:<jobId>）/ ApplicationsPage（含 pipeline
-                     设置、Offer 对比）/ InterviewPage（模拟面试：面试列表 + interview:<id>
-                     会话 + 总评点评卡）；ResumeEditorCard 按 ResumeDocTarget 参数化
-                     （主简历 / 定制稿共用，带 PDF 导出）；table-bits 是三张表共用的
-                     内存排序小件；所有弹层经 onOverlayChange 让位内嵌浏览器
-  components/     BrowserPanel（内嵌多标签浏览器：标签条 + 工具条，顶栏开关控制）、TasksBadge（顶栏后台
-                  任务角标）、ScorecardDialog（评分卡弹层：岗位匹配度 / 简历完整性，
-                  是报告唯一的展示入口）、ExportRoute（#export 导出路由；main.tsx 按 hash
-                  分流，导出窗不挂 App）
-  markdown/       通用文档渲染：render.ts（marked 扩展 + DOMPurify + 图标后处理；
-                  支持 ==高亮==、A | B | C、左:::右、icon:name、photo: 指令）、
-                  icons.ts（lucide + simple-icons 注册表）、templates/（一个 CSS 文件
-                  一套主题，?inline 注入；当前 mint.css）；
-                  MarkdownPreview 组件（components/MarkdownPreview.tsx）是所有文档展示的复用入口
+  App.tsx / main.tsx / globals.css
+  config/modules.tsx   左栏模块菜单注册表（简历/岗位/投递/面试/公司）
+  lib/                 utils / format（通用格式化） / theme（主题解析）
+  routes/ExportRoute.tsx  #export 导出路由（main.tsx 按 hash 分流，导出窗不挂 App）
+  components/shell/    Sidebar / TasksBadge / ThemeApplier
+  components/chat/     ChatPanel（消息列表）/ Composer（输入区）/ ToolTrace（工具与思考）/
+                       AssistantMarkdown（AI 流式 Markdown）/ IPC transport / 会话 hooks
+  components/browser/  BrowserPanel（内嵌多标签浏览器：标签条 + 工具条）
+  components/document/ DocumentPreview（文档纸面）+ render / icons / templates
+  components/settings/ SettingsModal + 外观 / 模型 / 通知 / 浏览器分区
+  components/modules/  resume / companies / jobs / applications / interview 各模块页与
+                       同目录弹窗；shared/ 放跨模块组件（ModelGate / Scorecard /
+                       ResumeEditorCard / DeleteDialog / table-bits / module-page）
+  components/ui/       shadcn 基础组件源码；ai-elements/ 放 AI Elements 组件
+                       （bubble / message / message-scroller / attachment / input-group /
+                       trace / code-block）
 src/shared/     三进程共用的类型与 IPC 频道名（保持零依赖）
+  types/        common / chat / browser / resume / domain / notify / models / workspace /
+                tasks / export / ipc，index.ts 统一 re-export
 scripts/        图标管线：make-icons.mjs 用 Electron 渲染 build/icon-drafts/logo.svg
                 → build/icon.png + icon.icns（打包自动取后者，dev Dock 图标用前者）；
                 dist-mac.sh 一键出 dmg（staging agent-browser → typecheck → 编译 →
-                electron-builder，下载固定走 npmmirror 镜像）
-```
+                electron-builder，下载固定走 npmmirror 镜像）；p*-smoke.mjs 一次性冒烟
 
 ## 工作区
 

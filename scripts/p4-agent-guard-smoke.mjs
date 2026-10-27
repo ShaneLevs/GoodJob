@@ -24,13 +24,42 @@ const jiti = createJiti(here, {
   },
 });
 
-const { browserActActionSchema, browserReadActionSchema, buildArgv } = await jiti.import("../src/main/agent/actions.ts");
-const { parseTabList, pickPanelTarget, lockPanelTarget } = await jiti.import("../src/main/agent/target.ts");
-const { BrowserAgentService } = await jiti.import("../src/main/agent/runner.ts");
+const { browserActActionSchema, browserReadActionSchema, buildArgv } = await jiti.import("../src/main/browser/automation/actions.ts");
+const { parseTabList, resolveOwnTargets, lockPanelTarget } = await jiti.import("../src/main/browser/automation/target.ts");
+const { BrowserAgentService } = await jiti.import("../src/main/browser/automation/runner.ts");
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "goodjob-agent-guard-smoke-"));
 
 // ———————————————— target.ts：tab 锁定匹配 ————————————————
+
+function fakeContents(targetId, url, title) {
+  return {
+    isDestroyed: () => false,
+    getURL: () => url,
+    getTitle: () => title,
+    debugger: {
+      isAttached: () => true,
+      attach: () => {},
+      detach: () => {},
+      sendCommand: async () => ({ targetInfo: { targetId } }),
+    },
+  };
+}
+
+function panelFor(tabs) {
+  return {
+    tabs: () =>
+      tabs.map(([id, targetId, url, title, active]) => ({
+        id,
+        contents: fakeContents(targetId, url, title),
+        active,
+      })),
+    createTab: async () => null,
+    closeTab: () => {},
+    activateTab: () => {},
+    markAgentTab: () => {},
+  };
+}
 
 const UI_TAB = { tabId: "1", targetId: "T_UI", url: "file:///app/out/renderer/index.html", title: "GoodJob", type: "page", active: true };
 const DEV_UI_URL = "http://127.0.0.1:1420/";
@@ -42,55 +71,71 @@ assert.deepEqual(parsed, [UI_TAB], "parseTabList 应丢弃缺字段的条目");
 
 // B1 生产态：UI 是 file://、面板只放行 http(s)，URL 精确匹配命中面板。
 const prodTabs = [UI_TAB, { tabId: "2", targetId: "T_PANEL", url: "https://example.com/jobs/1", title: "招聘 - Example", type: "page", active: true }];
-assert.equal(
-  pickPanelTarget(prodTabs, { url: "https://example.com/jobs/1", title: "招聘 - Example" }, OWN_PROD)?.targetId,
-  "T_PANEL",
+assert.deepEqual(
+  (await resolveOwnTargets(
+    panelFor([["tab_2", "T_PANEL", "https://example.com/jobs/1", "招聘 - Example", true]]),
+    prodTabs,
+    OWN_PROD,
+  )).map((tab) => tab.targetId),
+  ["T_PANEL"],
   "生产态应按 URL 选中面板 target",
 );
 
 // B2 dev 态：UI 在 http://127.0.0.1:1420/ 且排在列表第一；面板是另一页。
-// 修复前 tabs.find 取第一个同 URL 项可能选中 UI 窗口；现在 UI 被排除集滤掉。
 const devTabs = [
   { tabId: "1", targetId: "T_UI", url: DEV_UI_URL, title: "GoodJob", type: "page", active: true },
   { tabId: "2", targetId: "T_PANEL", url: "https://example.com/jobs/1", title: "招聘 - Example", type: "page", active: true },
 ];
-assert.equal(
-  pickPanelTarget(devTabs, { url: "https://example.com/jobs/1", title: "招聘 - Example" }, {
-    urls: new Set([DEV_UI_URL]),
-    titles: new Set(["GoodJob"]),
-  })?.targetId,
-  "T_PANEL",
+assert.deepEqual(
+  (await resolveOwnTargets(
+    panelFor([["tab_2", "T_PANEL", "https://example.com/jobs/1", "招聘 - Example", true]]),
+    devTabs,
+    { urls: new Set([DEV_UI_URL]), titles: new Set(["GoodJob"]) },
+  )).map((tab) => tab.targetId),
+  ["T_PANEL"],
   "dev 态 UI 在前也应选中面板 target",
 );
 
 // B3 面板被手动指到 dev UI 完全相同的 URL：两个 target 都在排除集里，
-// 无法分辨——返回 undefined（宁可不跑），绝不猜一个。
+// 无法分辨——返回空（宁可不跑）。
 const sameUrlTabs = [
   { tabId: "1", targetId: "T_UI", url: DEV_UI_URL, title: "GoodJob", type: "page", active: true },
   { tabId: "2", targetId: "T_PANEL", url: DEV_UI_URL, title: "GoodJob", type: "page", active: true },
 ];
-assert.equal(
-  pickPanelTarget(sameUrlTabs, { url: DEV_UI_URL, title: "GoodJob" }, { urls: new Set([DEV_UI_URL]), titles: new Set(["GoodJob"]) }),
-  undefined,
+assert.deepEqual(
+  await resolveOwnTargets(
+    panelFor([["tab_2", "T_PANEL", DEV_UI_URL, "GoodJob", true]]),
+    sameUrlTabs,
+    { urls: new Set([DEV_UI_URL]), titles: new Set(["GoodJob"]) },
+  ),
+  [],
   "URL/title 完全撞车时应放弃匹配而不是猜",
 );
 
 // B4 title 回退撞车：面板 URL 因导航瞬态不在列表里，UI 窗口 title 与面板页相同。
-// 修复前按 title 回退会取列表第一个 = UI 窗口；现在 UI 被排除，宁可不跑。
 const titleClashTabs = [
   UI_TAB,
   { tabId: "2", targetId: "T_PANEL", url: "https://example.com/about", title: "GoodJob", type: "page", active: true },
 ];
-const pickedClash = pickPanelTarget(titleClashTabs, { url: "https://example.com/gone", title: "GoodJob" }, OWN_PROD);
-assert.notEqual(pickedClash?.targetId, "T_UI", "title 撞车时绝不能选中 UI 窗口");
-assert.equal(pickedClash, undefined, "title 撞车时宁可不跑");
+assert.deepEqual(
+  await resolveOwnTargets(
+    panelFor([["tab_2", "T_PANEL", "https://example.com/gone", "GoodJob", true]]),
+    titleClashTabs,
+    OWN_PROD,
+  ),
+  [],
+  "title 撞车时宁可不跑",
+);
 
-// B5 回归：排除集为空时行为与旧逻辑一致（URL 精确 → title 回退）。
+// B5 回归：排除集为空时按 URL 精确 → title 回退。
 const ownEmpty = { urls: new Set(), titles: new Set() };
-assert.equal(pickPanelTarget(prodTabs, { url: "https://example.com/jobs/1", title: "" }, ownEmpty)?.targetId, "T_PANEL");
-assert.equal(
-  pickPanelTarget([{ tabId: "2", targetId: "T_PANEL", url: "https://x/1", title: "报名", type: "page", active: true }], { url: "", title: "报名" }, ownEmpty)?.targetId,
-  "T_PANEL",
+assert.deepEqual(
+  (await resolveOwnTargets(
+    panelFor([["tab_2", "T_PANEL", "https://x/1", "报名", true]]),
+    [{ tabId: "2", targetId: "T_PANEL", url: "https://x/1", title: "报名", type: "page", active: true }],
+    ownEmpty,
+  )).map((tab) => tab.targetId),
+  ["T_PANEL"],
   "URL 匹配不上时按 title 回退",
 );
 
@@ -101,7 +146,7 @@ await assert.rejects(
       assert.deepEqual(args, ["tab", "list"]);
       return { ok: true, data: { tabs: sameUrlTabs }, error: null };
     },
-    { getContents: () => ({ isDestroyed: () => false, getURL: () => DEV_UI_URL, getTitle: () => "GoodJob" }) },
+    panelFor([["tab_2", "T_PANEL", DEV_UI_URL, "GoodJob", true]]),
     { urls: new Set([DEV_UI_URL]), titles: new Set(["GoodJob"]) },
   ),
   /没有在浏览器面板里找到当前页面/,
@@ -154,7 +199,7 @@ const cli = {
 const sent = [];
 const service = new BrowserAgentService({
   cli,
-  panel: () => ({ getContents: () => ({ isDestroyed: () => false, getURL: () => PANEL_URL, getTitle: () => PANEL_TITLE }) }),
+  panel: () => panelFor([["tab_2", "T_PANEL", PANEL_URL, PANEL_TITLE, true]]),
   ownWindows: () => ({ urls: new Set([UI_TAB.url]), titles: new Set(["GoodJob"]) }),
   settings: { isEnabled: () => true },
   logsDir: () => tmp,

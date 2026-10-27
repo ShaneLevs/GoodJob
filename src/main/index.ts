@@ -4,27 +4,12 @@ import { existsSync } from "node:fs";
 
 import { app, BrowserWindow, nativeImage } from "electron";
 
-import { IPC } from "@shared/types";
-
-import { AgentBrowserCli, resolveAgentBrowserBinary, resolveCdpPort } from "./agent/agent-browser";
-import { BrowserAgentService } from "./agent/runner";
-import { BrowserAgentSettingsStore } from "./agent/settings-store";
-import { AgentRuntime } from "./agent-runtime";
-import { BrowserPanel, DEFAULT_HOME } from "./browser";
-import { ConversationsStore } from "./conversations-store";
-import { ApplicationsStore, CompaniesStore, JobsStore, PipelineStore } from "./domain-store";
-import { InterviewsStore } from "./interviews-store";
-import { MemoryStore } from "./memory";
-import { ModelsStore } from "./models-store";
-import { NotifyStore } from "./notify-store";
-import { NotifyService } from "./notify-service";
-import { PreferencesStore } from "./preferences-store";
-import { ResumeStore } from "./resume-store";
-import { TaskManager } from "./tasks";
-import { uploadDirFor } from "./uploads";
-import { WorkspacesStore } from "./workspaces-store";
+import { createAppContext, type AppContext } from "./app/context";
+import { hardenRendererSession } from "./app/security";
+import { createMainWindow } from "./app/window";
+import { resolveCdpPort } from "./browser/automation/cli";
+import type { BrowserPanel } from "./browser/panel";
 import { registerIpc } from "./ipc";
-import { hardenRendererSession, hardenRendererWindow } from "./security";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
@@ -44,58 +29,21 @@ process.umask(0o077);
 
 let mainWindow: BrowserWindow | null = null;
 let browserPanel: BrowserPanel | null = null;
-let agentRuntime: AgentRuntime | null = null;
-let browserAgent: BrowserAgentService | null = null;
-let taskManager: TaskManager | null = null;
-let modelsStore: ModelsStore | null = null;
-let notifyService: NotifyService | null = null;
+let context: AppContext | null = null;
 
 function createWindow(): void {
-  const win = new BrowserWindow({
-    width: 1440,
-    height: 900,
-    minWidth: 1180,
-    minHeight: 760,
-    show: false,
-    backgroundColor: "#ffffff",
-    title: "GoodJob",
-    // The sidebar owns the traffic lights, WorkBuddy-style.
-    ...(isMac
-      ? { titleBarStyle: "hiddenInset" as const, trafficLightPosition: { x: 16, y: 18 } }
-      : {}),
-    webPreferences: {
-      preload: path.join(here, "../preload/index.cjs"),
-      sandbox: true,
-      contextIsolation: true,
-      nodeIntegration: false,
-      spellcheck: false,
+  const { win, panel } = createMainWindow({
+    isMac,
+    rendererDevUrl,
+    preloadPath: path.join(here, "../preload/index.cjs"),
+    rendererFile: path.join(here, "../renderer/index.html"),
+    onClosed: () => {
+      browserPanel = null;
+      mainWindow = null;
     },
   });
-
   mainWindow = win;
-
-  const panel = new BrowserPanel(win, (state) => {
-    if (!win.isDestroyed()) win.webContents.send(IPC.browserState, state);
-  });
-  // 初始标签：面板第一次打开就有一个可用的页（Agent 任务开场也只依赖它）。
-  panel.createTab(DEFAULT_HOME);
   browserPanel = panel;
-
-  hardenRendererWindow(win);
-
-  win.once("ready-to-show", () => win.show());
-
-  win.on("closed", () => {
-    panel.dispose();
-    browserPanel = null;
-    mainWindow = null;
-  });
-
-  if (rendererDevUrl !== undefined) {
-    void win.loadURL(rendererDevUrl);
-  } else {
-    void win.loadFile(path.join(here, "../renderer/index.html"));
-  }
 }
 
 if (!app.requestSingleInstanceLock()) {
@@ -124,136 +72,27 @@ if (!app.requestSingleInstanceLock()) {
       if (existsSync(iconPath)) app.dock?.setIcon(nativeImage.createFromPath(iconPath));
     }
 
-    // 工作区必须先建：一个工作区就是一个文件夹，其余 store 的数据都挂在它下面。
-    const workspaces = new WorkspacesStore();
-    const preferences = new PreferencesStore();
-    modelsStore = new ModelsStore(workspaces.currentPaths);
-    const models = modelsStore;
-    const conversations = new ConversationsStore(workspaces.currentPaths);
-    const memory = new MemoryStore(workspaces.currentPaths);
-    // 领域实体（P2）：pipeline 先建（投递的时间线校验要用），再 companies → jobs →
-    // applications（引用校验的方向：投递引岗位、岗位引公司）。
-    const pipeline = new PipelineStore(workspaces.currentPaths);
-    const companies = new CompaniesStore(workspaces.currentPaths);
-    const jobs = new JobsStore(workspaces.currentPaths, companies);
-    const applications = new ApplicationsStore(workspaces.currentPaths, jobs, pipeline);
-    // 简历文件变化直接推给渲染层编辑器（Agent 写入 / 用户保存都会触发）。
-    const resumes = new ResumeStore(workspaces.currentPaths, (event) => {
-      if (mainWindow !== null && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send(IPC.resumeFileChanged, event);
-      }
+    const appContext = createAppContext({
+      cdpPort,
+      getWindow: () => mainWindow,
+      getPanel: () => browserPanel,
     });
-    // 模拟面试（P3）：依赖岗位（jobId 校验）与简历（定制稿存在性校验）。
-    const interviews = new InterviewsStore(workspaces.currentPaths, jobs, resumes);
-    // 通知（P3 M3）：配置跟着工作区走；调度到点经 AgentRuntime.runDigest 发日报 / 周报。
-    const notifyStore = new NotifyStore(workspaces.currentPaths);
-    const notify = new NotifyService({ store: notifyStore });
-    // 浏览器自动化（P4）：agent-browser CLI 宿主 + 设置（开关 / 限速）+ 任务执行器。
-    // CLI 只进 devDependencies，二进制在打包时由 extraResources 带进去。
-    const agentCli = new AgentBrowserCli(resolveAgentBrowserBinary(), cdpPort);
-    void agentCli.probeVersion().then((version) => {
-      console.log(`[agent] agent-browser ${version}（cdp 127.0.0.1:${cdpPort}，session goodjob）`);
-    });
-    const agentSettings = new BrowserAgentSettingsStore(workspaces.currentPaths);
-    browserAgent = new BrowserAgentService({
-      cli: agentCli,
-      // 面板懒访问：窗口没建 / 已销毁时返回空列表。target.ts 用 agentTabs()
-      // 把我们的标签翻译成 CDP targetId（每个 webContents 自己报 target id）。
-      // 面板适配器（懒访问）：窗口没建 / 已销毁时给空。target.ts 用它把「我们的
-      // 标签」翻译成 CDP targetId，并让 Agent 的新建 / 关闭标签也走同一组视图——
-      // Agent 与用户看到的是同一套标签，不存在隐形页面。
-      panel: () => ({
-        tabs: () => browserPanel?.agentTabs() ?? [],
-        createTab: (url?: string) => browserPanel?.createAgentTab(url) ?? Promise.resolve(null),
-        closeTab: (id: string) => browserPanel?.closeTab(id),
-        activateTab: (id: string) => browserPanel?.activateTab(id),
-        markAgentTab: (id: string | null) => browserPanel?.markAgentTab(id),
-      }),
-      // 应用自身窗口排除集（M2）：面板是 WebContentsView 不是 BrowserWindow，所以
-      // 这里收集到的 URL / title 全是 UI 侧的（主窗 file://，dev 态 http://127.0.0.1:1420）。
-      ownWindows: () => {
-        const urls = new Set<string>();
-        const titles = new Set<string>();
-        for (const win of BrowserWindow.getAllWindows()) {
-          if (win.isDestroyed()) continue;
-          const url = win.webContents.getURL();
-          if (url !== "") urls.add(url);
-          const title = win.webContents.getTitle();
-          if (title !== "") titles.add(title);
-        }
-        return { urls, titles };
-      },
-      settings: agentSettings,
-      logsDir: () => workspaces.currentPaths.logs,
-      cacheDir: () => workspaces.currentPaths.cache,
-      sendToUi: (channel, payload) => {
-        if (mainWindow === null || mainWindow.isDestroyed()) return;
-        mainWindow.webContents.send(channel, payload);
-      },
-    });
-    // 后台任务（简历评估 / 完整性评分）：状态事件推给渲染层的「任务」角标；
-    // 报告本体由渲染层在任务完成后自己拉（岗位表 / 简历页的弹窗）。
-    taskManager = new TaskManager({
-      models,
-      jobs,
-      resumes,
-      emit: (event) => {
-        if (mainWindow === null || mainWindow.isDestroyed()) return;
-        mainWindow.webContents.send(IPC.taskEvent, event);
-      },
-    });
-    agentRuntime = new AgentRuntime({
-      models,
-      conversations,
-      resumes,
-      memory,
-      companies,
-      jobs,
-      applications,
-      pipeline,
-      interviews,
-      tasks: taskManager,
-      notify,
-      browser: browserAgent,
-      browserSettings: agentSettings,
-      logsDir: () => workspaces.currentPaths.logs,
-      uploadDir: (key) => uploadDirFor(workspaces.currentPaths, key, resumes.currentUploadDir()),
-    });
-    const runtime = agentRuntime;
-    // 循环依赖从这里剪断：NotifyService 只认「到点要跑一次汇总」，跑什么由 runtime 决定。
-    notify.setDigestRunner((kind) => runtime.runDigest(kind).then(() => undefined));
+    context = appContext;
 
     registerIpc({
       getWindow: () => mainWindow,
       getPanel: () => browserPanel,
-      runtime,
-      conversations,
-      resumes,
-      memory,
-      models,
-      preferences,
-      workspaces,
-      companies,
-      jobs,
-      applications,
-      pipeline,
-      interviews,
-      tasks: taskManager,
-      notify,
-      notifyStore,
-      browser: browserAgent,
-      browserSettings: agentSettings,
+      ...appContext,
       appInfo: () => ({
         platform: process.platform,
         version: app.getVersion(),
-        dataDir: workspaces.root.root,
-        workspaceDir: workspaces.currentPaths.dir,
+        dataDir: appContext.workspaces.root.root,
+        workspaceDir: appContext.workspaces.currentPaths.dir,
       }),
     });
 
     // 分钟级调度（确认门窗口推进 + 日报 / 周报到点）：应用活着就跑。
-    notify.start();
-    notifyService = notify;
+    appContext.notify.start();
 
     createWindow();
 
@@ -267,14 +106,13 @@ if (!app.requestSingleInstanceLock()) {
   });
 
   app.on("before-quit", () => {
-    agentRuntime?.abortAll();
+    context?.runtime.abortAll();
     // 浏览器任务：杀命令进程 + 收 agent-browser daemon（close 失败按 pid 兜底）。
-    browserAgent?.cleanup();
-    browserAgent = null;
+    context?.browser.cleanup();
     // 后台任务不做断点续跑：退出即停（结果都已落库，重启后可重跑）。
-    taskManager?.stopAll();
+    context?.tasks.stopAll();
     // 通知调度与 IMAP 长连接同样退出即停；等待中的确认门按取消处理。
-    notifyService?.stopAll();
+    context?.notify.stopAll();
     browserPanel?.dispose();
   });
 }
