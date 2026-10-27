@@ -10,7 +10,7 @@ import { AgentBrowserCli, resolveAgentBrowserBinary, resolveCdpPort } from "./ag
 import { BrowserAgentService } from "./agent/runner";
 import { BrowserAgentSettingsStore } from "./agent/settings-store";
 import { AgentRuntime } from "./agent-runtime";
-import { BrowserPanel } from "./browser";
+import { BrowserPanel, DEFAULT_HOME } from "./browser";
 import { ConversationsStore } from "./conversations-store";
 import { ApplicationsStore, CompaniesStore, JobsStore, PipelineStore } from "./domain-store";
 import { InterviewsStore } from "./interviews-store";
@@ -77,6 +77,8 @@ function createWindow(): void {
   const panel = new BrowserPanel(win, (state) => {
     if (!win.isDestroyed()) win.webContents.send(IPC.browserState, state);
   });
+  // 初始标签：面板第一次打开就有一个可用的页（Agent 任务开场也只依赖它）。
+  panel.createTab(DEFAULT_HOME);
   browserPanel = panel;
 
   hardenRendererWindow(win);
@@ -155,8 +157,18 @@ if (!app.requestSingleInstanceLock()) {
     const agentSettings = new BrowserAgentSettingsStore(workspaces.currentPaths);
     browserAgent = new BrowserAgentService({
       cli: agentCli,
-      // 面板懒访问：窗口没建 / 已销毁时 getContents 给 null，target.ts 会报「面板未就绪」。
-      panel: () => ({ getContents: () => browserPanel?.agentContents ?? null }),
+      // 面板懒访问：窗口没建 / 已销毁时返回空列表。target.ts 用 agentTabs()
+      // 把我们的标签翻译成 CDP targetId（每个 webContents 自己报 target id）。
+      // 面板适配器（懒访问）：窗口没建 / 已销毁时给空。target.ts 用它把「我们的
+      // 标签」翻译成 CDP targetId，并让 Agent 的新建 / 关闭标签也走同一组视图——
+      // Agent 与用户看到的是同一套标签，不存在隐形页面。
+      panel: () => ({
+        tabs: () => browserPanel?.agentTabs() ?? [],
+        createTab: (url?: string) => browserPanel?.createAgentTab(url) ?? Promise.resolve(null),
+        closeTab: (id: string) => browserPanel?.closeTab(id),
+        activateTab: (id: string) => browserPanel?.activateTab(id),
+        markAgentTab: (id: string | null) => browserPanel?.markAgentTab(id),
+      }),
       // 应用自身窗口排除集（M2）：面板是 WebContentsView 不是 BrowserWindow，所以
       // 这里收集到的 URL / title 全是 UI 侧的（主窗 file://，dev 态 http://127.0.0.1:1420）。
       ownWindows: () => {

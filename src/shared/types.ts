@@ -10,12 +10,33 @@ export interface Rect {
   height: number;
 }
 
+/**
+ * 浏览器面板里的一个标签页（多标签）。id 由 main 生成、进程内唯一且不复用，
+ * 是渲染层与 main 之间唯一的标签句柄；agent 侧另用 CDP targetId 对账（见
+ * main/agent/target.ts 的 resolveTargetId）。
+ */
+export interface BrowserTab {
+  id: string;
+  url: string;
+  title: string;
+  loading: boolean;
+  /** agent 正在这个标签上干活（工具条据此在标签上显示一个点）。 */
+  agentBusy: boolean;
+}
+
+/**
+ * 浏览器面板状态：活动标签的 URL / 导航能力 + 全部标签。
+ * 地址栏与后退/前进只作用于活动标签，所以那几项留在顶层。
+ */
 export interface BrowserState {
+  /** 活动标签；一个标签都没有时为 null（面板显示空白新建页）。 */
+  activeId: string | null;
   url: string;
   title: string;
   loading: boolean;
   canGoBack: boolean;
   canGoForward: boolean;
+  tabs: BrowserTab[];
 }
 
 /**
@@ -720,7 +741,11 @@ export const IPC = {
   browserReload: "browser:reload",
   browserStop: "browser:stop",
   browserToggleDevTools: "browser:toggle-devtools",
+  browserNewTab: "browser:new-tab",
+  browserCloseTab: "browser:close-tab",
+  browserActivateTab: "browser:activate-tab",
   browserState: "browser:state",
+  browserGetState: "browser:get-state",
   chatSend: "chat:send",
   chatAbort: "chat:abort",
   chatChunk: "chat:chunk",
@@ -798,6 +823,13 @@ export interface GoodjobApi {
     reload: () => void;
     stop: () => void;
     toggleDevTools: () => void;
+    /** 新建标签（url 省略时开空白页）；返回新标签 id。 */
+    newTab: (url?: string) => Promise<string>;
+    /** 关闭标签；关掉最后一个时自动补一个空白页，面板不会空掉。 */
+    closeTab: (id: string) => void;
+    activateTab: (id: string) => void;
+    /** 当前状态快照：面板重新挂载时主动拉一次（main 只在变化时推送）。 */
+    getState: () => Promise<BrowserState>;
     onState: (listener: (state: BrowserState) => void) => () => void;
     /** main 侧请求把浏览器铺满内容区（agent:pane-open，浏览器任务开场触发）。 */
     onRequestOpen: (listener: (event: AgentPaneOpenEvent) => void) => () => void;

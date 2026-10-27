@@ -132,14 +132,19 @@ export class AgentBrowserCli {
   /**
    * 跑一条受控命令：argv 由 actions.buildArgv 产出，这里只补全局旗标。
    * 返回解析后的 { success, data, error }；输出不是 JSON（崩溃 / 超时被杀）按失败处理。
+   *
+   * `pin: false` 用于**会话还没绑定标签时的第一条命令**：`--pin-tab` 在未绑定时
+   * 会尝试 `Target.createTarget` 开一个新标签，而 Electron 不支持这个 CDP 命令，
+   * 会直接报 “CDP error (Target.createTarget): Not supported”。所以先不带 pin
+   * 跑一次 tab list，再显式 `tab <targetId>` 绑定，之后就都是 pin 的严格语义。
    */
-  run(args: string[], signal?: AbortSignal, timeoutMs = COMMAND_TIMEOUT_MS): Promise<CliResult> {
+  run(args: string[], signal?: AbortSignal, timeoutMs = COMMAND_TIMEOUT_MS, options: { pin?: boolean } = {}): Promise<CliResult> {
     const argv = [
       "--session",
       AGENT_SESSION,
       "--cdp",
       String(this.cdpPort),
-      "--pin-tab",
+      ...(options.pin === false ? [] : ["--pin-tab"]),
       ...args,
       "--json",
     ];

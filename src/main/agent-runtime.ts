@@ -25,7 +25,7 @@ import {
   type WireMessage,
 } from "@shared/types";
 
-import { browserActActionSchema, browserReadActionSchema, browserSubmitActionSchema, describeSubmitAction } from "./agent/actions";
+import { browserActActionSchema, browserReadActionSchema, browserSubmitActionSchema, describeSubmitAction, tabActionSchema } from "./agent/actions";
 import type { BrowserAgentService } from "./agent/runner";
 import type { BrowserAgentSettingsStore } from "./agent/settings-store";
 import type {
@@ -616,10 +616,17 @@ export class AgentRuntime {
       }),
       browser_act: tool({
         description:
-          "在内嵌浏览器面板上执行一条写动作（点击 / 填写 / 勾选等）。每一步都会弹界面审批，等用户批准才执行。动作前元素要在视口内：视口外先 scrollintoview 再重新 snapshot。",
+          "在内嵌浏览器面板上执行一条写动作（点击 / 填写 / 勾选等）。每一步都会弹界面审批，等用户批准才执行。动作前元素要在视口内：视口外先 scrollintoview 再重新 snapshot。想把链接开到新标签就用 click 的 newTab=true（读 href 后建一个用户看得见的标签）。",
         inputSchema: browserActActionSchema,
         execute: async (action, { abortSignal }) =>
           this.deps.browser.execute({ tool: "browser_act", action, key, signal: abortSignal }),
+      }),
+      browser_tab: tool({
+        description:
+          "管理浏览器标签（多标签）：list 列出全部标签（id / url / 标题 / 哪个当前）；new 新建一个标签并在其中打开 url（可省）；switch 切换当前操作的标签（target 用 tab list 返回的 id）；close 关闭一个标签（不能关当前那个）。新 / 切标签后旧的 @ref 全部失效，必须重新 snapshot。运行多个网站的长时间任务时，一个网站一个标签。",
+        inputSchema: tabActionSchema,
+        execute: async (action, { abortSignal }) =>
+          this.deps.browser.execute({ tool: "browser_tab", action, key, signal: abortSignal }),
       }),
       browser_submit: tool({
         description:

@@ -112,6 +112,10 @@ export function registerIpc(deps: IpcDeps): void {
   ipcMain.on(IPC.browserReload, () => getPanel()?.reload());
   ipcMain.on(IPC.browserStop, () => getPanel()?.stop());
   ipcMain.on(IPC.browserToggleDevTools, () => getPanel()?.toggleDevTools());
+  ipcMain.handle(IPC.browserNewTab, (_event, url?: string) => getPanel()?.createTab(url).id ?? "");
+  ipcMain.on(IPC.browserCloseTab, (_event, id: string) => getPanel()?.closeTab(id));
+  ipcMain.on(IPC.browserActivateTab, (_event, id: string) => getPanel()?.activateTab(id));
+  ipcMain.handle(IPC.browserGetState, () => getPanel()?.state() ?? null);
 
   ipcMain.handle(IPC.chatSend, async (_event, payload: ChatSendPayload) => {
     // Fire and forget：chunk 流走 IPC.chatChunk，UI 保持响应。

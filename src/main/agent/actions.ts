@@ -80,8 +80,12 @@ export const browserReadActionSchema = z.discriminatedUnion("kind", [
 ]);
 
 /** browser_act：写动作（点击 / 填写等，改变页面或平台状态，每步挂界面审批）。 */
+/**
+ * 点击时按住 ⌘/Ctrl 或中键会在新标签打开。newTab=true 时 runner 不直接 click，
+ * 而是先读链接的 href 再在我们的面板里新建标签（用户看得见）。
+ */
 export const browserActActionSchema = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("click"), ref: refSchema }),
+  z.object({ kind: z.literal("click"), ref: refSchema, newTab: z.boolean().optional() }),
   z.object({ kind: z.literal("dblclick"), ref: refSchema }),
   z.object({ kind: z.literal("fill"), ref: refSchema, text: textArg(4000) }),
   z.object({ kind: z.literal("type"), ref: refSchema, text: textArg(4000) }),
@@ -127,9 +131,33 @@ export const browserSubmitActionSchema = z.discriminatedUnion("kind", [
 ]);
 
 /** tab 是内部动作：只有 target.ts 用（列目标 + 锁定面板），不进模型工具面。 */
+/**
+ * tab 工具面（多标签）：list / new / switch / close。
+ *
+ * 注意：new / close / switch **不**直接映射成 CLI 的 `tab new` / `tab close`——
+ * 那会在同一个 Chromium 里造一个我们拿不到 WebContentsView 的页面（用户看不见，
+ * 等于 Agent 在隐形页面里点按钮）。它们的 argv 只是审计用的标签，真正执行走
+ * panel（BrowserPanel 的标签宿），见 agent/runner.ts 的 tab 分支。
+ * list / switch 的目标只能是**我们自己的标签 id**（tab_xxx），不是 CDP targetId：
+ * 模型看不到也不应该拼 CDP id。
+ */
 export const tabActionSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("tab"), op: z.literal("list") }),
-  z.object({ kind: z.literal("tab"), op: z.literal("switch"), target: z.string().regex(/^[A-Za-z0-9-]{4,64}$/) }),
+  z.object({
+    kind: z.literal("tab"),
+    op: z.literal("new"),
+    url: urlSchema.optional(),
+  }),
+  z.object({
+    kind: z.literal("tab"),
+    op: z.literal("switch"),
+    target: z.string().regex(/^tab_[A-Za-z0-9]{4,32}$/, "target 必须是 tab_list 返回的标签 id"),
+  }),
+  z.object({
+    kind: z.literal("tab"),
+    op: z.literal("close"),
+    target: z.string().regex(/^tab_[A-Za-z0-9]{4,32}$/, "target 必须是 tab_list 返回的标签 id"),
+  }),
 ]);
 
 export type BrowserReadAction = z.infer<typeof browserReadActionSchema>;
@@ -155,7 +183,19 @@ export function buildArgv(action: BrowserReadAction | BrowserActAction | Browser
     case "reload":
       return ["reload"];
     case "tab":
-      return action.op === "list" ? ["tab", "list"] : ["tab", action.target];
+      // 仅供审计；真正的标签动作走 panel（见 agent/runner.ts 的 tab 分支）。
+      // 绝不让 CLI 自己 `tab new` / `tab close`：那会造 / 消一个用户看不见的页面。
+      switch (action.op) {
+        case "list":
+          return ["tab", "list"];
+        case "new":
+          return ["tab", "new", action.url ?? "about:blank"];
+        case "switch":
+          return ["tab", action.target];
+        case "close":
+          return ["tab", "close", action.target];
+      }
+      break;
     // —— 观测 ——
     case "snapshot": {
       const argv = ["snapshot"];
@@ -199,6 +239,9 @@ export function buildArgv(action: BrowserReadAction | BrowserActAction | Browser
 
     // —— 写动作 ——
     case "click":
+      // newTab 不在 CLI 执行：`click --new-tab` 会在 Chromium 里造一个我们拿不到
+      // WebContentsView 的隐形页面。runner 拦截 newTab：先 get attr href，
+      // 再在我们的面板里建一个用户看得见的标签。
       return ["click", action.ref];
     case "dblclick":
       return ["dblclick", action.ref];

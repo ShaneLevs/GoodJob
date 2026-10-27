@@ -74,6 +74,10 @@ const api: GoodjobApi = {
     reload: () => ipcRenderer.send(IPC.browserReload),
     stop: () => ipcRenderer.send(IPC.browserStop),
     toggleDevTools: () => ipcRenderer.send(IPC.browserToggleDevTools),
+    newTab: (url?: string) => ipcRenderer.invoke(IPC.browserNewTab, url) as Promise<string>,
+    closeTab: (id: string) => ipcRenderer.send(IPC.browserCloseTab, id),
+    activateTab: (id: string) => ipcRenderer.send(IPC.browserActivateTab, id),
+    getState: () => ipcRenderer.invoke(IPC.browserGetState) as Promise<BrowserState>,
     onState: (listener: (state: BrowserState) => void) => subscribe(IPC.browserState, listener),
     onRequestOpen: (listener: (event: AgentPaneOpenEvent) => void) =>
       subscribe(IPC.agentPaneOpen, listener),

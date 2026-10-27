@@ -4,11 +4,19 @@ import path from "node:path";
 
 import { IPC, type AgentStep } from "@shared/types";
 
-import type { BrowserReadAction, BrowserActAction, BrowserSubmitAction } from "./actions";
+import type { BrowserReadAction, BrowserActAction, BrowserSubmitAction, TabAction } from "./actions";
 import { buildArgv } from "./actions";
 import { AgentBrowserCli, type CliResult } from "./agent-browser";
-import { lockPanelTarget, type OwnWindowSignatures } from "./target";
-import type { PanelDescriptor } from "./target";
+import {
+  closeLockedTab,
+  createLockedTab,
+  lockPanelTarget,
+  switchLockedTarget,
+  type OwnWindowSignatures,
+  type PanelDescriptor,
+  type CliRun,
+  type TargetLock,
+} from "./target";
 import type { BrowserAgentSettingsStore } from "./settings-store";
 
 /**
@@ -46,8 +54,8 @@ export interface BrowserAgentDeps {
 
 export interface ExecuteInput {
   /** 工具名（审计动作名的前缀）。 */
-  tool: "browser_read" | "browser_act" | "browser_submit";
-  action: BrowserReadAction | BrowserActAction | BrowserSubmitAction;
+  tool: "browser_read" | "browser_act" | "browser_submit" | "browser_tab";
+  action: BrowserReadAction | BrowserActAction | BrowserSubmitAction | TabAction;
   /** 发起会话（ConversationKey）。 */
   key: string;
   signal?: AbortSignal;
@@ -56,7 +64,8 @@ export interface ExecuteInput {
 /** 一次任务 = 一个会话内的一段连续浏览器操作；全局同时只有一个。 */
 interface CurrentTask {
   key: string;
-  targetId: string;
+  /** 标签锁：当前落点 + 允许触碰的 target 集合（见 target.ts）。 */
+  lock: TargetLock;
 }
 
 export class BrowserAgentService {
@@ -71,23 +80,36 @@ export class BrowserAgentService {
     return this.deps.settings.isEnabled();
   }
 
-  /** 当前面板页面的 host（限速按站记账；模型伪造不了）。 */
+  /** 当前面板页面的 host（限速按站记账；模型伪造不了）。多标签下按**当前锁定
+   *  的标签**算，不是「活动标签」——否则 Agent 切了标签用户又切回去，限速就记错站。 */
   currentHost(): string {
-    try {
-      const contents = this.deps.panel().getContents();
-      const url = contents !== null && !contents.isDestroyed() ? contents.getURL() : this.lastPanelUrl;
-      return safeHost(url);
-    } catch {
-      return safeHost(this.lastPanelUrl);
-    }
+    const tabId = this.current?.lock.tabId;
+    const locked = tabId === undefined ? undefined : this.deps.panel().tabs().find((tab) => tab.id === tabId);
+    const url = locked !== undefined && !locked.contents.isDestroyed() ? locked.contents.getURL() : "";
+    return safeHost(url === "" ? this.lastPanelUrl : url);
   }
 
   /**
    * 执行一个受控动作：确保任务已锁定面板 tab → 组装 argv → 跑 CLI → 审计。
    * 返回值直接进模型上下文（snapshot 截断到上限）；页面正文不进审计摘要。
+   *
+   * 两类动作不走「直接跑 argv」：
+   * - `tab` 动作（list / new / switch / close）：标签的新建与关闭必须经 panel，
+   *   否则会造出用户看不见的页面（见 target.ts 头部注释）；
+   * - `click newTab`：同理，先读 href 再在我们的面板里新建标签。
    */
   async execute(input: ExecuteInput): Promise<Record<string, unknown>> {
-    const argv = await this.prepare(input);
+    await this.prepare(input);
+    const task = this.current!;
+
+    if (input.action.kind === "tab") return this.executeTab(input, input.action);
+    if (input.action.kind === "click" && "newTab" in input.action && input.action.newTab === true) {
+      return this.executeClickNewTab(input, input.action.ref);
+    }
+
+    const argv = buildArgv(input.action, {
+      screenshotPath: input.action.kind === "screenshot" ? this.nextScreenshotPath() : undefined,
+    });
     const started = Date.now();
     const result = await this.deps.cli.run(argv, input.signal);
     this.record({
@@ -99,7 +121,13 @@ export class BrowserAgentService {
       error: result.error,
       durationMs: Date.now() - started,
     });
-    if (!result.ok) throw new Error(result.error ?? "浏览器命令执行失败。");
+    if (!result.ok) {
+      // 标签被用户关掉（tab_gone）：锁已经失效，清掉任务逼下一次动作重新锁定，
+      // 否则后续每一步都会撞同一个 tab_gone。
+      if (result.error !== null && /tab_gone/.test(result.error)) this.dropLock();
+      throw new Error(explainCliError(result.error));
+    }
+    if (input.action.kind === "open") this.noteLockedUrl(task);
     return modelView(input.action.kind, result);
   }
 
@@ -136,6 +164,7 @@ export class BrowserAgentService {
       durationMs: 0,
     });
     this.current = null;
+    this.deps.panel().markAgentTab(null);
     this.pushStatus();
   }
 
@@ -152,23 +181,23 @@ export class BrowserAgentService {
 
   // ———————————————————— 内部 ————————————————————
 
-  /** 任务包络：首步锁定面板 target（失败即整个任务拒绝），并打开工作日志标签。 */
-  private async prepare(input: ExecuteInput): Promise<string[]> {
+  /** 任务包络：首步锁定面板的一个标签（失败即整个任务拒绝），并让浏览器现身。 */
+  private async prepare(input: ExecuteInput): Promise<void> {
     if (!this.isEnabled()) {
       throw new Error("浏览器自动化已在设置里停用。请到设置 → 浏览器里开启后再试。");
     }
     if (this.current === null) {
-      const lock = await lockPanelTarget((args) => this.deps.cli.run(args, input.signal), this.deps.panel(), this.deps.ownWindows());
-      this.current = { key: input.key, targetId: lock.targetId };
-      this.lastPanelUrl = lock.url;
-      const contents = this.deps.panel().getContents();
-      if (contents !== null && !contents.isDestroyed()) this.lastPanelUrl = contents.getURL() || lock.url;
+      const run: CliRun = (args, options) => this.deps.cli.run(args, input.signal, undefined, options);
+      const lock = await lockPanelTarget(run, this.deps.panel(), this.deps.ownWindows());
+      this.current = { key: input.key, lock };
+      this.deps.panel().markAgentTab(lock.tabId);
+      this.noteLockedUrl(this.current);
       this.record({
         key: input.key,
         action: "agent.lock-target",
         command: ["tab", "list", "→", "tab", lock.targetId],
         ok: true,
-        summary: `已锁定面板标签（target ${lock.targetId.slice(0, 8)}…）：${safeHost(lock.url) || "空白页"}`,
+        summary: `已锁定面板标签 ${lock.tabId}（target ${lock.targetId.slice(0, 8)}…）：${safeHost(this.lastPanelUrl) || "空白页"}`,
         error: null,
         durationMs: 0,
       });
@@ -178,9 +207,138 @@ export class BrowserAgentService {
     } else if (this.current.key !== input.key) {
       throw new Error("另一个会话正在操作浏览器（一次只允许一个浏览器任务）。请等它完成或在浏览器工具条中止。");
     }
-    return buildArgv(input.action, {
-      screenshotPath: input.action.kind === "screenshot" ? this.nextScreenshotPath() : undefined,
+  }
+
+  /**
+   * 丢弃当前标签锁（标签被关掉时用）：下一次动作会重新 lockPanelTarget。
+   * 不动已打开的 run——模型看到 tab_gone 的提示后会自己 list / switch / new。
+   */
+  private dropLock(): void {
+    if (this.current === null) return;
+    this.current = null;
+    try {
+      this.deps.panel().markAgentTab(null);
+    } catch {
+      // 面板销毁了：无所谓。
+    }
+  }
+
+  /** 把当前锁定标签的 URL 记下来（限速兜底 / tab list 摘要用）。 */
+  private noteLockedUrl(task: CurrentTask): void {
+    const locked = this.deps.panel().tabs().find((tab) => tab.id === task.lock.tabId);
+    if (locked === undefined || locked.contents.isDestroyed()) return;
+    const url = locked.contents.getURL();
+    if (url !== "") this.lastPanelUrl = url;
+  }
+
+  /**
+   * tab 工具面：真正的标签动作都过 panel（用户看得见），CLI 只负责把会话绑定
+   * 切过去（`tab <targetId>`）；list 直接把我们的标签表给模型。
+   */
+  private async executeTab(input: ExecuteInput, action: TabAction): Promise<Record<string, unknown>> {
+    const task = this.current!;
+    const panel = this.deps.panel();
+    const run: CliRun = (args, options) => this.deps.cli.run(args, input.signal, undefined, options);
+    const started = Date.now();
+
+    if (action.op === "list") {
+      const tabs = panel.tabs().map((tab) => ({
+        id: tab.id,
+        url: tab.contents.isDestroyed() ? "" : tab.contents.getURL(),
+        title: tab.contents.isDestroyed() ? "" : tab.contents.getTitle(),
+        active: tab.active,
+        current: tab.id === task.lock.tabId,
+      }));
+      this.record({
+        key: input.key,
+        action: "browser_tab.list",
+        command: ["tab", "list"],
+        ok: true,
+        summary: `${tabs.length} 个标签（当前：${task.lock.tabId}）`,
+        error: null,
+        durationMs: Date.now() - started,
+      });
+      return { tabs };
+    }
+
+    if (action.op === "switch") {
+      const next = await switchLockedTarget(run, panel, task.lock, action.target);
+      task.lock = next;
+      panel.markAgentTab(next.tabId);
+      this.noteLockedUrl(task);
+      this.record({
+        key: input.key,
+        action: "browser_tab.switch",
+        command: ["tab", next.targetId],
+        ok: true,
+        summary: `已切到标签 ${next.tabId}：${safeHost(this.lastPanelUrl) || "空白页"}`,
+        error: null,
+        durationMs: Date.now() - started,
+      });
+      // 切标签之后旧 ref 全部失效（是不同的文档），必须提醒模型重新 snapshot。
+      return { switchedTo: next.tabId, url: this.lastPanelUrl, hint: "切换标签后旧的 @ref 全部失效，重新 snapshot 再操作。" };
+    }
+
+    if (action.op === "new") {
+      const created = await createLockedTab(run, panel, task.lock, action.url);
+      task.lock = created.lock;
+      panel.markAgentTab(created.tabId);
+      this.noteLockedUrl(task);
+      this.record({
+        key: input.key,
+        action: "browser_tab.new",
+        command: ["tab", created.targetId],
+        ok: true,
+        summary: `新建标签 ${created.tabId}：${safeHost(this.lastPanelUrl) || "空白页"}`,
+        error: null,
+        durationMs: Date.now() - started,
+      });
+      return { newTabId: created.tabId, url: this.lastPanelUrl, hint: "新标签已就绪，先 snapshot 再操作。" };
+    }
+
+    closeLockedTab(panel, task.lock, action.target);
+    this.record({
+      key: input.key,
+      action: "browser_tab.close",
+      command: ["tab", "close", action.target],
+      ok: true,
+      summary: `已关闭标签 ${action.target}`,
+      error: null,
+      durationMs: Date.now() - started,
     });
+    return { closed: action.target };
+  }
+
+  /**
+   * click newTab：不在当前标签里点击，而是读链接 href → 在我们的面板新建标签打开。
+   * 这样用户看得见，也不会把当前上下文顶掉。
+   */
+  private async executeClickNewTab(input: ExecuteInput, ref: string): Promise<Record<string, unknown>> {
+    const task = this.current!;
+    const panel = this.deps.panel();
+    const run: CliRun = (args, options) => this.deps.cli.run(args, input.signal, undefined, options);
+    const started = Date.now();
+
+    const href = await this.deps.cli.run(["get", "attr", ref, "href"], input.signal);
+    const url = typeof href.data.value === "string" ? href.data.value.trim() : "";
+    if (!href.ok || !/^https?:\/\//i.test(url)) {
+      throw new Error("这个元素没有可用的 http(s) 链接（newTab 只能用于 <a href>）；请改用普通 click 或 tab new。");
+    }
+
+    const created = await createLockedTab(run, panel, task.lock, url);
+    task.lock = created.lock;
+    panel.markAgentTab(created.tabId);
+    this.noteLockedUrl(task);
+    this.record({
+      key: input.key,
+      action: "browser_act.click",
+      command: ["get", "attr", ref, "href", "→", "tab", created.targetId],
+      ok: true,
+      summary: `链接在新标签打开：${created.tabId}（${safeHost(this.lastPanelUrl)}）`,
+      error: null,
+      durationMs: Date.now() - started,
+    });
+    return { newTabId: created.tabId, url: this.lastPanelUrl, hint: "已在新标签打开，先 snapshot 再操作。" };
   }
 
   private nextScreenshotPath(): string {
@@ -209,6 +367,25 @@ export class BrowserAgentService {
   private pushStatus(): void {
     this.deps.sendToUi(IPC.agentStepEvent, { type: "status", ...this.status() });
   }
+}
+
+/**
+ * CLI 错误 → 模型能直接消化的提示。
+ *
+ * 主要处理 `tab_gone`：用户把 Agent 正在操作的标签关掉了。CLI 的原文会让模型去执行
+ * `agent-browser tab new <url>`，但模型根本拼不了 CLI（命令白名单在类型层）——
+ * 所以这里改写成「用 browser_tab 新建或切到别的标签」，并且把锁重新落到一个
+ * 还活着的标签上，任务可以继续。
+ */
+function explainCliError(error: string | null): string {
+  const message = error ?? "浏览器命令执行失败。";
+  if (!/tab_gone/.test(message)) return message;
+  return [
+    "你正在操作的标签被关掉了（可能是用户手动关的）。",
+    "用 browser_tab 的 list 看现在还有哪些标签，再 switch 过去；没有可用的就 new 一个，",
+    "然后重新 snapshot 再继续。不要重试同一个动作。",
+    `（底层错误：${message.slice(0, 200)}）`,
+  ].join(" ");
 }
 
 // ———————————————————— 结果整形 ————————————————————

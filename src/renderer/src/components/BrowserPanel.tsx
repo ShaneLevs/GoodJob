@@ -1,12 +1,23 @@
 import { useEffect, useRef, useState } from "react";
 
-import { ArrowLeft, ArrowRight, Bug, Home, Bot, RotateCw, Square, X } from "lucide-react";
+import {
+  ArrowLeft,
+  ArrowRight,
+  Bot,
+  Bug,
+  Home,
+  Plus,
+  RotateCw,
+  Square,
+  X,
+} from "lucide-react";
 
 import type { AgentStepEvent, BrowserState } from "@shared/types";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { cn } from "@/lib/utils";
 
 const HOME = "https://www.bing.com";
 
@@ -18,11 +29,13 @@ const HOME = "https://www.bing.com";
 const TAKEOVER_EVENT = "goodjob:agent-takeover";
 
 const INITIAL_STATE: BrowserState = {
+  activeId: null,
   url: HOME,
   title: "",
   loading: false,
   canGoBack: false,
   canGoForward: false,
+  tabs: [],
 };
 
 interface BrowserPanelProps {
@@ -42,6 +55,9 @@ interface BrowserPanelProps {
 /**
  * Reserves a rectangle in the DOM and tells the main process to park the native
  * `WebContentsView` exactly there. The DOM node itself stays empty on purpose.
+ *
+ * 标签条与地址栏都是普通 DOM，原生视图只在下面那块矩形里——所以标签条的点击
+ * 不会被视图吃掉。
  */
 export function BrowserPanel({
   active,
@@ -56,6 +72,16 @@ export function BrowserPanel({
   const [agentRunning, setAgentRunning] = useState(false);
 
   const browser = window.goodjob.browser;
+
+  // 挂载时先拉一次快照：main 只在状态变化时推送，而面板是「打开 / 关闭」重新挂载的
+  // （顶栏地球图标），不拉就会看到空标签条。
+  useEffect(() => {
+    void browser.getState().then((next) => {
+      if (next === null) return;
+      setState(next);
+      if (next.url !== "") setAddress(next.url);
+    });
+  }, [browser]);
 
   useEffect(
     () =>
@@ -118,6 +144,52 @@ export function BrowserPanel({
 
   return (
     <div className="flex h-full min-w-0 flex-col bg-card">
+      {/* 标签条：最上面一条，每个标签可切换 / 关闭，尾部是「+」。 */}
+      <div className="flex shrink-0 items-center gap-1 border-b px-2 pt-1.5 pb-1">
+        <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
+          {state.tabs.map((tab) => {
+            const current = tab.id === state.activeId;
+            return (
+              <div
+                key={tab.id}
+                className={cn(
+                  "group flex h-7 min-w-0 max-w-52 shrink-0 items-center gap-1 rounded-md pr-1 pl-2 text-xs transition-colors",
+                  current
+                    ? "bg-foreground/[0.07] text-foreground"
+                    : "text-muted-foreground hover:bg-foreground/[0.04]",
+                )}
+              >
+                <button
+                  type="button"
+                  title={tab.title === "" ? tab.url : `${tab.title}\n${tab.url}`}
+                  className="flex min-w-0 flex-1 items-center gap-1"
+                  onClick={() => browser.activateTab(tab.id)}
+                >
+                  {tab.agentBusy ? (
+                    <Bot className="size-3 shrink-0 text-primary" aria-label="Agent 正在操作" />
+                  ) : tab.loading ? (
+                    <span className="size-1.5 shrink-0 animate-pulse rounded-full bg-current" />
+                  ) : null}
+                  <span className="truncate">{tabLabel(tab.title, tab.url)}</span>
+                </button>
+                <button
+                  type="button"
+                  aria-label="关闭标签"
+                  className="shrink-0 rounded p-0.5 opacity-0 transition-opacity group-hover:opacity-100 hover:bg-foreground/10 data-active:opacity-100"
+                  onClick={() => browser.closeTab(tab.id)}
+                >
+                  <X className="size-3" />
+                </button>
+              </div>
+            );
+          })}
+        </div>
+        <IconButton label="新建标签" onClick={() => void browser.newTab()}>
+          <Plus />
+        </IconButton>
+      </div>
+
+      {/* 工具条：只作用于当前活动标签。 */}
       <div className="flex shrink-0 items-center gap-1 border-b px-2 py-1.5">
         <IconButton label="后退" disabled={!state.canGoBack} onClick={() => browser.back()}>
           <ArrowLeft />
@@ -198,6 +270,17 @@ export function BrowserPanel({
       )}
     </div>
   );
+}
+
+/** 标签上显示的文字：标题优先，没有标题时退回域名（空白页显示「新标签页」）。 */
+function tabLabel(title: string, url: string): string {
+  if (title.trim() !== "") return title.trim();
+  if (url === "" || url === "about:blank") return "新标签页";
+  try {
+    return new URL(url).host || url;
+  } catch {
+    return url;
+  }
 }
 
 function IconButton({
