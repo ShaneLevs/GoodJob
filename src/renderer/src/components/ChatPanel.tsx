@@ -668,6 +668,9 @@ export function ChatPanel({
                   const duration = durationOf(message);
                   const fullText = messageText(message);
                   const streaming = isLast && busy;
+                  // 只把「消息里最后一个 part」当作还在流：它前面出现正文 / 工具调用，
+                  // 就说明那段思考已经结束，不能再跟着整轮 busy 一直显示「思考中」。
+                  const tailPart = message.parts[message.parts.length - 1];
                   const groups = groupTraceParts(message.parts);
                   // 最后一块正文是这轮的答复（留在外面），它前面的思考 / 工具 / 中间正文
                   // 全部打包进「工作过程」。
@@ -684,6 +687,7 @@ export function ChatPanel({
                             <WorkBlock
                               groups={work}
                               streaming={streaming}
+                              tailPart={tailPart}
                               elapsedMs={
                                 streaming
                                   ? busySeconds * 1000
@@ -851,11 +855,13 @@ function valueText(value: unknown): string {
 function WorkBlock({
   groups,
   streaming,
+  tailPart,
   elapsedMs,
   onRespond,
 }: {
   groups: TraceGroup[];
   streaming: boolean;
+  tailPart: UIMessage["parts"][number] | undefined;
   elapsedMs: number | null;
   onRespond?: (approvalId: string, approved: boolean) => void;
 }) {
@@ -876,13 +882,19 @@ function WorkBlock({
         <Trace>
           {groups.map((group) =>
             group.kind === "text" ? (
-              <Markdown key={group.key} streaming={streaming}>
+              <Markdown key={group.key} streaming={streaming && group.part === tailPart}>
                 {group.part.text}
               </Markdown>
             ) : (
               group.parts.map((part, index) =>
                 part.type === "reasoning" ? (
-                  <ReasoningRow key={`${group.key}-${index}`} text={part.text} streaming={streaming} />
+                  <ReasoningRow
+                    key={`${group.key}-${index}`}
+                    text={part.text}
+                    streaming={
+                      streaming && part === tailPart && part.state !== "done"
+                    }
+                  />
                 ) : (
                   <ToolRow
                     key={`${group.key}-${index}`}
