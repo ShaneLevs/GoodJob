@@ -1,10 +1,11 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { CircleAlert, CircleCheck, LoaderCircle, Send } from "lucide-react";
 
 import type {
   DigestKind,
   DigestSchedule,
+  NotificationDraft,
   NotificationSettings,
   NotifyTestKind,
   NotifyTestResult,
@@ -25,27 +26,37 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
 
+import { useAutoSave } from "./use-autosave";
+
+/** 表单快照：一次改动把整份表单排进自动保存队列（旧快照自动作废）。 */
+interface NotifySnapshot {
+  fromAddress: string;
+  smtp: AccountDraft;
+  imap: AccountDraft;
+  daily: DigestSchedule;
+  weekly: DigestSchedule;
+}
+
 /**
  * 通知设置（P3 M3）：SMTP / IMAP 表单 + 逐项「测试连接」+ 日报 / 周报调度。
  * 密码与模型 API Key 同一纪律：不回显（只显示有没有已存），留空即保持原值。
+ *
+ * 没有「保存」按钮：改动停手 400ms 自动落盘（`useAutoSave`），右上角只读状态。
+ * 「测试连接」「立即生成」仍是显式动作，不随改动触发。
  */
 export function NotifySettings() {
   const [settings, setSettings] = useState<NotificationSettings | null>(null);
+  const [form, setForm] = useState<NotifySnapshot | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
 
-  const [fromAddress, setFromAddress] = useState("");
-  const [smtp, setSmtp] = useState<AccountDraft | null>(null);
-  const [imap, setImap] = useState<AccountDraft | null>(null);
-  const [daily, setDaily] = useState<DigestSchedule | null>(null);
-  const [weekly, setWeekly] = useState<DigestSchedule | null>(null);
-
-  const [dirty, setDirty] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [notice, setNotice] = useState<{ tone: "ok" | "error"; message: string } | null>(null);
   const [testing, setTesting] = useState<NotifyTestKind | null>(null);
   const [testResults, setTestResults] = useState<Partial<Record<NotifyTestKind, NotifyTestResult>>>({});
   const [digestBusy, setDigestBusy] = useState<DigestKind | null>(null);
   const [digestNotice, setDigestNotice] = useState<{ tone: "ok" | "error"; message: string } | null>(null);
+
+  // 保存回调里要读「当前表单」，但回调本身不稳定：统一走 ref。
+  const formRef = useRef<NotifySnapshot | null>(null);
+  formRef.current = form;
 
   useEffect(() => {
     let alive = true;
@@ -54,11 +65,7 @@ export function NotifySettings() {
       .then((next) => {
         if (!alive) return;
         setSettings(next);
-        setFromAddress(next.fromAddress);
-        setSmtp(toDraft(next.smtp));
-        setImap(toDraft(next.imap));
-        setDaily(next.digest.daily);
-        setWeekly(next.digest.weekly);
+        setForm(fromSettings(next));
       })
       .catch((cause: unknown) => {
         if (alive) setLoadError(cause instanceof Error ? cause.message : String(cause));
@@ -67,6 +74,35 @@ export function NotifySettings() {
       alive = false;
     };
   }, []);
+
+  const save = useCallback(async (snapshot: NotifySnapshot): Promise<void> => {
+    const next = await window.goodjob.notify.save(toDraftRequest(snapshot));
+    setSettings(next);
+
+    // 主进程会做清洗（去空格、端口/时刻校验、密文结算）。只有用户在这期间没再
+    // 动过表单时才把结果回填，否则会把正在输入的框打断 —— 下次保存再收口。
+    const current = formRef.current;
+    if (current === null || fingerprint(current) !== fingerprint(snapshot)) return;
+    const settled = fromSettings(next);
+    formRef.current = settled;
+    setForm(settled);
+  }, []);
+
+  const autosave = useAutoSave(save);
+
+  /**
+   * 改表单并排队保存。端口没填好（空 / 越界）时只改显示不落盘：main 会直接抛
+   * 「端口不合法」，没必要为打字中途的临时值弹一次错误。
+   */
+  const update = (apply: (prev: NotifySnapshot) => NotifySnapshot): void => {
+    const prev = formRef.current;
+    if (prev === null) return;
+    const next = apply(prev);
+    formRef.current = next;
+    setForm(next);
+    if (!isPortDraftValid(next.smtp.port) || !isPortDraftValid(next.imap.port)) return;
+    autosave.schedule(next);
+  };
 
   if (loadError !== null) {
     return (
@@ -79,7 +115,7 @@ export function NotifySettings() {
       </div>
     );
   }
-  if (settings === null || smtp === null || imap === null || daily === null || weekly === null) {
+  if (settings === null || form === null) {
     return (
       <div className="min-h-0 flex-1 overflow-y-auto p-6">
         <h1 className="text-lg font-semibold tracking-tight">通知</h1>
@@ -88,42 +124,7 @@ export function NotifySettings() {
     );
   }
 
-  const patch = (apply: () => void): void => {
-    apply();
-    setDirty(true);
-    setNotice(null);
-  };
-
-  const save = async (): Promise<void> => {
-    setSaving(true);
-    setNotice(null);
-    try {
-      const next = await window.goodjob.notify.save({
-        fromAddress,
-        smtp: toAccountDraft(smtp),
-        imap: toAccountDraft(imap),
-        digest: {
-          daily: dailyDigestPatch(daily),
-          weekly: weeklyDigestPatch(weekly),
-        },
-      });
-      setSettings(next);
-      setFromAddress(next.fromAddress);
-      setSmtp(toDraft(next.smtp));
-      setImap(toDraft(next.imap));
-      setDaily(next.digest.daily);
-      setWeekly(next.digest.weekly);
-      setDirty(false);
-      setNotice({ tone: "ok", message: "已保存。" });
-    } catch (cause) {
-      setNotice({
-        tone: "error",
-        message: cause instanceof Error ? cause.message : String(cause),
-      });
-    } finally {
-      setSaving(false);
-    }
-  };
+  const { smtp, imap, daily, weekly } = form;
 
   const test = async (kind: NotifyTestKind): Promise<void> => {
     const account = toAccountDraft(kind === "smtp" ? smtp : imap);
@@ -160,20 +161,12 @@ export function NotifySettings() {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex shrink-0 items-center justify-between gap-3 px-6 pt-6 pb-4">
+      <div className="shrink-0 px-6 pt-6 pb-4">
         <h1 className="text-lg font-semibold tracking-tight">通知</h1>
-        <div className="flex items-center gap-3">
-          <span className="text-xs text-muted-foreground">
-            {saving ? "保存中…" : dirty ? "有未保存的改动" : "已保存"}
-          </span>
-          <Button size="sm" disabled={!dirty || saving} onClick={() => void save()}>
-            保存
-          </Button>
-        </div>
       </div>
 
-      {notice !== null && (
-        <NoticeBar tone={notice.tone} message={notice.message} className="mx-6 mb-3" />
+      {autosave.error !== null && (
+        <NoticeBar tone="error" message={autosave.error} className="mx-6 mb-3" />
       )}
 
       <div className="min-h-0 flex-1 overflow-y-auto border-t p-6">
@@ -192,9 +185,11 @@ export function NotifySettings() {
               id="notify-from"
               type="email"
               spellCheck={false}
-              value={fromAddress}
+              value={form.fromAddress}
               placeholder="me@example.com"
-              onChange={(event) => patch(() => setFromAddress(event.target.value))}
+              onChange={(event) =>
+                update((prev) => ({ ...prev, fromAddress: event.target.value }))
+              }
             />
           </section>
 
@@ -206,7 +201,7 @@ export function NotifySettings() {
             canStorePassword={settings.canStorePassword}
             testResult={testResults.smtp}
             testing={testing === "smtp"}
-            onChange={(apply) => patch(() => setSmtp((prev) => (prev === null ? prev : apply(prev))))}
+            onChange={(apply) => update((prev) => ({ ...prev, smtp: apply(prev.smtp) }))}
             onTest={() => void test("smtp")}
           />
 
@@ -218,7 +213,7 @@ export function NotifySettings() {
             canStorePassword={settings.canStorePassword}
             testResult={testResults.imap}
             testing={testing === "imap"}
-            onChange={(apply) => patch(() => setImap((prev) => (prev === null ? prev : apply(prev))))}
+            onChange={(apply) => update((prev) => ({ ...prev, imap: apply(prev.imap) }))}
             onTest={() => void test("imap")}
           />
 
@@ -233,7 +228,9 @@ export function NotifySettings() {
               <Switch
                 checked={daily.enabled}
                 aria-label="启用日报"
-                onCheckedChange={(checked) => patch(() => setDaily({ ...daily, enabled: checked }))}
+                onCheckedChange={(checked) =>
+                  update((prev) => ({ ...prev, daily: { ...prev.daily, enabled: checked } }))
+                }
               />
             </div>
             {daily.enabled && (
@@ -247,7 +244,10 @@ export function NotifySettings() {
                   value={daily.time}
                   className="w-28"
                   onChange={(event) =>
-                    patch(() => setDaily({ ...daily, time: event.target.value || daily.time }))
+                    update((prev) => ({
+                      ...prev,
+                      daily: { ...prev.daily, time: event.target.value || prev.daily.time },
+                    }))
                   }
                 />
                 <Button
@@ -275,7 +275,9 @@ export function NotifySettings() {
               <Switch
                 checked={weekly.enabled}
                 aria-label="启用周报"
-                onCheckedChange={(checked) => patch(() => setWeekly({ ...weekly, enabled: checked }))}
+                onCheckedChange={(checked) =>
+                  update((prev) => ({ ...prev, weekly: { ...prev.weekly, enabled: checked } }))
+                }
               />
             </div>
             {weekly.enabled && (
@@ -289,13 +291,19 @@ export function NotifySettings() {
                   value={weekly.time}
                   className="w-28"
                   onChange={(event) =>
-                    patch(() => setWeekly({ ...weekly, time: event.target.value || weekly.time }))
+                    update((prev) => ({
+                      ...prev,
+                      weekly: { ...prev.weekly, time: event.target.value || prev.weekly.time },
+                    }))
                   }
                 />
                 <Select
                   value={String(weekly.weekday ?? 1)}
                   onValueChange={(value) =>
-                    patch(() => setWeekly({ ...weekly, weekday: Number(value) }))
+                    update((prev) => ({
+                      ...prev,
+                      weekly: { ...prev.weekly, weekday: Number(value) },
+                    }))
                   }
                 >
                   <SelectTrigger className="w-32" aria-label="周报发送日">
@@ -363,6 +371,17 @@ function toDraft(account: PublicNotifyMailAccount): AccountDraft {
   };
 }
 
+/** 主进程回传的配置 → 表单快照（密码回到「保持已存」状态，刚存的不会再回显）。 */
+function fromSettings(settings: NotificationSettings): NotifySnapshot {
+  return {
+    fromAddress: settings.fromAddress,
+    smtp: toDraft(settings.smtp),
+    imap: toDraft(settings.imap),
+    daily: settings.digest.daily,
+    weekly: settings.digest.weekly,
+  };
+}
+
 function toAccountDraft(draft: AccountDraft) {
   const port = Number(draft.port);
   return {
@@ -374,6 +393,18 @@ function toAccountDraft(draft: AccountDraft) {
   };
 }
 
+function toDraftRequest(snapshot: NotifySnapshot): NotificationDraft {
+  return {
+    fromAddress: snapshot.fromAddress,
+    smtp: toAccountDraft(snapshot.smtp),
+    imap: toAccountDraft(snapshot.imap),
+    digest: {
+      daily: dailyDigestPatch(snapshot.daily),
+      weekly: weeklyDigestPatch(snapshot.weekly),
+    },
+  };
+}
+
 /** 保存载荷里 digest 的清洗：空时刻用回原值，交给 main 做格式校验。 */
 function dailyDigestPatch(daily: DigestSchedule) {
   return { enabled: daily.enabled, time: daily.time };
@@ -381,6 +412,32 @@ function dailyDigestPatch(daily: DigestSchedule) {
 
 function weeklyDigestPatch(weekly: DigestSchedule) {
   return { enabled: weekly.enabled, time: weekly.time, weekday: weekly.weekday ?? 1 };
+}
+
+/** 端口框能不能落盘：空着 / 越界时先不打扰 main。 */
+function isPortDraftValid(raw: string): boolean {
+  const text = raw.trim();
+  if (text === "" || !/^\d+$/.test(text)) return false;
+  const port = Number(text);
+  return port >= 1 && port <= 65535;
+}
+
+/** 快照的稳定指纹：用来判断「保存期间用户有没有继续改」。 */
+function fingerprint(snapshot: NotifySnapshot): string {
+  const account = (draft: AccountDraft): string =>
+    [draft.host, draft.port, draft.secure ? "1" : "0", draft.user, draft.password ?? "k", draft.hasPassword ? "1" : "0"].join(
+      "\u0000",
+    );
+  return JSON.stringify([
+    snapshot.fromAddress,
+    account(snapshot.smtp),
+    account(snapshot.imap),
+    snapshot.daily.enabled,
+    snapshot.daily.time,
+    snapshot.weekly.enabled,
+    snapshot.weekly.time,
+    snapshot.weekly.weekday ?? 1,
+  ]);
 }
 
 function AccountSection({
@@ -454,7 +511,7 @@ function AccountSection({
               value={draft.password ?? ""}
               placeholder={
                 draft.password === null
-                  ? "已清除，保存后生效"
+                  ? "已清除，自动保存后删除"
                   : draft.password !== undefined
                     ? "输入新密码"
                     : draft.hasPassword

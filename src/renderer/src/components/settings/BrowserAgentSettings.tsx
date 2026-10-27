@@ -1,28 +1,45 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { CircleAlert } from "lucide-react";
 
 import type { BrowserAgentSettings } from "@shared/types";
 
-import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
 
+import { useAutoSave } from "./use-autosave";
+
+/** 表单草稿：数字框留字符串，空着 / 打字中途都不算可保存的值。 */
+interface AgentForm {
+  enabled: boolean;
+  dailyLimit: string;
+  intervalSeconds: string;
+}
+
+/** 落盘快照：只有两个数字都解析成功时才会排进自动保存。 */
+interface AgentSnapshot {
+  enabled: boolean;
+  dailyLimit: number;
+  intervalSeconds: number;
+}
+
 /**
  * 浏览器自动化设置（P4）：启用开关 + 提交限速参数 + 风险告知。
  * 如实告知两件事：自动化操作招聘账号有封号风险；agent-browser 自己的状态
  * 目录在 `~/.agent-browser`（不在 `~/.goodjob` 里，会话恢复由它自己管理）。
+ *
+ * 没有「保存」按钮：改动停手 400ms 自动落盘（`useAutoSave`），右上角只读状态。
  */
 export function BrowserAgentSettings() {
   const [settings, setSettings] = useState<BrowserAgentSettings | null>(null);
-  const [enabled, setEnabled] = useState(false);
-  const [dailyLimit, setDailyLimit] = useState("10");
-  const [intervalSeconds, setIntervalSeconds] = useState("90");
-  const [dirty, setDirty] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [notice, setNotice] = useState<{ tone: "ok" | "error"; message: string } | null>(null);
+  const [form, setForm] = useState<AgentForm | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  // 保存回调里要读「当前表单」，但回调本身不稳定：统一走 ref。
+  const formRef = useRef<AgentForm | null>(null);
+  formRef.current = form;
 
   useEffect(() => {
     let alive = true;
@@ -31,19 +48,83 @@ export function BrowserAgentSettings() {
       .then((next) => {
         if (!alive) return;
         setSettings(next);
-        setEnabled(next.enabled);
-        setDailyLimit(String(next.submit.dailyLimitPerSite));
-        setIntervalSeconds(String(next.submit.minIntervalSeconds));
+        setForm({
+          enabled: next.enabled,
+          dailyLimit: String(next.submit.dailyLimitPerSite),
+          intervalSeconds: String(next.submit.minIntervalSeconds),
+        });
       })
       .catch((cause: unknown) => {
-        if (alive) setNotice({ tone: "error", message: cause instanceof Error ? cause.message : String(cause) });
+        if (alive) setLoadError(cause instanceof Error ? cause.message : String(cause));
       });
     return () => {
       alive = false;
     };
   }, []);
 
-  if (settings === null) {
+  const save = useCallback(async (snapshot: AgentSnapshot): Promise<void> => {
+    const next = await window.goodjob.agent.saveSettings({
+      enabled: snapshot.enabled,
+      submit: {
+        dailyLimitPerSite: snapshot.dailyLimit,
+        minIntervalSeconds: snapshot.intervalSeconds,
+      },
+    });
+    setSettings(next);
+
+    // main 会把越界的数字夹回合法区间：夹过的才回填，且只有在用户没继续改这一项时。
+    const current = formRef.current;
+    if (current === null) return;
+    const dailyLimit = String(next.submit.dailyLimitPerSite);
+    const intervalSeconds = String(next.submit.minIntervalSeconds);
+    const patched: AgentForm = {
+      ...current,
+      dailyLimit:
+        current.dailyLimit === String(snapshot.dailyLimit) ? dailyLimit : current.dailyLimit,
+      intervalSeconds:
+        current.intervalSeconds === String(snapshot.intervalSeconds)
+          ? intervalSeconds
+          : current.intervalSeconds,
+    };
+    if (
+      patched.dailyLimit === current.dailyLimit &&
+      patched.intervalSeconds === current.intervalSeconds
+    ) {
+      return;
+    }
+    formRef.current = patched;
+    setForm(patched);
+  }, []);
+
+  const autosave = useAutoSave(save);
+
+  /** 改表单并排队保存；数字不合法（空 / 非正整数）时只改显示，不落盘。 */
+  const update = (apply: (prev: AgentForm) => AgentForm): void => {
+    const prev = formRef.current;
+    if (prev === null) return;
+    const next = apply(prev);
+    formRef.current = next;
+    setForm(next);
+
+    const dailyLimit = parseWholeNumber(next.dailyLimit);
+    const intervalSeconds = parseWholeNumber(next.intervalSeconds);
+    if (dailyLimit === null || intervalSeconds === null) return;
+    autosave.schedule({ enabled: next.enabled, dailyLimit, intervalSeconds });
+  };
+
+  if (loadError !== null) {
+    return (
+      <div className="min-h-0 flex-1 overflow-y-auto p-6">
+        <h1 className="text-lg font-semibold tracking-tight">浏览器</h1>
+        <div className="mt-6 flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+          <CircleAlert className="mt-0.5 size-3.5 shrink-0" />
+          <span>{loadError}</span>
+        </div>
+      </div>
+    );
+  }
+
+  if (settings === null || form === null) {
     return (
       <div className="min-h-0 flex-1 overflow-y-auto p-6">
         <h1 className="text-lg font-semibold tracking-tight">浏览器</h1>
@@ -52,57 +133,23 @@ export function BrowserAgentSettings() {
     );
   }
 
-  const patch = (): void => setDirty(true);
-
-  const save = async (): Promise<void> => {
-    setSaving(true);
-    setNotice(null);
-    try {
-      const next = await window.goodjob.agent.saveSettings({
-        enabled,
-        submit: {
-          dailyLimitPerSite: Number(dailyLimit),
-          minIntervalSeconds: Number(intervalSeconds),
-        },
-      });
-      setSettings(next);
-      setEnabled(next.enabled);
-      setDailyLimit(String(next.submit.dailyLimitPerSite));
-      setIntervalSeconds(String(next.submit.minIntervalSeconds));
-      setDirty(false);
-      setNotice({ tone: "ok", message: "已保存。" });
-    } catch (cause) {
-      setNotice({ tone: "error", message: cause instanceof Error ? cause.message : String(cause) });
-    } finally {
-      setSaving(false);
-    }
-  };
+  const error = autosave.error;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex shrink-0 items-center justify-between gap-3 px-6 pt-6 pb-4">
+      <div className="shrink-0 px-6 pt-6 pb-4">
         <h1 className="text-lg font-semibold tracking-tight">浏览器</h1>
-        <div className="flex items-center gap-3">
-          <span className="text-xs text-muted-foreground">
-            {saving ? "保存中…" : dirty ? "有未保存的改动" : "已保存"}
-          </span>
-          <Button size="sm" disabled={!dirty || saving} onClick={() => void save()}>
-            保存
-          </Button>
-        </div>
       </div>
 
-      {notice !== null && (
+      {error !== null && (
         <div
           className={cn(
             "mx-6 mb-3 flex items-start gap-2 rounded-lg border px-3 py-2 text-xs",
-            notice.tone === "ok"
-              ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
-              : "border-destructive/30 bg-destructive/10 text-destructive",
+            "border-destructive/30 bg-destructive/10 text-destructive",
           )}
         >
           <CircleAlert className="mt-0.5 size-3.5 shrink-0" />
-          <span className="min-w-0 break-words">{notice.message}</span>
+          <span className="min-w-0 break-words">{error}</span>
         </div>
       )}
 
@@ -118,12 +165,9 @@ export function BrowserAgentSettings() {
               </p>
             </div>
             <Switch
-              checked={enabled}
+              checked={form.enabled}
               aria-label="启用浏览器自动化"
-              onCheckedChange={(checked) => {
-                setEnabled(checked);
-                patch();
-              }}
+              onCheckedChange={(checked) => update((prev) => ({ ...prev, enabled: checked }))}
             />
           </section>
 
@@ -143,11 +187,10 @@ export function BrowserAgentSettings() {
                 <Input
                   id="agent-daily-limit"
                   inputMode="numeric"
-                  value={dailyLimit}
-                  onChange={(event) => {
-                    setDailyLimit(event.target.value);
-                    patch();
-                  }}
+                  value={form.dailyLimit}
+                  onChange={(event) =>
+                    update((prev) => ({ ...prev, dailyLimit: event.target.value }))
+                  }
                 />
               </div>
               <div className="flex flex-col gap-1.5">
@@ -157,11 +200,10 @@ export function BrowserAgentSettings() {
                 <Input
                   id="agent-interval"
                   inputMode="numeric"
-                  value={intervalSeconds}
-                  onChange={(event) => {
-                    setIntervalSeconds(event.target.value);
-                    patch();
-                  }}
+                  value={form.intervalSeconds}
+                  onChange={(event) =>
+                    update((prev) => ({ ...prev, intervalSeconds: event.target.value }))
+                  }
                 />
               </div>
             </div>
@@ -197,4 +239,11 @@ export function BrowserAgentSettings() {
       </div>
     </div>
   );
+}
+
+/** 正整数；空串或打字中途的乱码一律返回 null（那就先不落盘）。 */
+function parseWholeNumber(raw: string): number | null {
+  const text = raw.trim();
+  if (text === "" || !/^\d+$/.test(text)) return null;
+  return Number(text);
 }

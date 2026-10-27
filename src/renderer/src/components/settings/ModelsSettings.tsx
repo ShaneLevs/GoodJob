@@ -65,14 +65,17 @@ import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
 
 import { PROTOCOL_OPTIONS, PROVIDER_PRESETS, type PresetModel } from "./presets";
+import { useAutoSave } from "./use-autosave";
 
 interface ModelsSettingsProps {
   models: ModelsConfig;
   onSaved: (models: ModelsConfig) => void;
 }
 
-/** 输入停下来这么久就落盘，避免每敲一个字都写一次文件。 */
-const AUTOSAVE_MS = 400;
+/** 一次改动把整份供应商列表排进自动保存队列（旧快照自动作废）。 */
+interface ModelsSnapshot {
+  providers: ProviderDraft[];
+}
 
 /** Provider state while editing: stored key presence plus a pending key change. */
 interface ProviderEdit extends ProviderConfig {
@@ -90,14 +93,13 @@ export function ModelsSettings({ models, onSaved }: ModelsSettingsProps) {
     providerId: string;
     model: ModelEntry | null;
   } | null>(null);
-  /** 自动保存的状态：改动是边改边存的，用户得看得见。 */
-  const [saveState, setSaveState] = useState<"idle" | "saving" | "saved">("idle");
+  /** 列表内的校验提示（模型 ID 重复），与保存失败分开显示。 */
   const [error, setError] = useState<string | null>(null);
 
   const provider = providers.find((item) => item.id === selectedId) ?? null;
 
   /*
-   * 实时保存：本地 draft 先落 state（输入才不卡），停手 AUTOSAVE_MS 后落盘。
+   * 自动保存：本地 draft 先落 state（输入才不卡），停手后由 `useAutoSave` 落盘。
    * 落盘结果只回填"主进程才知道"的字段（hasApiKey、已存 Key 的结算），
    * 不回写整份 providers，否则用户正在输入的框会被打断。
    *
@@ -107,65 +109,51 @@ export function ModelsSettings({ models, onSaved }: ModelsSettingsProps) {
    */
   const providersRef = useRef(providers);
   providersRef.current = providers;
-  const timerRef = useRef<number | null>(null);
-  const mountedRef = useRef(true);
 
-  const persist = useCallback(async (): Promise<void> => {
-    if (mountedRef.current) setSaveState("saving");
-    try {
-      const next = await window.goodjob.models.save({
-        providers: providersRef.current.map(toDraft),
-      });
-      if (!mountedRef.current) return;
-      setSaveState("saved");
-      setError(null);
-      setProviders((prev) =>
-        prev.map((item) => {
-          const saved = next.providers.find((entry) => entry.id === item.id);
-          if (saved === undefined) return item;
-          const keySettled = typeof item.apiKey === "string" && item.apiKey.trim() !== "";
-          return { ...item, hasApiKey: saved.hasApiKey, apiKey: keySettled ? undefined : item.apiKey };
-        }),
-      );
+  const save = useCallback(
+    async (snapshot: ModelsSnapshot): Promise<void> => {
+      const next = await window.goodjob.models.save({ providers: snapshot.providers });
       onSaved(next);
-    } catch (caught) {
-      if (mountedRef.current) {
-        setSaveState("idle");
-        setError(caught instanceof Error ? caught.message : "保存失败");
-      }
-    }
-  }, [onSaved]);
 
-  const scheduleSave = useCallback((): void => {
-    setSaveState("saving");
-    if (timerRef.current !== null) window.clearTimeout(timerRef.current);
-    timerRef.current = window.setTimeout(() => {
-      timerRef.current = null;
-      void persist();
-    }, AUTOSAVE_MS);
-  }, [persist]);
-
-  const onSavedRef = useRef(onSaved);
-  onSavedRef.current = onSaved;
-
-  // 关窗/卸载时把还压在防抖里的改动补写一次，免得最后几个字丢掉。
-  // 依赖留空：只在真正卸载时执行，不能因为父组件重渲染就误触发一次保存。
-  useEffect(
-    () => () => {
-      mountedRef.current = false;
-      if (timerRef.current === null) return;
-      window.clearTimeout(timerRef.current);
-      timerRef.current = null;
-      void window.goodjob.models
-        .save({ providers: providersRef.current.map(toDraft) })
-        .then((next) => onSavedRef.current(next));
+      /*
+       * 只把主进程才知道的字段（hasApiKey）贴回去，并按「哪一项确实被这份快照
+       * 存过」结算 API Key 输入框：存过的新 Key 清空、不再回显；用户在落盘期间
+       * 又敲进去的字符不能被抹掉，留着等下一轮保存。
+       */
+      const current = providersRef.current;
+      const settled = current.map((item) => {
+        const saved = next.providers.find((entry) => entry.id === item.id);
+        if (saved === undefined) return item;
+        const queued = snapshot.providers.find((entry) => entry.id === item.id);
+        const sameKey = queued !== undefined && (queued.apiKey ?? null) === (item.apiKey ?? null);
+        // 存过的新 Key 清空输入框；刚点过「清除」的也回到「保持已存」的初始态。
+        const keySettled =
+          sameKey &&
+          item.apiKey !== undefined &&
+          (item.apiKey === null || item.apiKey.trim() !== "");
+        return {
+          ...item,
+          hasApiKey: saved.hasApiKey,
+          apiKey: keySettled ? undefined : item.apiKey,
+        };
+      });
+      providersRef.current = settled;
+      setProviders(settled);
     },
-    [],
+    [onSaved],
   );
 
+  const autosave = useAutoSave(save);
+
+  /** 把当前整份供应商列表排进自动保存队列（旧快照自动作废）。 */
+  const scheduleSave = (next: ProviderEdit[]): void => {
+    providersRef.current = next;
+    setProviders(next);
+    autosave.schedule({ providers: next.map(toDraft) });
+  };
+
   const patchProvider = (id: string, patch: Partial<ProviderEdit>): void => {
-    setProviders((prev) => prev.map((item) => (item.id === id ? { ...item, ...patch } : item)));
-    scheduleSave();
+    scheduleSave(providersRef.current.map((item) => (item.id === id ? { ...item, ...patch } : item)));
   };
 
   const addProvider = (presetKey: string): void => {
@@ -182,28 +170,28 @@ export function ModelsSettings({ models, onSaved }: ModelsSettingsProps) {
       apiKey: undefined,
       models: preset.models.map(fromPresetModel),
     };
-    setProviders((prev) => [...prev, added]);
+    scheduleSave([...providersRef.current, added]);
     setSelectedId(added.id);
-    scheduleSave();
   };
 
   const removeProvider = (id: string): void => {
-    setProviders((prev) => {
-      const next = prev.filter((item) => item.id !== id);
-      setSelectedId((current) => (current === id ? (next[0]?.id ?? null) : current));
-      return next;
-    });
-    scheduleSave();
+    const next = providersRef.current.filter((item) => item.id !== id);
+    setSelectedId((current) => (current === id ? (next[0]?.id ?? null) : current));
+    scheduleSave(next);
   };
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex shrink-0 items-center justify-between gap-3 px-6 pt-6 pb-4">
+      <div className="shrink-0 px-6 pt-6 pb-4">
         <h1 className="text-lg font-semibold tracking-tight">模型设置</h1>
-        <span className="text-xs text-muted-foreground">
-          {saveState === "saving" ? "保存中…" : saveState === "saved" ? "已保存" : "改动自动保存"}
-        </span>
       </div>
+
+      {autosave.error !== null && (
+        <div className="mx-6 mb-3 flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+          <CircleAlert className="mt-0.5 size-3.5 shrink-0" />
+          <span className="min-w-0 break-words">{autosave.error}</span>
+        </div>
+      )}
 
       {error !== null && (
         <div className="mx-6 mb-3 flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
@@ -695,7 +683,7 @@ function ModelEditor({ open, model, onCancel, onSubmit }: ModelEditorProps) {
             取消
           </Button>
           <Button disabled={id.trim() === ""} onClick={submit}>
-            保存
+            确定
           </Button>
         </DialogFooter>
       </DialogContent>
