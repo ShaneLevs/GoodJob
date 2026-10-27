@@ -115,6 +115,8 @@ const api: GoodjobApi = {
       ipcRenderer.invoke(IPC.resumeRead, target) as Promise<ResumeDoc | null>,
     save: (target: ResumeDocTarget, content: string) =>
       ipcRenderer.invoke(IPC.resumeSave, target, content) as Promise<ResumeDoc | null>,
+    photo: (relPath: string) =>
+      ipcRenderer.invoke(IPC.resumePhoto, relPath) as Promise<string | null>,
     listTailored: () => ipcRenderer.invoke(IPC.resumeTailoredList) as Promise<TailoredDoc[]>,
     onFileChanged: (listener: (event: ResumeFileEvent) => void) =>
       subscribe(IPC.resumeFileChanged, listener),

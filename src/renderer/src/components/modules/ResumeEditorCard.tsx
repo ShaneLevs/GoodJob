@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { CircleAlert, FileDown, Gauge, Save } from "lucide-react";
 
@@ -6,6 +6,7 @@ import type { ResumeDocTarget, ResumeFileEvent } from "@shared/types";
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { extractPhotoDirective } from "@/markdown/render";
 
 import { MarkdownPreview } from "@/components/MarkdownPreview";
 
@@ -49,12 +50,15 @@ export function ResumeEditorCard({
   const [exporting, setExporting] = useState(false);
   /** read 回执里的简历名，导出文件名的缺省值。 */
   const [docName, setDocName] = useState<string | null>(null);
+  /** `photo:` 指令解析出的照片（data URL）；null = 没有照片或文件不可用。 */
+  const [photoUrl, setPhotoUrl] = useState<string | null>(null);
 
   const dirtyRef = useRef(false);
   const dirty = content !== null && draft !== content;
   dirtyRef.current = dirty;
 
   const fileKey = target.kind === "main" ? "main" : target.name;
+  const photoPath = useMemo(() => extractPhotoDirective(draft).photoPath, [draft]);
 
   const applyContent = useCallback((text: string): void => {
     setContent(text);
@@ -89,6 +93,26 @@ export function ResumeEditorCard({
     });
   }, [applyContent, fileKey, target]);
 
+  // —— `photo:` 指令 → 让 main 读成小图 data URL（预览与导出共用）——
+  useEffect(() => {
+    let alive = true;
+    if (photoPath === null) {
+      setPhotoUrl(null);
+      return;
+    }
+    void window.goodjob.resume
+      .photo(photoPath)
+      .then((url) => {
+        if (alive) setPhotoUrl(url);
+      })
+      .catch(() => {
+        if (alive) setPhotoUrl(null);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [fileKey, photoPath]);
+
   useEffect(() => {
     if (notice === null) return;
     const timeout = setTimeout(() => setNotice(null), 6000);
@@ -115,8 +139,19 @@ export function ResumeEditorCard({
     setError(null);
     setExporting(true);
     // 导出不走模型：排版复用预览管线（main 起隐藏窗口渲染后 printToPDF）。
-    void window.goodjob.pdf
-      .export({ markdown: draft, fileName: exportFileName ?? docName ?? undefined })
+    // 照片按当前 draft 重新取一次，避免改完 photo: 行立刻导出时拿到旧图。
+    const resolvePhoto = async (): Promise<string | undefined> => {
+      if (photoPath === null) return undefined;
+      return (await window.goodjob.resume.photo(photoPath)) ?? undefined;
+    };
+    void resolvePhoto()
+      .then((photo) =>
+        window.goodjob.pdf.export({
+          markdown: draft,
+          fileName: exportFileName ?? docName ?? undefined,
+          photoUrl: photo,
+        }),
+      )
       .then((result) => {
         if (result !== null) setNotice(`已导出：${result.savedTo}`);
       })
@@ -124,7 +159,7 @@ export function ResumeEditorCard({
         setError(cause instanceof Error ? cause.message : String(cause));
       })
       .finally(() => setExporting(false));
-  }, [draft, exporting, exportFileName, docName]);
+  }, [draft, exporting, exportFileName, docName, photoPath]);
 
   // Cmd/Ctrl + S 保存（两个模式下都要能用）。
   useEffect(() => {
@@ -223,7 +258,7 @@ export function ResumeEditorCard({
         {mode === "edit" ? (
           <ResumeMarkdownEditor value={draft} onChange={setDraft} />
         ) : (
-          <MarkdownPreview markdown={draft} emptyText={emptyText} />
+          <MarkdownPreview markdown={draft} photoUrl={photoUrl} emptyText={emptyText} />
         )}
       </div>
     </div>

@@ -2,6 +2,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 
+import { nativeImage } from "electron";
+
 import type {
   IntegrityReport,
   JobMatchDimension,
@@ -15,31 +17,14 @@ import type {
 } from "@shared/types";
 
 import { ensureDir, writeJsonFile, type WorkspacePaths } from "./paths";
+import { RESUME_STARTER } from "./resume-format";
 
 /** history/ 里最多保留的快照份数，超出删最旧的。 */
 const HISTORY_LIMIT = 50;
-
-const STARTER_TEMPLATE = `# 姓名
-
-## 基本信息
-
-- 城市：
-- 电话：
-- 邮箱：
-- 工作年限：
-
-## 求职意向
-
-目标岗位：
-
-## 工作经历
-
-## 项目经历
-
-## 教育背景
-
-## 技能
-`;
+/** 证件照原图上限；超过就不往渲染层送，避免一次 IPC 塞进几十 MB。 */
+const MAX_PHOTO_BYTES = 20 * 1024 * 1024;
+/** 预览 / 导出用的人像宽度：320px 足够 96px 的排版尺寸，PDF 也不会糊。 */
+const PHOTO_RENDER_WIDTH = 320;
 
 interface ResumeIndex {
   items: ResumeMeta[];
@@ -100,7 +85,7 @@ export class ResumeStore {
     const dir = this.resumeDir(id);
     ensureDir(dir);
     this.ensureResumeSubdirs(dir);
-    this.writeMainFile(dir, STARTER_TEMPLATE);
+    this.writeMainFile(dir, RESUME_STARTER);
 
     this.doc.items.push({ id, name: trimmed, createdAt: new Date().toISOString() });
     if (this.doc.currentId === null) this.doc.currentId = id;
@@ -244,6 +229,56 @@ export class ResumeStore {
     const file = path.join(this.resumeDir(id), "resume.md");
     if (!fs.existsSync(file)) return null;
     return fs.readFileSync(file, "utf8");
+  }
+
+  /**
+   * `photo:` 指令指向的证件照 → data URL（预览与 PDF 导出共用）。
+   * 只接受当前简历 `upload/` 下的 png / jpg / jpeg：realpath 校验防越界，
+   * main 侧缩到 320px，渲染层只拿到小图，不需要为它开自定义协议。
+   */
+  readPhotoDataUrl(relPath: string): string | null {
+    const current = this.current();
+    if (current === null) return null;
+
+    const normalized = relPath.trim().replace(/\\/g, "/");
+    if (!normalized.startsWith("upload/")) return null;
+
+    const uploadDir = this.uploadDir(current.id);
+    const resolved = path.resolve(this.resumeDir(current.id), normalized);
+    if (!resolved.startsWith(`${uploadDir}${path.sep}`)) return null;
+
+    let realResumeDir: string;
+    let realUpload: string;
+    let realFile: string;
+    try {
+      realResumeDir = fs.realpathSync(this.resumeDir(current.id));
+      realUpload = fs.realpathSync(uploadDir);
+      realFile = fs.realpathSync(resolved);
+    } catch {
+      return null;
+    }
+    if (!realUpload.startsWith(`${realResumeDir}${path.sep}`)) return null;
+    if (!realFile.startsWith(`${realUpload}${path.sep}`)) return null;
+
+    const ext = path.extname(realFile).toLowerCase();
+    if (ext !== ".png" && ext !== ".jpg" && ext !== ".jpeg") return null;
+
+    try {
+      const stat = fs.statSync(realFile);
+      if (!stat.isFile() || stat.size > MAX_PHOTO_BYTES) return null;
+    } catch {
+      return null;
+    }
+
+    const image = nativeImage.createFromPath(realFile);
+    if (image.isEmpty()) return null;
+    const scaled =
+      image.getSize().width > PHOTO_RENDER_WIDTH
+        ? image.resize({ width: PHOTO_RENDER_WIDTH, quality: "good" })
+        : image;
+    const isPng = ext === ".png";
+    const bytes = isPng ? scaled.toPNG() : scaled.toJPEG(85);
+    return `data:image/${isPng ? "png" : "jpeg"};base64,${bytes.toString("base64")}`;
   }
 
   /* ————————— 岗位话术：scripts/<jobId>.md + 定稿 sidecar ————————— */
@@ -546,7 +581,7 @@ export class ResumeStore {
       const dir = this.resumeDir(id);
       ensureDir(dir);
       this.ensureResumeSubdirs(dir);
-      this.writeMainFile(dir, STARTER_TEMPLATE);
+      this.writeMainFile(dir, RESUME_STARTER);
       this.doc = {
         items: [{ id, name: "我的简历", createdAt: new Date().toISOString() }],
         currentId: id,

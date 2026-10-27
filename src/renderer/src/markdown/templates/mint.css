@@ -1,31 +1,24 @@
-import lexendBold from "@/assets/fonts/Lexend-Bold.ttf";
-import lexendRegular from "@/assets/fonts/Lexend-Regular.ttf";
-
-import type { DocumentTemplate } from "./index";
-
 /*
- * 「薄荷」模板：从 Typora 简历模板项目（阿杆的 markdown-resume-template，mint 主题）
- * 移植。原始主题是给 Typora 的 #write 写的，这里收敛成两块：
+ * 「薄荷」主题：从 Typora 简历模板项目（阿杆的 markdown-resume-template，mint 主题）
+ * 移植。原始主题是给 Typora 的 #write 写的，这里收敛成一份 scoped CSS：
  *   - mint.css 的配色 / 字号 / 间距（绿色点缀、代码块深底）；
- *   - 简历文档自带的紧凑覆盖（hr 6px、li 4px、表格去边框、链接下划线）。
- * 所有规则都 scoped 在 .tpl-mint（预览纸面的 class）下，注入方式见
- * MarkdownPreview——不进 globals.css，换模板就是换一份这样的 CSS。
+ *   - 简历文档自带的紧凑覆盖（hr 6px、li 4px、表格去边框、链接下划线）；
+ *   - GoodJob 的简历语法：两端对齐行、图标、证件照、打印分页。
+ *
+ * 一个 CSS 文件 = 一套主题。所有选择器都挂在 .tpl-mint 下，由 MarkdownPreview
+ * 以 <style> 注入（不进 globals.css）；换主题就是换一份这样的文件。
  * Lexend（拉丁字形，SIL OFL 授权）随包分发；中文走系统字体，避免 17MB 的思源黑体。
  */
-export const mint: DocumentTemplate = {
-  id: "mint",
-  name: "薄荷",
-  paperClass: "tpl-mint",
-  css: `
+
 @font-face {
   font-family: "GoodJob Lexend";
   font-weight: 400;
-  src: url("${lexendRegular}") format("truetype");
+  src: url("../../assets/fonts/Lexend-Regular.ttf") format("truetype");
 }
 @font-face {
   font-family: "GoodJob Lexend";
   font-weight: 700;
-  src: url("${lexendBold}") format("truetype");
+  src: url("../../assets/fonts/Lexend-Bold.ttf") format("truetype");
 }
 
 .tpl-mint {
@@ -35,6 +28,7 @@ export const mint: DocumentTemplate = {
   --tpl-rule: #e7e7e7;
   --tpl-code-bg: #0f111a;
 
+  position: relative;
   max-width: 760px;
   padding: 36px 46px 28px;
   color: #303133;
@@ -77,14 +71,54 @@ export const mint: DocumentTemplate = {
   margin: 0 2px;
 }
 
-/* 条目标题（#### A | B | C）：两端对齐的一行 */
-.tpl-mint .entry-head {
+/* —— 两端对齐：普通行（左:::右）与条目标题（A | B | C）共用 —— */
+.tpl-mint .doc-split {
   display: flex;
-  justify-content: space-between;
+  flex-wrap: wrap;
   align-items: baseline;
-  gap: 1em;
+  justify-content: space-between;
+  column-gap: 1em;
+}
+.tpl-mint .doc-split-left {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.tpl-mint .doc-split-right {
+  margin-left: auto;
+  text-align: right;
+}
+
+/* 条目标题（#### A | B | C / #### 标题:::日期）：带上下间距的加粗行 */
+.tpl-mint .entry-head {
   margin: 14px 0 6px;
   font-weight: 600;
+}
+
+/* —— 行内图标：icon:github —— */
+.tpl-mint .doc-icon {
+  display: inline-flex;
+  width: 1em;
+  height: 1em;
+  vertical-align: -0.125em;
+  margin-right: 0.2em;
+}
+.tpl-mint .doc-icon svg {
+  width: 100%;
+  height: 100%;
+}
+
+/* —— 证件照：photo: upload/xxx.jpg（模板决定位置：右上角，与信息表并排）—— */
+.tpl-mint .doc-photo {
+  position: absolute;
+  top: 36px;
+  right: 46px;
+  width: 96px;
+  height: 128px;
+  object-fit: cover;
+  border-radius: 4px;
+}
+.tpl-mint.has-photo .doc-body > table:first-of-type {
+  width: calc(100% - 116px);
 }
 
 /* —— 正文 —— */
@@ -178,18 +212,23 @@ export const mint: DocumentTemplate = {
     max-width: none;
     padding: 0;
   }
+  .tpl-mint .doc-photo {
+    top: 0;
+    right: 0;
+  }
   .tpl-mint h1,
   .tpl-mint h2,
   .tpl-mint h3,
-  .tpl-mint .entry-head {
+  .tpl-mint .entry-head,
+  .tpl-mint .doc-split {
     break-after: avoid;
   }
   .tpl-mint .entry-head,
+  .tpl-mint .doc-split,
+  .tpl-mint .doc-photo,
   .tpl-mint table,
   .tpl-mint blockquote,
   .tpl-mint pre {
     break-inside: avoid;
   }
 }
-`,
-};

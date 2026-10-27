@@ -20,11 +20,11 @@ import type { PdfExportPayload, PdfExportResult } from "@shared/types";
  *     { hash: "export" })。main.tsx 看到 `location.hash === "#export"` 时【不挂 App】，
  *     只往 #root 里渲染 MarkdownPreview（排版复用预览管线，零新依赖）。
  *   - 渲染层注册全局函数：`window.__goodjobRenderExport(markdown: string, templateId?:
- *     string): Promise<void>`——渲染完成、字体就绪后 resolve。导出路由不需要 preload
- *     （不碰 window.goodjob），所以这个窗口故意不给 preload。
+ *     string, photoUrl?: string | null): Promise<void>`——渲染完成、字体与图片就绪后
+ *     resolve。导出路由不需要 preload（不碰 window.goodjob），所以这个窗口故意不给 preload。
  *   - main 用 executeJavaScript 调它：被调表达式是写死的函数调用，Markdown 与模板 id
  *     只作为 JSON 字符串参数传进去，不 eval 用户内容。
- *   - 模板放渲染层 `markdown/templates/`（一模板一份 CSS 串）；打印相关规则
+ *   - 模板放渲染层 `markdown/templates/`（一个 CSS 文件一套主题，`?inline` 注入）；打印相关规则
  *     （@page、break-inside 避规、纸面去阴影）也 scoped 在模板 CSS 里，不进 globals.css。
  */
 
@@ -58,7 +58,7 @@ export async function exportPdf(
     await loadExportRoute(win);
     await waitForExportRoute(win);
     await win.webContents.executeJavaScript(
-      `${RENDER_EXPORT_FN}(${JSON.stringify(payload.markdown)}, ${JSON.stringify(payload.templateId ?? null)})`,
+      `${RENDER_EXPORT_FN}(${JSON.stringify(payload.markdown)}, ${JSON.stringify(payload.templateId ?? null)}, ${JSON.stringify(payload.photoUrl ?? null)})`,
       true,
     );
 

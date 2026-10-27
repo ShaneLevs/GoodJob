@@ -17,3 +17,9 @@ declare module "*.svg" {
   const url: string;
   export default url;
 }
+
+/** Vite 的 `?inline`：文件经过处理（含 url() 重写）后以字符串返回。 */
+declare module "*.css?inline" {
+  const css: string;
+  export default css;
+}

@@ -599,6 +599,11 @@ export interface PdfExportPayload {
   templateId?: string;
   /** 保存对话框预填的文件名（不含扩展名）。 */
   fileName?: string;
+  /**
+   * 文档照片（data URL）。由渲染层从 `photo:` 指令解析、经 main 读成小图后
+   * 随导出请求一起送进来，导出窗不需要再访问文件系统。
+   */
+  photoUrl?: string;
 }
 
 /** pdf:export 的回执：用户取消返回 null。 */
@@ -761,6 +766,7 @@ export const IPC = {
   resumeSelect: "resume:select",
   resumeRead: "resume:read",
   resumeSave: "resume:save",
+  resumePhoto: "resume:photo",
   resumeTailoredList: "resume:tailored-list",
   resumeFileChanged: "resume:file-changed",
   resumeScriptList: "resume:script-list",
@@ -864,6 +870,11 @@ export interface GoodjobApi {
     /** 读取当前简历的正文或定制稿；还没有简历时返回 null。 */
     read: (target: ResumeDocTarget) => Promise<ResumeDoc | null>;
     save: (target: ResumeDocTarget, content: string) => Promise<ResumeDoc | null>;
+    /**
+     * `photo:` 指令指向的证件照 → data URL（只允许当前简历 upload/ 下的
+     * png / jpg / jpeg）。文件不存在或格式不支持时返回 null。
+     */
+    photo: (relPath: string) => Promise<string | null>;
     listTailored: () => Promise<TailoredDoc[]>;
     onFileChanged: (listener: (event: ResumeFileEvent) => void) => () => void;
     /*

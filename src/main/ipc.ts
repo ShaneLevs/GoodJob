@@ -142,6 +142,7 @@ export function registerIpc(deps: IpcDeps): void {
   ipcMain.handle(IPC.resumeSave, (_event, target: ResumeDocTarget, content: string) =>
     resumes.save(target, content),
   );
+  ipcMain.handle(IPC.resumePhoto, (_event, relPath: string) => resumes.readPhotoDataUrl(relPath));
   ipcMain.handle(IPC.resumeTailoredList, () => resumes.listTailored());
 
   // 上传 = 原样落盘到当前会话所属模块的 upload/（公司 / 岗位 / 投递 / 面试各自己的，

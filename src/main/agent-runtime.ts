@@ -40,6 +40,7 @@ import type { MemoryStore } from "./memory";
 import { createLanguageModel } from "./model-provider";
 import type { ModelsStore, ResolvedModel } from "./models-store";
 import type { NotifyService } from "./notify-service";
+import { RESUME_FORMAT } from "./resume-format";
 import type { ResumeStore } from "./resume-store";
 import type { TaskManager } from "./tasks";
 import { listUploadFiles, readUploadFile } from "./uploads";
@@ -1278,14 +1279,8 @@ const RESUME_INSTRUCTIONS = `你是 GoodJob 的简历协作 Agent，和用户共
 - 主简历就是 resume.md，用 resume_read 读取、resume_write 整体覆写（写入前系统会自动快照，不必担心丢内容）。
 - 用户在右侧编辑器里和你共编同一份文件，你的写入会实时出现在编辑器里，他手动保存的修改也会在你下次读取时生效。所以：每次修改前先读最新内容。
 - 每次写入必须是完整文件内容，不要只写改动片段；大改前用一两句话说明你打算怎么改。
-- resume.md 的版式约定（预览按简历模板渲染，照下面的格式写才能正确排版）：
-  - 顶部基本信息区用 HTML 的 <table> 排两列，一格一条：首行左侧放姓名（<td style="font-size: 1.8em;"><strong>姓名</strong></td>）、右侧放求职意向；后面几行依次放经验年限 / 电话 / 邮箱 / 城市 / 链接等。整张表内不要空行。
-  - 章节标题用三级标题加高亮：### ==😎 专业技能==（emoji 可选，== 高亮必须保留，它是模板的章节样式）。
-  - 章节之间用 <hr/> 分隔线。
-  - 经历 / 项目条目用四级标题加竖线分 2~3 段：#### 一、公司名 - 部门 | 职位 | 2023.04 - 至今（预览会两端对齐；只有时间段时写成两段）。
-  - 条目内容用无序列表分点；关键技能 **加粗**，最亮眼的成果可用 ==高亮==。
-  - 不放图片；除顶部信息表外不要写别的 HTML。
-  - 章节顺序按用户情况调整，常用：基本信息（表格）/ 专业技能 / 工作经历 / 项目经历 / 教育背景 / 获奖与其他。
+- resume.md 的格式规则（渲染器只认这些语法，外观由主题决定，不要在正文里写样式）：
+${RESUME_FORMAT}
 - 岗位定制简历：与岗位 1:1，文件名就是岗位的 jobId（用 job_list 把用户说的岗位对应到 id）。先读主简历，针对 JD 取舍改写，用 resume_tailored_write 按 jobId 存；遇到 P1 旧版按岗位名存的文件，读取后用 migrateFrom 一次性迁移成 jobId 键。改完说明你做了哪些取舍。
 - 面试话术也按 jobId 存（script_write / script_finalize）：结构按「自我介绍 / 项目深挖（预判 JD 相关的问题给要点式回答）/ 反问环节」组织；定稿锁定的是供引用的版本，之后仍可继续改。
 - 评分技能是后台任务：resume_job_evaluate（JD 匹配度）与 resume_integrity_check（主简历完整性）发起后不用等待，结果分别写进岗位的匹配度报告和简历的 reports/ 目录，告诉用户去哪看即可。
@@ -1352,7 +1347,8 @@ const JOB_WORKBENCH_INSTRUCTIONS = `你是 GoodJob 的岗位定制简历协作 A
 工作方式：
 - 动手前先用 job_info 看岗位 JD 与匹配度报告，用 resume_read 看主简历；已有定制稿时用 job_tailored_read 看当前版。
 - 定制简历与岗位 1:1：用 job_tailored_write 整体覆写（写入前系统自动快照旧版），必须写完整 Markdown，不要只写改动片段。
-- 版式与主简历相同：顶部 <table> 信息区、### ==章节== 高亮标题、#### 公司 | 职位 | 时间 竖线分段条目、<hr/> 分隔线；除信息表外不写 HTML。
+- 定制稿与主简历使用同一套格式规则：
+${RESUME_FORMAT}
 - 针对 JD 取舍：最匹配的经历放前面、成果量化、技能表述贴近 JD 关键词；JD 没要求的内容果断砍，不编造经历。
 - 面试话术也属于这个岗位：job_script_read / job_script_write（Markdown，结构按「自我介绍 / 项目深挖 / 反问环节」），定稿用 job_script_finalize——锁定的是供引用的版本，之后仍可继续编辑，改过会提示重新定稿。
 - 重新评估匹配度：让用户在岗位表点「简历评估」（后台任务会读你写好的定制稿），本会话没有评估工具。
