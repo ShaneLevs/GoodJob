@@ -73,6 +73,26 @@ export interface ModelsConfig {
   canStoreKey: boolean;
 }
 
+/**
+ * 从供应商接口读回来的模型条目（设置页「从接口获取」的候选列表）。
+ * 只带能确定的信息：接口没给的能力（推理 / 视觉）不回填，交给用户自己勾。
+ */
+export interface RemoteModelInfo {
+  /** 要填进模型 ID 的那个值（已去掉 Google 的 `models/` 前缀）。 */
+  id: string;
+  /** 接口给的展示名（Anthropic `display_name` / Google `displayName`），缺省等于 id。 */
+  name: string;
+  /** 接口报的上下文窗口（token），没报就不带。 */
+  contextWindow?: number;
+}
+
+/** 「测试连接」的回执：一句话结论 + 耗时，失败时 message 就是给人看的错误。 */
+export interface ModelProbeResult {
+  ok: boolean;
+  message: string;
+  latencyMs?: number;
+}
+
 export interface ProviderDraft extends ProviderConfig {
   /** `undefined` keeps the stored key, `null` clears it, a string replaces it. */
   apiKey?: string | null;

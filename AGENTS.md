@@ -143,7 +143,8 @@ src/main/       Electron 主进程
                 notify / preferences / workspaces / memory、domain/（companies / jobs /
                 applications / pipeline / interviews 一个实体一个文件）
   services/     tasks.ts（后台任务：简历评估 / 完整性评分）、notify.ts（SMTP / IMAP /
-                确认门 / 日报调度）、pdf-export.ts（printToPDF）
+                确认门 / 日报调度）、pdf-export.ts（printToPDF）、model-probe.ts
+                （设置页拉模型列表 / 测连通性）
   ipc/          index.ts + browser / chat / resume / domain / settings / workspace 分域注册
   workspace/    paths.ts（WorkspacePaths 登记）、uploads.ts（会话上传目录与文件读取）
 src/preload/    contextBridge -> window.goodjob

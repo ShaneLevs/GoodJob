@@ -42,7 +42,7 @@ interface ResumeEditorCardProps {
   emptyText: string;
   /** 导出 PDF 的预填文件名（不含扩展名）；缺省用简历名。 */
   exportFileName?: string;
-  /** 提供了才显示「完整性」按钮（打开完整性评分报告弹窗）；只有主简历有报告。 */
+  /** 提供了才显示「评测」按钮（打开主简历的评分报告弹窗）；只有主简历有报告。 */
   onOpenReport?: () => void;
 }
 
@@ -222,7 +222,7 @@ export function ResumeEditorCard({
           {onOpenReport !== undefined && (
             <Button variant="ghost" size="sm" className="text-muted-foreground" onClick={onOpenReport}>
               <Gauge />
-              完整性
+              评测
             </Button>
           )}
           <Button

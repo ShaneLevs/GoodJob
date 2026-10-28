@@ -25,8 +25,10 @@ import type {
   JobPatch,
   MarkdownSettings,
   ModelSelection,
+  ModelProbeResult,
   ModelsConfig,
   ModelsDraft,
+  RemoteModelInfo,
   NotificationDraft,
   NotificationSettings,
   NotifyTestRequest,
@@ -207,6 +209,10 @@ const api: GoodjobApi = {
       ipcRenderer.invoke(IPC.modelsSave, draft) as Promise<ModelsConfig>,
     selectDefault: (selection: ModelSelection | null) =>
       ipcRenderer.invoke(IPC.modelsSelect, selection) as Promise<ModelsConfig>,
+    probeList: (providerId: string) =>
+      ipcRenderer.invoke(IPC.modelsProbeList, providerId) as Promise<RemoteModelInfo[]>,
+    probeModel: (providerId: string, modelId: string) =>
+      ipcRenderer.invoke(IPC.modelsProbeTest, providerId, modelId) as Promise<ModelProbeResult>,
   },
   appearance: {
     get: () => ipcRenderer.invoke(IPC.appearanceGet) as Promise<AppearanceSettings>,

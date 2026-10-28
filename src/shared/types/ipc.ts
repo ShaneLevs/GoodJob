@@ -24,7 +24,7 @@ import type {
   PipelineDraft,
 } from "./domain";
 import type { PdfExportPayload, PdfExportResult } from "./export";
-import type { ModelSelection, ModelsConfig, ModelsDraft } from "./models";
+import type { ModelProbeResult, ModelSelection, ModelsConfig, ModelsDraft, RemoteModelInfo } from "./models";
 import type {
   DigestKind,
   DigestRunResult,
@@ -120,6 +120,8 @@ export const IPC = {
   modelsGet: "models:get",
   modelsSave: "models:save",
   modelsSelect: "models:select",
+  modelsProbeList: "models:probe-list",
+  modelsProbeTest: "models:probe-test",
   appearanceGet: "appearance:get",
   appearanceSave: "appearance:save",
   markdownGet: "markdown:get",
@@ -285,6 +287,13 @@ export interface GoodjobApi {
     save: (draft: ModelsDraft) => Promise<ModelsConfig>;
     /** 对话侧模型选择器：只改这个工作区的默认模型，不动供应商与 Key。 */
     selectDefault: (selection: ModelSelection | null) => Promise<ModelsConfig>;
+    /**
+     * 按供应商已存的端点与 Key 拉模型列表（设置页「添加模型」的候选）。
+     * 走 main 是因为 Key 只在 main 解密；渲染层拿不到明文。
+     */
+    probeList: (providerId: string) => Promise<RemoteModelInfo[]>;
+    /** 拿已存配置对一个模型发一次最小请求，只回结论与耗时。 */
+    probeModel: (providerId: string, modelId: string) => Promise<ModelProbeResult>;
   };
   appearance: {
     get: () => Promise<AppearanceSettings>;

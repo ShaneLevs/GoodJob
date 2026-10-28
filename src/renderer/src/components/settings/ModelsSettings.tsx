@@ -1,19 +1,26 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
+  ChevronDown,
   CircleAlert,
+  CircleCheck,
+  LoaderCircle,
   Pencil,
+  PlugZap,
   Plus,
+  RefreshCw,
   Settings2,
   Trash2,
 } from "lucide-react";
 
 import type {
   ModelEntry,
+  ModelProbeResult,
   ModelsConfig,
   ProviderConfig,
   ProviderDraft,
   PublicProvider,
+  RemoteModelInfo,
 } from "@shared/types";
 import { DEFAULT_CONTEXT_WINDOW, DEFAULT_MAX_OUTPUT_TOKENS } from "@shared/types";
 
@@ -55,6 +62,11 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -63,7 +75,7 @@ import {
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { formatContext } from "@/lib/format";
-import { cn } from "@/lib/utils";
+import { cn, ipcErrorMessage } from "@/lib/utils";
 
 import { PROTOCOL_OPTIONS, PROVIDER_PRESETS, type PresetModel } from "./presets";
 import { useAutoSave } from "./use-autosave";
@@ -156,6 +168,28 @@ export function ModelsSettings({ models, onSaved }: ModelsSettingsProps) {
   const patchProvider = (id: string, patch: Partial<ProviderEdit>): void => {
     scheduleSave(providersRef.current.map((item) => (item.id === id ? { ...item, ...patch } : item)));
   };
+
+  /*
+   * 两个「试一下」都只用**已落盘的**配置（Key 只在 main 解密，渲染层不参与）。
+   * 所以先 flush 一次自动保存：用户刚敲完 Base URL / Key 就点按钮时，
+   * 那 400ms 防抖里的改动也必须在盘上，否则会拿旧配置去请求。
+   */
+  const flush = autosave.flush;
+  const probeModels = useCallback(
+    async (providerId: string): Promise<RemoteModelInfo[]> => {
+      await flush();
+      return window.goodjob.models.probeList(providerId);
+    },
+    [flush],
+  );
+
+  const probeModel = useCallback(
+    async (providerId: string, modelId: string): Promise<ModelProbeResult> => {
+      await flush();
+      return window.goodjob.models.probeModel(providerId, modelId);
+    },
+    [flush],
+  );
 
   const addProvider = (presetKey: string): void => {
     const preset = PROVIDER_PRESETS.find((item) => item.key === presetKey);
@@ -293,6 +327,7 @@ export function ModelsSettings({ models, onSaved }: ModelsSettingsProps) {
               onRemove={() => removeProvider(provider.id)}
               onAddModel={() => setEditingModel({ providerId: provider.id, model: null })}
               onEditModel={(model) => setEditingModel({ providerId: provider.id, model })}
+              onTestModel={(modelId) => probeModel(provider.id, modelId)}
             />
           )}
         </div>
@@ -302,6 +337,9 @@ export function ModelsSettings({ models, onSaved }: ModelsSettingsProps) {
         open={editingModel !== null}
         model={editingModel?.model ?? null}
         onCancel={() => setEditingModel(null)}
+        onFetchModels={
+          editingModel === null ? undefined : () => probeModels(editingModel.providerId)
+        }
         onSubmit={(entry) => {
           if (editingModel === null) return;
           const target = providers.find((item) => item.id === editingModel.providerId);
@@ -334,6 +372,20 @@ interface ProviderFormProps {
   onRemove: () => void;
   onAddModel: () => void;
   onEditModel: (model: ModelEntry) => void;
+  /** 对一个已添加的模型发一次最小请求，验证端点 / Key / 模型 id 通不通。 */
+  onTestModel: (modelId: string) => Promise<ModelProbeResult>;
+}
+
+/** 某一行模型的探测状态：跑着的时候显示转圈，结束后一直留到最后一次结果面板。 */
+interface ModelProbeState {
+  running: boolean;
+  result?: ModelProbeResult;
+}
+
+/** 行内按钮的颜色：测过才染色（通过绿 / 失败红），没测过保持默认。 */
+function probeTone(result: ModelProbeResult | undefined): string {
+  if (result === undefined) return "";
+  return result.ok ? "text-emerald-600 dark:text-emerald-400" : "text-destructive";
 }
 
 function ProviderForm({
@@ -343,8 +395,26 @@ function ProviderForm({
   onRemove,
   onAddModel,
   onEditModel,
+  onTestModel,
 }: ProviderFormProps) {
   const pendingKey = provider.apiKey;
+  const [probes, setProbes] = useState<Record<string, ModelProbeState>>({});
+  /** 最后一条测试结果：模型多的时候行内放不下完整错误，单独一行展示。 */
+  const [lastProbe, setLastProbe] = useState<{ modelId: string; result: ModelProbeResult } | null>(
+    null,
+  );
+
+  const runTest = async (modelId: string): Promise<void> => {
+    setProbes((current) => ({ ...current, [modelId]: { running: true } }));
+    let result: ModelProbeResult;
+    try {
+      result = await onTestModel(modelId);
+    } catch (caught) {
+      result = { ok: false, message: ipcErrorMessage(caught) };
+    }
+    setProbes((current) => ({ ...current, [modelId]: { running: false, result } }));
+    setLastProbe({ modelId, result });
+  };
 
   return (
     <div className="flex flex-col gap-5">
@@ -388,14 +458,23 @@ function ProviderForm({
           onValueChange={(value) => onChange({ protocol: value as ProviderConfig["protocol"] })}
         >
           <SelectTrigger className="w-full" aria-label="API 格式">
-            <SelectValue />
+            {/* 触发器只显示格式名：默认会把两行选项文字整块搬进来，溢出 32px 的行高。 */}
+            <SelectValue>
+              {PROTOCOL_OPTIONS.find((option) => option.value === provider.protocol)?.label ??
+                "选择 API 格式"}
+            </SelectValue>
           </SelectTrigger>
-          <SelectContent>
+          {/*
+           * 选项是两行（格式 + 一句话说明），所以：
+           * - popper 定位：item-aligned 会把选中项顶到触发器上，列表整体上移顶到框外；
+           * - 每项 py-2：36px 的行高放不下两行文字 + 上下间距。
+           */}
+          <SelectContent position="popper" align="start">
             {PROTOCOL_OPTIONS.map((option) => (
-              <SelectItem key={option.value} value={option.value}>
-                <span className="flex flex-col items-start">
+              <SelectItem key={option.value} value={option.value} className="py-2">
+                <span className="flex flex-col items-start gap-0.5">
                   <span className="text-sm">{option.label}</span>
-                  <span className="text-xs text-muted-foreground">{option.hint}</span>
+                  <span className="text-xs leading-snug text-muted-foreground">{option.hint}</span>
                 </span>
               </SelectItem>
             ))}
@@ -486,6 +565,20 @@ function ProviderForm({
               <Button
                 variant="ghost"
                 size="icon-xs"
+                aria-label={`测试连接 ${model.id}`}
+                title="测试连接"
+                disabled={probes[model.id]?.running === true}
+                onClick={() => void runTest(model.id)}
+              >
+                {probes[model.id]?.running === true ? (
+                  <LoaderCircle className="animate-spin" />
+                ) : (
+                  <PlugZap className={probeTone(probes[model.id]?.result)} />
+                )}
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon-xs"
                 aria-label="编辑模型"
                 onClick={() => onEditModel(model)}
               >
@@ -503,6 +596,39 @@ function ProviderForm({
           ))}
         </div>
       )}
+
+      {lastProbe !== null && <ProbeResultLine modelId={lastProbe.modelId} result={lastProbe.result} />}
+    </div>
+  );
+}
+
+function ProbeResultLine({
+  modelId,
+  result,
+}: {
+  modelId: string;
+  result: ModelProbeResult;
+}) {
+  return (
+    <div
+      data-slot="probe-result"
+      className={cn(
+        "flex items-start gap-2 rounded-lg px-3 py-2 text-xs",
+        result.ok
+          ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
+          : "border border-destructive/30 bg-destructive/10 text-destructive",
+      )}
+    >
+      {result.ok ? (
+        <CircleCheck className="mt-0.5 size-3.5 shrink-0" />
+      ) : (
+        <CircleAlert className="mt-0.5 size-3.5 shrink-0" />
+      )}
+      <span className="min-w-0 break-words">
+        <span className="font-mono">{modelId}</span>
+        <span className="mx-1.5 opacity-50">·</span>
+        {result.message}
+      </span>
     </div>
   );
 }
@@ -549,9 +675,11 @@ interface ModelEditorProps {
   model: ModelEntry | null;
   onCancel: () => void;
   onSubmit: (model: ModelEntry) => void;
+  /** 从这个供应商的接口读候选模型；拿不到时仍可手填模型 ID。 */
+  onFetchModels?: () => Promise<RemoteModelInfo[]>;
 }
 
-function ModelEditor({ open, model, onCancel, onSubmit }: ModelEditorProps) {
+function ModelEditor({ open, model, onCancel, onSubmit, onFetchModels }: ModelEditorProps) {
   const [id, setId] = useState("");
   const [name, setName] = useState("");
   const [contextWindow, setContextWindow] = useState("");
@@ -559,6 +687,13 @@ function ModelEditor({ open, model, onCancel, onSubmit }: ModelEditorProps) {
   const [vision, setVision] = useState(false);
   const [reasoning, setReasoning] = useState(false);
   const [enabled, setEnabled] = useState(true);
+
+  // 模型 ID 的可选项：从供应商接口读一次，选完不重复读（要重读有刷新按钮）。
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [remote, setRemote] = useState<RemoteModelInfo[] | null>(null);
+  const [fetching, setFetching] = useState(false);
+  const [fetchError, setFetchError] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
 
   // 每次打开都用当前模型重置表单。
   useEffect(() => {
@@ -572,7 +707,48 @@ function ModelEditor({ open, model, onCancel, onSubmit }: ModelEditorProps) {
     setVision(model?.vision === true);
     setReasoning(model?.reasoning === true);
     setEnabled(model?.enabled !== false);
+    setPickerOpen(false);
+    setRemote(null);
+    setFetchError(null);
+    setFetching(false);
+    setQuery("");
   }, [open, model]);
+
+  const loadModels = async (): Promise<void> => {
+    if (onFetchModels === undefined || fetching) return;
+    setFetching(true);
+    setFetchError(null);
+    try {
+      setRemote(await onFetchModels());
+    } catch (caught) {
+      setRemote([]);
+      setFetchError(ipcErrorMessage(caught));
+    } finally {
+      setFetching(false);
+    }
+  };
+
+  /** 选中一个候选：填 ID，顺手把空的展示名 / 上下文窗口补上。 */
+  const pick = (item: RemoteModelInfo): void => {
+    setId(item.id);
+    if (name.trim() === "" && item.name !== item.id) setName(item.name);
+    if (contextWindow.trim() === "" && item.contextWindow !== undefined) {
+      setContextWindow(String(item.contextWindow));
+    }
+    setPickerOpen(false);
+  };
+
+  const keyword = query.trim().toLowerCase();
+  const candidates =
+    remote === null
+      ? []
+      : keyword === ""
+        ? remote
+        : remote.filter(
+            (item) =>
+              item.id.toLowerCase().includes(keyword) ||
+              item.name.toLowerCase().includes(keyword),
+          );
 
   const submit = (): void => {
     const trimmedId = id.trim();
@@ -612,13 +788,123 @@ function ModelEditor({ open, model, onCancel, onSubmit }: ModelEditorProps) {
             <Label htmlFor="model-id" className="text-xs text-muted-foreground">
               模型 ID
             </Label>
-            <Input
-              id="model-id"
-              spellCheck={false}
-              value={id}
-              placeholder="例如 gpt-4o、claude-sonnet-4-5"
-              onChange={(event) => setId(event.target.value)}
-            />
+            {/* 输入框 + 下拉：可以直接手填，也可以从供应商的 /models 里选一个。 */}
+            <div className="flex items-center gap-1.5">
+              <Input
+                id="model-id"
+                spellCheck={false}
+                className="flex-1"
+                value={id}
+                placeholder="例如 gpt-4o、claude-sonnet-4-5"
+                onChange={(event) => setId(event.target.value)}
+              />
+              <Popover
+                open={pickerOpen}
+                onOpenChange={(next) => {
+                  setPickerOpen(next);
+                  if (next && remote === null) void loadModels();
+                }}
+              >
+                <PopoverTrigger asChild>
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    aria-label="从接口选择模型"
+                    title="从接口读取模型列表"
+                    disabled={onFetchModels === undefined}
+                  >
+                    <ChevronDown />
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent align="end" side="bottom" className="w-80 gap-2 p-2">
+                  <div className="flex items-center justify-between gap-2 px-1">
+                    <span className="text-xs text-muted-foreground">
+                      {fetchError !== null
+                        ? "读取失败"
+                        : remote === null
+                          ? "从接口读取模型"
+                          : keyword === ""
+                            ? `共 ${remote.length} 个模型`
+                            : `${candidates.length} / ${remote.length}`}
+                    </span>
+                    <Button
+                      variant="ghost"
+                      size="icon-xs"
+                      aria-label="重新获取模型列表"
+                      title="重新获取"
+                      disabled={fetching}
+                      onClick={() => void loadModels()}
+                    >
+                      <RefreshCw className={cn(fetching && "animate-spin")} />
+                    </Button>
+                  </div>
+
+                  <Input
+                    autoFocus
+                    spellCheck={false}
+                    className="h-7"
+                    value={query}
+                    placeholder="筛选模型…"
+                    onChange={(event) => setQuery(event.target.value)}
+                  />
+
+                  {fetchError !== null && (
+                    <p className="px-1 text-xs leading-relaxed break-words text-destructive">
+                      {fetchError}
+                    </p>
+                  )}
+
+                  {fetching && remote === null ? (
+                    <div className="flex items-center justify-center gap-2 py-6 text-xs text-muted-foreground">
+                      <LoaderCircle className="size-3.5 animate-spin" />
+                      正在读取…
+                    </div>
+                  ) : candidates.length === 0 ? (
+                    <p className="px-1 py-4 text-center text-xs text-muted-foreground">
+                      {fetchError !== null
+                        ? "可以直接手填模型 ID。"
+                        : keyword === ""
+                          ? "没有可选的模型，可以直接手填模型 ID。"
+                          : "没有匹配的模型。"}
+                    </p>
+                  ) : (
+                    <div className="max-h-64 overflow-y-auto">
+                      {candidates.map((item) => (
+                        <button
+                          key={item.id}
+                          type="button"
+                          onClick={() => pick(item)}
+                          className={cn(
+                            "flex w-full flex-col items-start gap-0.5 rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-accent",
+                            item.id === id.trim() && "bg-accent",
+                          )}
+                        >
+                          <span className="flex w-full items-center gap-2">
+                            <span className="min-w-0 flex-1 truncate text-xs font-medium">
+                              {item.name}
+                            </span>
+                            {item.contextWindow !== undefined && (
+                              <span className="shrink-0 text-[10px] text-muted-foreground">
+                                {formatContext(item.contextWindow)}
+                              </span>
+                            )}
+                          </span>
+                          {/* 展示名和 ID 一样时不重复写两行。 */}
+                          {item.name !== item.id && (
+                            <span className="w-full truncate font-mono text-[11px] text-muted-foreground">
+                              {item.id}
+                            </span>
+                          )}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </PopoverContent>
+              </Popover>
+            </div>
+            <p className="text-[11px] leading-relaxed text-muted-foreground">
+              可以从接口读取列表里选，也可以直接手填任意模型 ID。
+            </p>
           </div>
 
           <div className="flex flex-col gap-1.5">

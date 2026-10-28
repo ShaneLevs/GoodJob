@@ -16,6 +16,7 @@ import {
 
 import { listSkillInfos } from "../agent/skills";
 import { exportPdf } from "../services/pdf-export";
+import { fetchModelList, testModel } from "../services/model-probe";
 import type { IpcDeps } from "./deps";
 
 export function registerSettingsIpc(deps: IpcDeps): void {
@@ -56,6 +57,20 @@ export function registerSettingsIpc(deps: IpcDeps): void {
   ipcMain.handle(IPC.modelsSelect, (_event, selection: ModelSelection | null) =>
     models.selectDefault(selection),
   );
+
+  // —— 设置页的两个「试一下」：拉模型列表 + 测连通性。
+  // 两者都只用已存配置：设置页在发请求前会先 flush 一次自动保存，
+  // 所以用户刚敲进去的 Base URL / Key 已经在盘上了。
+  ipcMain.handle(IPC.modelsProbeList, (_event, providerId: string) => {
+    const provider = models.resolveProvider(providerId);
+    if (provider === null) throw new Error("这个供应商还没有保存，稍等一下再试。");
+    return fetchModelList(provider);
+  });
+  ipcMain.handle(IPC.modelsProbeTest, (_event, providerId: string, modelId: string) => {
+    const target = models.resolveModel(providerId, modelId);
+    if (target === null) throw new Error("这个模型还没有保存，稍等一下再试。");
+    return testModel(target);
+  });
 
   ipcMain.handle(IPC.appearanceGet, () => preferences.appearance);
   ipcMain.handle(IPC.appearanceSave, (_event, patch: Partial<AppearanceSettings>) =>

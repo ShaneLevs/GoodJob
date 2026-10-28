@@ -81,7 +81,10 @@ function SelectContent({
         <SelectPrimitive.Viewport
           data-position={position}
           className={cn(
-            "data-[position=popper]:h-(--radix-select-trigger-height) data-[position=popper]:w-full data-[position=popper]:min-w-(--radix-select-trigger-width)",
+            // 上游 registry 在 popper 模式下给视口写死了 h-(--radix-select-trigger-height)
+            // （= 触发器高度），多行选项会被压成一行的高度直接裁掉；这里只留宽度约束，
+            // 高度交给内容自己决定，超出时由 Content 的 max-h + overflow-y-auto 滚动。
+            "data-[position=popper]:w-full data-[position=popper]:min-w-(--radix-select-trigger-width)",
             position === "popper" && ""
           )}
         >

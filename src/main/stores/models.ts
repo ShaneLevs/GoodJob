@@ -70,6 +70,15 @@ export interface ResolvedModel {
   vision: boolean;
 }
 
+/** 供应商级凭证（设置页「获取模型列表」只要这些，跟具体模型无关）。 */
+export interface ResolvedProvider {
+  providerId: string;
+  providerName: string;
+  protocol: ProviderProtocol;
+  baseURL: string;
+  apiKey: string;
+}
+
 /**
  * Persists model providers in `<workspace>/models.json` (0600). 一个文件装下
  * 该工作区的全部供应商、模型和默认选择；切换工作区只是换一个文件重读。
@@ -176,23 +185,50 @@ export class ModelsStore {
   resolveActive(): ResolvedModel | null {
     const active = this.pickActive();
     if (active === null) return null;
+    return this.toResolved(active.provider, active.model);
+  }
 
-    const apiKey = this.decrypt(active.provider);
-    const missingApiKey = apiKey === null && requiresApiKey(active.provider.baseURL);
+  /**
+   * 指定供应商 + 模型（设置页「测试连接」用）。**不看 enabled**：
+   * 停用只是不让对话选它，用户照样可以试探它通不通。
+   */
+  resolveModel(providerId: string, modelId: string): ResolvedModel | null {
+    const provider = this.doc.providers.find((item) => item.id === providerId);
+    const model = provider?.models.find((item) => item.id === modelId);
+    if (provider === undefined || model === undefined) return null;
+    return this.toResolved(provider, model);
+  }
+
+  /** 供应商级凭证（设置页「获取模型列表」用；Key 只在 main 解密，不回流渲染层）。 */
+  resolveProvider(providerId: string): ResolvedProvider | null {
+    const provider = this.doc.providers.find((item) => item.id === providerId);
+    if (provider === undefined) return null;
+    return {
+      providerId: provider.id,
+      providerName: provider.name,
+      protocol: provider.protocol,
+      baseURL: provider.baseURL,
+      apiKey: this.decrypt(provider) ?? KEYLESS_PLACEHOLDER,
+    };
+  }
+
+  private toResolved(provider: StoredProvider, model: ModelEntry): ResolvedModel {
+    const apiKey = this.decrypt(provider);
+    const missingApiKey = apiKey === null && requiresApiKey(provider.baseURL);
 
     return {
-      providerId: active.provider.id,
-      providerName: active.provider.name,
-      protocol: active.provider.protocol,
-      baseURL: active.provider.baseURL,
+      providerId: provider.id,
+      providerName: provider.name,
+      protocol: provider.protocol,
+      baseURL: provider.baseURL,
       apiKey: apiKey ?? KEYLESS_PLACEHOLDER,
       missingApiKey,
-      modelId: active.model.id,
-      modelName: normalizeModelName(active.model),
-      contextWindow: active.model.contextWindow,
-      maxOutputTokens: active.model.maxOutputTokens,
-      reasoning: active.model.reasoning === true,
-      vision: active.model.vision === true,
+      modelId: model.id,
+      modelName: normalizeModelName(model),
+      contextWindow: model.contextWindow,
+      maxOutputTokens: model.maxOutputTokens,
+      reasoning: model.reasoning === true,
+      vision: model.vision === true,
     };
   }
 
