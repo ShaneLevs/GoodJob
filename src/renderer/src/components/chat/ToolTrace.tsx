@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from "react";
 
 import type { UIMessage } from "ai";
 
-import { Button } from "@/components/ui/button";
 import {
   CodeBlock,
   CodeBlockActions,
@@ -121,7 +120,7 @@ const TOOL_SPECIAL: Record<string, string> = {
   browser_submit: "提交表单",
 };
 
-function toolLabel(name: string): string {
+export function toolLabel(name: string): string {
   const special = TOOL_SPECIAL[name];
   if (special !== undefined) return special;
   const segments = name.split("_");
@@ -141,29 +140,38 @@ function valueText(value: unknown): string {
 /**
  * 一轮 run 的「工作过程」：思考 + 工具调用 + 中间正文整段折成一行「已工作 X 分 Y 秒」。
  * 跑的时候默认展开（看得见在动），这轮结束后默认收起；点标题随时展开。
+ *
+ * `pending`（有工具在等批准）也算「还在工作」：等待时既不能收起——否则批准按钮
+ * 跟着折叠一起消失，用户以为这轮已经跑完了——标题也不能写「已工作」。
  */
 export function WorkBlock({
   groups,
   streaming,
+  pending,
   tailPart,
   elapsedMs,
-  onRespond,
 }: {
   groups: TraceGroup[];
   streaming: boolean;
+  /** 这一轮里有工具在等用户批准。 */
+  pending: boolean;
   tailPart: UIMessage["parts"][number] | undefined;
   elapsedMs: number | null;
-  onRespond?: (approvalId: string, approved: boolean) => void;
 }) {
   const [open, setOpen] = useState<boolean>();
+  const active = streaming || pending;
 
   return (
-    <TraceCollapsible open={open ?? streaming} onOpenChange={setOpen}>
+    <TraceCollapsible open={open ?? active} onOpenChange={setOpen}>
       <div className="border-b border-border/60 pb-2">
         <TraceCollapsibleTrigger>
           <TraceLine status={streaming ? "running" : undefined}>
             <TraceTitle>
-              {elapsedMs === null ? "工作过程" : `已工作 ${formatWorkDuration(elapsedMs)}`}
+              {pending
+                ? "等待批准"
+                : elapsedMs === null
+                  ? "工作过程"
+                  : `已工作 ${formatWorkDuration(elapsedMs)}`}
             </TraceTitle>
           </TraceLine>
         </TraceCollapsibleTrigger>
@@ -184,11 +192,7 @@ export function WorkBlock({
                     streaming={streaming && part === tailPart && part.state !== "done"}
                   />
                 ) : (
-                  <ToolRow
-                    key={`${group.key}-${index}`}
-                    part={part as unknown as ToolPartView}
-                    onRespond={onRespond}
-                  />
+                  <ToolRow key={`${group.key}-${index}`} part={part as unknown as ToolPartView} />
                 ),
               )
             ),
@@ -254,14 +258,9 @@ function ReasoningRow({ text, streaming }: { text: string; streaming: boolean })
 }
 
 /** 一条工具调用：标题是「运行 + 中文工具名」，无图标；输入 / 输出 / 错误折在行内。
- *  执行中展开，完成后默认收起。 */
-function ToolRow({
-  part,
-  onRespond,
-}: {
-  part: ToolPartView;
-  onRespond?: (approvalId: string, approved: boolean) => void;
-}) {
+ *  执行中展开，完成后默认收起。等待批准时只留一行状态——批准 / 拒绝的按钮跟
+ *  `ApprovalCard` 一起待在思维链外面（见 AI Elements 的 confirmation）。 */
+function ToolRow({ part }: { part: ToolPartView }) {
   const [open, setOpen] = useState<boolean>();
   const name = part.type.slice("tool-".length);
   const label = toolLabel(name);
@@ -314,32 +313,6 @@ function ToolRow({
         </TraceCollapsible>
       ) : (
         line
-      )}
-
-      {/* 审批动作不收进折叠区：等待批准要一眼可见、一次点按完成。 */}
-      {waiting && onRespond !== undefined && part.approval !== undefined && (
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-2 ps-6">
-          <span className="min-w-0 flex-1 text-xs leading-relaxed text-muted-foreground">
-            {part.approval.requestReason ?? "这个动作在等你批准后才会执行。"}
-          </span>
-          <div className="flex shrink-0 gap-1.5">
-            <Button
-              size="sm"
-              variant="outline"
-              className="h-7 text-xs"
-              onClick={() => onRespond(part.approval!.id, false)}
-            >
-              拒绝
-            </Button>
-            <Button
-              size="sm"
-              className="h-7 text-xs"
-              onClick={() => onRespond(part.approval!.id, true)}
-            >
-              批准
-            </Button>
-          </div>
-        </div>
       )}
     </div>
   );

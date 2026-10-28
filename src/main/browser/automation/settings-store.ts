@@ -30,6 +30,8 @@ interface SiteUsage {
 interface StoredSettings {
   version: number;
   enabled: boolean;
+  /** 自动通过所有需要审批的工具（浏览器动作 + 外发邮件）。 */
+  autoApprove: boolean;
   submit: { dailyLimitPerSite: number; minIntervalSeconds: number };
   usage: Record<string, SiteUsage>;
 }
@@ -60,6 +62,7 @@ export class BrowserAgentSettingsStore {
   toPublic(): BrowserAgentSettings {
     return {
       enabled: this.doc.enabled,
+      autoApprove: this.doc.autoApprove,
       submit: {
         dailyLimitPerSite: this.doc.submit.dailyLimitPerSite,
         minIntervalSeconds: this.doc.submit.minIntervalSeconds,
@@ -72,8 +75,14 @@ export class BrowserAgentSettingsStore {
     return this.doc.enabled;
   }
 
+  /** 自动通过所有审批（设置页的「自动通过所有请求」）。 */
+  isAutoApprove(): boolean {
+    return this.doc.autoApprove;
+  }
+
   save(draft: BrowserAgentSettingsDraft): BrowserAgentSettings {
     if (draft.enabled !== undefined) this.doc.enabled = draft.enabled === true;
+    if (draft.autoApprove !== undefined) this.doc.autoApprove = draft.autoApprove === true;
     if (draft.submit !== undefined) {
       if (draft.submit.dailyLimitPerSite !== undefined) {
         this.doc.submit.dailyLimitPerSite = clampInt(
@@ -158,7 +167,8 @@ export class BrowserAgentSettingsStore {
   private read(): StoredSettings {
     const fallback: StoredSettings = {
       version: VERSION,
-      enabled: false,
+      enabled: true,
+      autoApprove: false,
       submit: {
         dailyLimitPerSite: DEFAULT_DAILY_LIMIT_PER_SITE,
         minIntervalSeconds: DEFAULT_MIN_INTERVAL_SECONDS,
@@ -169,7 +179,9 @@ export class BrowserAgentSettingsStore {
       const raw = JSON.parse(fs.readFileSync(this.workspace.agentBrowser, "utf8")) as Partial<StoredSettings>;
       return {
         version: VERSION,
-        enabled: raw.enabled === true,
+        // 首次启用是默认开的：没写过这个字段不等于「用户关掉了」。
+        enabled: raw.enabled !== false,
+        autoApprove: raw.autoApprove === true,
         submit: {
           dailyLimitPerSite: clampInt(
             raw.submit?.dailyLimitPerSite,

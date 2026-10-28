@@ -35,6 +35,7 @@ import type {
   NotifyTestResult,
   DigestKind,
   DigestRunResult,
+  DomainChangedEvent,
   PdfExportPayload,
   PdfExportResult,
   PipelineConfig,
@@ -104,8 +105,8 @@ const api: GoodjobApi = {
   conversations: {
     get: (key: ConversationKey) =>
       ipcRenderer.invoke(IPC.conversationsGet, key) as Promise<ConversationState>,
-    sync: (key: ConversationKey, messages: WireMessage[]) =>
-      ipcRenderer.invoke(IPC.conversationsSync, key, messages) as Promise<void>,
+    sync: (key: ConversationKey, messages: WireMessage[], workspaceId?: string) =>
+      ipcRenderer.invoke(IPC.conversationsSync, key, messages, workspaceId) as Promise<void>,
   },
   resume: {
     list: () => ipcRenderer.invoke(IPC.resumeList) as Promise<ResumeListState>,
@@ -139,6 +140,10 @@ const api: GoodjobApi = {
     },
     integrityReports: (resumeId: string) =>
       ipcRenderer.invoke(IPC.resumeIntegrityReports, resumeId) as Promise<IntegrityReport[]>,
+  },
+  domain: {
+    onChanged: (listener: (event: DomainChangedEvent) => void) =>
+      subscribe(IPC.domainChanged, listener),
   },
   companies: {
     list: () => ipcRenderer.invoke(IPC.companiesList) as Promise<Company[]>,

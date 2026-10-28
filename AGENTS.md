@@ -114,9 +114,14 @@ AI SDK 4/5，本项目跑 Tailwind 4 + AI SDK 7，都是破坏性版本）。
   而内容块才是被呈现的东西。选中项用 `bg-foreground/[0.07]`（`bg-accent` 在这个底色上看不出来）。
 - **内容块是白色卡片**：`rounded-2xl bg-card shadow-sm`，不带描边（靠 `--shell` 与 `--card`
   的明度差区分）。只有一块 —— 模块页独占它，没有并列的第二块。
-- **浏览器是盖在内容块上的浮层**：顶栏地球图标或 `agent:pane-open` 事件打开，
-  用 `absolute inset-0` 铺满同一个矩形（WebContentsView 需要一块矩形落位），
+- **浏览器是盖在内容块上的浮层**：顶栏地球图标打开，或用 `agent:pane-open` 事件
+  打开，用 `absolute inset-0` 铺满同一个矩形（WebContentsView 需要一块矩形落位），
   模块页留在下层不卸载，否则它的会话与「让 Agent 接管」监听会断。
+  **Agent 在后台跑不弹面板**（顶栏地球图标亮「agent 控制中」），只有用户批准了
+  浏览器写动作（点击 / 填写 / 提交）才自动打开——那时他才需要看见 Agent 在点什么。
+- **模块页常驻**：第一次进入才挂载，之后切模块只改 `visible / invisible`，不卸载。
+  会话状态住在页面里的 `useChat` 实例上，`useChat` 卸载会 `stop()` → main abort，
+  整轮对话就废了。同理岗位表与二级工作台同时挂着，钻进岗位不打断表格那边的对话。
 - **不要往卡片里塞折叠把手**：收起/展开只在顶栏，卡片内部只放内容自身的控件。
 - 对话内容列 `max-w-3xl` 居中，容器变窄只收窄容器，不改变内容列宽。
 
@@ -205,7 +210,8 @@ scripts/        图标管线：make-icons.mjs 用 Electron 渲染 build/icon-dra
       notifications.json    0600  通知配置（P3 M3）：SMTP / IMAP 账户 + 日报 / 周报
                                   调度；密码 safeStorage 密文，跟随工作区（不同工作区
                                   可对不同邮箱），渲染层只见 hasPassword
-      agent-browser.json    0600  浏览器自动化设置（P4）：启用开关 + 提交限速参数 +
+      agent-browser.json    0600  浏览器自动化设置（P4）：启用开关（默认开）+
+                                  自动通过所有请求（默认关）+ 提交限速参数 +
                                   单站提交记账（每日上限按本地日历日重置）
       browser-playbooks.md  0600  投递平台适配指令模板（P4，用户手编），Agent 投递前读进指令
       memory.md             0600  工作区级长期记忆，Agent 每次会话注入 instructions

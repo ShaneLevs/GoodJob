@@ -30,7 +30,8 @@ export function companyTools(deps: AgentDeps): ToolSet {
       },
     }),
     company_create: tool({
-      description: "新建公司（名称必填）。",
+      description:
+        "新建公司（名称必填）。同名公司（忽略大小写 / 空格 / 「有限公司」这类后缀）已存在时直接返回它，不重复建档。",
       inputSchema: z.object({
         name: z.string(),
         industry: z.string().optional(),
@@ -39,7 +40,7 @@ export function companyTools(deps: AgentDeps): ToolSet {
         website: z.string().optional(),
         source: z.string().optional(),
       }),
-      execute: (patch) => companies.create(patch),
+      execute: (patch) => companies.ensure(patch),
     }),
     company_update: tool({
       description: "更新公司资料；research 写调研快照（Markdown，标注来源）。只传要改的字段。",
@@ -89,32 +90,40 @@ export function jobTools(deps: AgentDeps): ToolSet {
     }),
     job_create: tool({
       description:
-        "新建岗位（标题必填）。用户粘贴的 JD 整理成 Markdown 存 jd；companyId 必须是 company_list 里的真实 id。",
+        "新建岗位（标题必填）。用户粘贴的 JD 整理成 Markdown 存 jd。" +
+        "公司优先用 companyName 传你从 JD / 页面识别出的公司名：main 会按名字去重关联，" +
+        "公司库里没有就自动建一条（返回里会说明是新建还是关联）。companyId 只在已经确定要关联哪条档案时用。",
       inputSchema: z.object({
         title: z.string(),
+        companyName: z.string().optional(),
         companyId: z.string().optional(),
         url: z.string().optional(),
         salaryBand: z.string().optional(),
         jd: z.string().optional(),
       }),
-      execute: (patch) => {
-        const job = jobs.create(patch);
-        return job;
+      execute: ({ companyName, ...patch }) => {
+        const company = ensureCompanyByName(deps, companyName);
+        const job = jobs.create(company === null ? patch : { ...patch, companyId: company.id });
+        return company === null ? { job } : { job, company };
       },
     }),
     job_update: tool({
-      description: "更新岗位资料，只传要改的字段。匹配度报告由评估任务写入，不在这里改。",
+      description:
+        "更新岗位资料，只传要改的字段。匹配度报告由评估任务写入，不在这里改。" +
+        "给没关联公司的岗位补关联时传 companyName（同名去重，没有就建）。",
       inputSchema: z.object({
         id: z.string(),
+        companyName: z.string().optional(),
         companyId: z.string().nullable().optional(),
         title: z.string().optional(),
         url: z.string().optional(),
         salaryBand: z.string().optional(),
         jd: z.string().optional(),
       }),
-      execute: ({ id, ...patch }) => {
-        const job = jobs.update(id, patch);
-        return job;
+      execute: ({ id, companyName, ...patch }) => {
+        const company = ensureCompanyByName(deps, companyName);
+        const job = jobs.update(id, company === null ? patch : { ...patch, companyId: company.id });
+        return company === null ? { job } : { job, company };
       },
     }),
     job_delete: tool({
@@ -179,4 +188,18 @@ export function applicationTools(deps: AgentDeps): ToolSet {
       execute: () => pipeline.get(),
     }),
   };
+}
+
+/**
+ * 岗位建档时的「公司自动入库」：模型识别出的公司名优先于它给的 id。
+ * 返回 null 表示这次没交公司名，让调用方沿用原来的 companyId 语义。
+ */
+function ensureCompanyByName(
+  deps: AgentDeps,
+  name: string | undefined,
+): { id: string; name: string; created: boolean } | null {
+  const trimmed = (name ?? "").trim();
+  if (trimmed === "") return null;
+  const { company, created } = deps.companies.ensure({ name: trimmed });
+  return { id: company.id, name: company.name, created };
 }

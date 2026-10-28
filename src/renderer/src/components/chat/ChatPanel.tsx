@@ -26,8 +26,9 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/
 import { formatDuration } from "@/lib/format";
 
 import { AssistantMarkdown } from "./AssistantMarkdown";
+import { ApprovalCard, isBrowserWriteTool } from "./ApprovalCard";
 import { Composer } from "./Composer";
-import { groupTraceParts, WorkBlock } from "./ToolTrace";
+import { groupTraceParts, WorkBlock, type ToolPartView } from "./ToolTrace";
 import { UploadAttachment } from "./UploadAttachment";
 
 interface ChatPanelProps {
@@ -52,10 +53,12 @@ interface ChatPanelProps {
    */
   allowUpload?: boolean;
   /**
-   * 工具审批（P3 M3）：「等待批准」的工具条上给批准 / 拒绝按钮，回填后自动续跑。
+   * 工具审批（P3 M3）：「等待批准」的工具在上面的卡片上给批准 / 拒绝按钮，回填后自动续跑。
    * 不传时等待态只显示状态、不给按钮。
    */
   onApprovalResponse?: (approvalId: string, approved: boolean) => void;
+  /** 批准浏览器写动作时把浏览器面板打开，让用户看得见 Agent 在点什么。 */
+  onOpenBrowser?: () => void;
   /** 会话 key：用来查上下文用量（用量只在 main 算，界面只展示 / 触发压缩）。 */
   conversationKey?: ConversationKey;
 }
@@ -131,6 +134,7 @@ export function ChatPanel({
   placeholder = "说说你想找什么岗位，或者直接问我",
   allowUpload = true,
   onApprovalResponse,
+  onOpenBrowser,
   conversationKey,
 }: ChatPanelProps) {
   const busy = status === "submitted" || status === "streaming";
@@ -232,12 +236,26 @@ export function ChatPanel({
                   // 就说明那段思考已经结束，不能再跟着整轮 busy 一直显示「思考中」。
                   const tailPart = message.parts[message.parts.length - 1];
                   const groups = groupTraceParts(message.parts);
+                  // 等待批准的工具不进思维链：它们是「等你回答的问题」，不是活动。
+                  const pendingParts = message.parts.filter((part) => {
+                    const view = part as unknown as ToolPartView;
+                    return (
+                      view.type.startsWith("tool-") &&
+                      view.state === "approval-requested" &&
+                      view.approval !== undefined &&
+                      view.approval.isAutomatic !== true
+                    );
+                  }) as unknown as ToolPartView[];
                   // 最后一块正文是这轮的答复（留在外面），它前面的思考 / 工具 / 中间正文
                   // 全部打包进「工作过程」。
                   const last = groups[groups.length - 1];
                   const answer = last !== undefined && last.kind === "text" ? last : null;
                   const work = answer === null ? groups : groups.slice(0, -1);
-                  const showFooter = !(isLast && busy) && (duration !== null || fullText !== "");
+                  // 等批准的这轮不算「完成」：不显示耗时 / 复制页脚，免得读成已经收尾。
+                  const showFooter =
+                    !(isLast && busy) &&
+                    pendingParts.length === 0 &&
+                    (duration !== null || fullText !== "");
 
                   return (
                     <Fragment key={message.id}>
@@ -248,11 +266,29 @@ export function ChatPanel({
                               <WorkBlock
                                 groups={work}
                                 streaming={streaming}
+                                pending={pendingParts.length > 0}
                                 tailPart={tailPart}
                                 elapsedMs={streaming ? busySeconds * 1000 : duration}
-                                onRespond={onApprovalResponse}
                               />
                             )}
+
+                            {pendingParts.map((part) => {
+                              const name = part.type.slice("tool-".length);
+                              const approval = part.approval!;
+                              return (
+                                <ApprovalCard
+                                  key={approval.id}
+                                  toolName={name}
+                                  input={part.input}
+                                  requestReason={approval.requestReason}
+                                  onRespond={(approved) => {
+                                    // 先开面板再回填：用户才能看见接下来那一下点在哪。
+                                    if (approved && isBrowserWriteTool(name)) onOpenBrowser?.();
+                                    onApprovalResponse?.(approval.id, approved);
+                                  }}
+                                />
+                              );
+                            })}
 
                             {answer !== null && (
                               <AssistantMarkdown streaming={isLast && status === "streaming"}>

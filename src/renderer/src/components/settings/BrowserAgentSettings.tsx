@@ -14,6 +14,7 @@ import { useAutoSave } from "./use-autosave";
 /** 表单草稿：数字框留字符串，空着 / 打字中途都不算可保存的值。 */
 interface AgentForm {
   enabled: boolean;
+  autoApprove: boolean;
   dailyLimit: string;
   intervalSeconds: string;
 }
@@ -21,6 +22,7 @@ interface AgentForm {
 /** 落盘快照：只有两个数字都解析成功时才会排进自动保存。 */
 interface AgentSnapshot {
   enabled: boolean;
+  autoApprove: boolean;
   dailyLimit: number;
   intervalSeconds: number;
 }
@@ -50,6 +52,7 @@ export function BrowserAgentSettings() {
         setSettings(next);
         setForm({
           enabled: next.enabled,
+          autoApprove: next.autoApprove,
           dailyLimit: String(next.submit.dailyLimitPerSite),
           intervalSeconds: String(next.submit.minIntervalSeconds),
         });
@@ -65,6 +68,7 @@ export function BrowserAgentSettings() {
   const save = useCallback(async (snapshot: AgentSnapshot): Promise<void> => {
     const next = await window.goodjob.agent.saveSettings({
       enabled: snapshot.enabled,
+      autoApprove: snapshot.autoApprove,
       submit: {
         dailyLimitPerSite: snapshot.dailyLimit,
         minIntervalSeconds: snapshot.intervalSeconds,
@@ -109,7 +113,12 @@ export function BrowserAgentSettings() {
     const dailyLimit = parseWholeNumber(next.dailyLimit);
     const intervalSeconds = parseWholeNumber(next.intervalSeconds);
     if (dailyLimit === null || intervalSeconds === null) return;
-    autosave.schedule({ enabled: next.enabled, dailyLimit, intervalSeconds });
+    autosave.schedule({
+      enabled: next.enabled,
+      autoApprove: next.autoApprove,
+      dailyLimit,
+      intervalSeconds,
+    });
   };
 
   if (loadError !== null) {
@@ -160,14 +169,31 @@ export function BrowserAgentSettings() {
               <Label className="text-sm font-medium">启用浏览器自动化</Label>
               <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
                 开启后，公司 / 岗位 / 投递三个对话里会出现浏览器工具（browser_read /
-                browser_act / browser_submit），Agent 通过内嵌浏览器面板操作页面；每一步
-                都会记进工作区 logs/agent.log，写动作逐条弹界面审批。
+                browser_act / browser_submit）。读取页面在后台静默进行，顶栏地球图标会亮成
+                「agent 控制中」；写动作（点击 / 填写 / 提交）逐条弹确认卡片，批准后浏览器
+                自动打开让你看见它点了哪。每一步都会记进工作区 logs/agent.log。
               </p>
             </div>
             <Switch
               checked={form.enabled}
               aria-label="启用浏览器自动化"
               onCheckedChange={(checked) => update((prev) => ({ ...prev, enabled: checked }))}
+            />
+          </section>
+
+          <section className="flex items-center justify-between gap-4 rounded-xl border p-4">
+            <div className="min-w-0">
+              <Label className="text-sm font-medium">自动通过所有请求</Label>
+              <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                打开后，所有需要审批的动作（浏览器点击 / 填写 / 提交、外发邮件）不再弹确认
+                卡片，直接执行；浏览器也不会因为批准而自动打开。适合盯着的长任务，重要账号
+                不建议长期开着。
+              </p>
+            </div>
+            <Switch
+              checked={form.autoApprove}
+              aria-label="自动通过所有请求"
+              onCheckedChange={(checked) => update((prev) => ({ ...prev, autoApprove: checked }))}
             />
           </section>
 

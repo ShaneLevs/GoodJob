@@ -56,6 +56,11 @@ export interface ConversationState {
   key: ConversationKey;
   messages: WireMessage[];
   updatedAt: string | null;
+  /**
+   * 这份会话属于哪个工作区。渲染层写回时原样带回来，main 用它挡掉「切工作区
+   * 之后旧页面才把收尾消息写进来」的串区写入。
+   */
+  workspaceId: string;
 }
 
 /** 渲染层 → main 的一次 agent run：messages 是含新用户消息的完整 UI 历史。 */

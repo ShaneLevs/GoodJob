@@ -26,11 +26,22 @@ export function registerChatIpc(deps: IpcDeps, sendToUi: SendToUi): void {
 
   ipcMain.handle(IPC.conversationsGet, (_event, key: ConversationKey) => {
     const doc = conversations.get(key);
-    return { key, messages: doc.messages, updatedAt: doc.updatedAt };
+    return {
+      key,
+      messages: doc.messages,
+      updatedAt: doc.updatedAt,
+      workspaceId: workspaces.currentPaths.id,
+    };
   });
-  ipcMain.handle(IPC.conversationsSync, (_event, key: ConversationKey, messages: WireMessage[]) => {
-    conversations.updateMessages(key, messages);
-  });
+  // 写入带工作区校验：页面卸载时的收尾写入可能晚于「切换工作区」发生，那时绝不能
+  // 把上一个工作区的消息写进新工作区。id 对不上就静默丢弃。
+  ipcMain.handle(
+    IPC.conversationsSync,
+    (_event, key: ConversationKey, messages: WireMessage[], workspaceId?: string) => {
+      if (workspaceId !== undefined && workspaceId !== workspaces.currentPaths.id) return;
+      conversations.updateMessages(key, messages);
+    },
+  );
 
   // 上传 = 原样落盘到当前会话所属模块的 upload/（公司 / 岗位 / 投递 / 面试各自己的，
   // 简历落当前简历文件夹），不做任何解析；内容由 Agent 用 upload_list / upload_read

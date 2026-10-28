@@ -46,6 +46,7 @@ import { cn } from "@/lib/utils";
 
 import { DeleteDialog } from "../shared/DeleteDialog";
 import { ModuleLoadingCard, type ModulePageProps } from "../shared/module-page";
+import { useDomainChange } from "../shared/use-domain-change";
 import { ResumeMarkdownEditor } from "../shared/ResumeMarkdownEditor";
 import { cmpText, cmpTime, SortableHead, useTableSort } from "../shared/table-bits";
 import { formatTime } from "@/lib/format";
@@ -72,6 +73,7 @@ function CompaniesPageLoaded({
   onSelectModel,
   onOpenModelSettings,
   onOverlayChange,
+  onOpenBrowser,
 }: ModulePageProps & { initialMessages: UIMessage[] }) {
   const chat = useModuleChat("companies", initialMessages);
   // 浏览器面板工具条「让 Agent 接管」：在本会话发一条起手指令（P4）。
@@ -98,6 +100,8 @@ function CompaniesPageLoaded({
   }, []);
 
   useEffect(() => reload(), [reload]);
+  // Agent 建档岗位时可能顺手建了公司：这里跟着刷新，别等切模块。
+  useDomainChange(["companies"], reload);
 
   const sorted = useMemo(() => {
     if (companies === null) return null;
@@ -134,6 +138,7 @@ function CompaniesPageLoaded({
             onSelectModel={onSelectModel}
             onOpenModelSettings={onOpenModelSettings}
             onOverlayChange={onOverlayChange}
+            onOpenBrowser={onOpenBrowser}
             onSend={chat.send}
             onStop={chat.stop}
             onApprovalResponse={chat.respondApproval}

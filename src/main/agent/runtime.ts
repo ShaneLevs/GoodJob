@@ -43,7 +43,7 @@ import {
   digestInstructions,
   digestSnapshot,
 } from "./instructions";
-import { describeError, sanitizeBaseURL } from "./logging";
+import { describeError, describeStreamError, sanitizeBaseURL } from "./logging";
 import { toolsFor as buildTools } from "./tools";
 
 type Emit = (event: ChatStreamEvent) => void;
@@ -122,6 +122,8 @@ export class AgentRuntime {
     const startedAt = Date.now();
     const chunkTypes = new Map<string, number>();
     let firstChunkMs: number | null = null;
+    /** 流内错误（不像 catch 那个会抛）：网关 400 之类只以 error chunk 出现，得记下来。 */
+    let streamError: string | null = null;
     let idleTimer: NodeJS.Timeout | null = null;
     let idleFired = false;
     // 每次收到 chunk 就重新计时；超时直接打断本次 run（AbortError 由 catch 接手）。
@@ -177,7 +179,9 @@ export class AgentRuntime {
         // - browser_submit 双重门：mode=interactive 走界面审批（附上模型给的
         //   「将要提交的内容摘要」）；mode=offline 不走界面审批，由工具内调用
         //   request_confirmation 邮件门（且仅当用户 ≥10 分钟无操作才可用）。
+        // - 「自动通过所有请求」（设置 → 浏览器，默认关）打开时上面这些全部不弹。
         toolApproval: ({ toolCall }) => {
+          if (this.deps.browserSettings.isAutoApprove()) return undefined;
           if (toolCall.toolName === "notify") return "user-approval";
           if (toolCall.toolName === "browser_act") return "user-approval";
           if (toolCall.toolName === "browser_submit") {
@@ -220,13 +224,16 @@ export class AgentRuntime {
         messages: modelMessages,
         abortSignal: controller.signal,
       });
-      const stream = toUIMessageStream({ stream: result.fullStream });
+      // 错误文本自己翻译：AI SDK 默认把流内错误遮成「An error occurred.」，
+      // 中转站的 400 理由（例如工具 schema 不合规）就全丢了。
+      const stream = toUIMessageStream({ stream: result.fullStream, onError: describeStreamError });
       for await (const chunk of stream) {
         if (firstChunkMs === null) {
           firstChunkMs = Date.now() - startedAt;
           this.logChat({ event: "run:first-chunk", key, runId, ms: firstChunkMs, chunk: chunk.type });
         }
         chunkTypes.set(chunk.type, (chunkTypes.get(chunk.type) ?? 0) + 1);
+        if (chunk.type === "error") streamError = chunk.errorText;
         armIdleWatchdog();
         emit({ key, runId, type: "chunk", chunk });
       }
@@ -234,10 +241,11 @@ export class AgentRuntime {
         event: "run:finish",
         key,
         runId,
-        status: "ok",
+        status: streamError === null ? "ok" : "stream-error",
         ms: Date.now() - startedAt,
         firstChunkMs,
         chunkTypes: Object.fromEntries(chunkTypes),
+        ...(streamError === null ? {} : { error: streamError }),
       });
     } catch (error) {
       this.logChat({

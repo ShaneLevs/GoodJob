@@ -51,6 +51,12 @@ export function App() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [activeModule, setActiveModule] = useState<ModuleKey>("resume");
   /*
+   * 模块页常驻（懒挂载一次，之后只切可见性）：会话状态住在页面里的 useChat 实例上，
+   * 卸载一次就等于把这个会话的流打断、消息丢在内存里——切模块不该有这种副作用。
+   * 所以只有第一次进入才挂载，之后一直留着，切模块只改 visible / invisible。
+   */
+  const [mountedModules, setMountedModules] = useState<ModuleKey[]>(() => ["resume"]);
+  /*
    * 岗位二级工作台（定制简历）：有值时「岗位」模块渲染 JobWorkbenchPage。
    * autoPrompt 是进入时的一次性起草指令（生成简历 / 生成话术），发完即清。
    */
@@ -60,10 +66,12 @@ export function App() {
    */
   const [interviewFocus, setInterviewFocus] = useState<string | null>(null);
   /*
-   * 内嵌浏览器铺满内容区（原生 WebContentsView）：默认关着，Agent 的浏览器任务
-   * 开场会用 agent:pane-open 把它打开，顶栏的浏览器按钮也能手动开。
+   * 内嵌浏览器铺满内容区（原生 WebContentsView）：默认关着。Agent 的浏览器任务
+   * 在后台跑不弹面板；只有用户批准了写动作（点击 / 填写 / 提交）或顶栏按钮才打开。
    */
   const [browserOpen, setBrowserOpen] = useState(false);
+  /** 是否有浏览器任务在跑（agent:step 的 status 事件）：顶栏图标据此显示「agent 控制中」。 */
+  const [agentRunning, setAgentRunning] = useState(false);
   /** 后台任务注册表快照（顶栏「任务」角标汇总用）。 */
   const [tasks, setTasks] = useState<TaskState[]>([]);
   /** 对话区里的浮层（模型下拉）打开期间为 true，原生浏览器视图要让位。 */
@@ -173,10 +181,12 @@ export function App() {
       <IconToggle
         label={browserOpen ? "收起浏览器" : "打开浏览器"}
         active={browserOpen}
+        className={agentRunning ? "bg-primary/10 text-primary hover:bg-primary/15" : undefined}
         onClick={() => setBrowserOpen(!browserOpen)}
       >
-        <Globe />
+        <AgentGlobe running={agentRunning} />
       </IconToggle>
+      {agentRunning && <AgentRunningHint />}
     </div>
   );
 
@@ -186,40 +196,56 @@ export function App() {
     onSelectModel: selectModel,
     onOpenModelSettings: () => openSettings("models"),
     onOverlayChange: setOverlayOpen,
+    onOpenBrowser: () => setBrowserOpen(true),
   };
 
   // 切工作区 = 换一整套数据：模块页按 workspaceId remount，会话和简历全部重载。
   const workspaceVersion = workspaces?.currentId ?? "loading";
-  const moduleContent = (() => {
-    switch (activeModule) {
+  const renderModule = (key: ModuleKey) => {
+    switch (key) {
       case "resume":
         return <ResumePage key={workspaceVersion} {...moduleProps} />;
       case "companies":
         return <CompaniesPage key={workspaceVersion} {...moduleProps} />;
-      case "jobs":
-        // 二级工作台（定制简历）优先于岗位表；返回键落回表格。
-        return jobWorkbench !== null ? (
-          <JobWorkbenchPage
-            key={`${workspaceVersion}:${jobWorkbench.jobId}`}
-            jobId={jobWorkbench.jobId}
-            autoPrompt={jobWorkbench.autoPrompt}
-            onAutoPromptSent={() =>
-              setJobWorkbench((prev) => (prev === null ? prev : { ...prev, autoPrompt: null }))
-            }
-            onBack={() => setJobWorkbench(null)}
-            {...moduleProps}
-          />
-        ) : (
-          <JobsPage
-            key={workspaceVersion}
-            onOpenJob={(jobId, autoPrompt) => setJobWorkbench({ jobId, autoPrompt })}
-            onOpenInterview={(interviewId) => {
-              setInterviewFocus(interviewId);
-              setActiveModule("interview");
-            }}
-            {...moduleProps}
-          />
+      case "jobs": {
+        // 岗位表与二级工作台都常驻：从表格钻进某个岗位时，表格那边正在跑的对话
+        // 不该被卸载打断（它的会话就在表格页里）。返回时工作台卸载，表格复现。
+        const workbenchOpen = jobWorkbench !== null;
+        return (
+          <>
+            <div
+              className={cn("absolute inset-0", workbenchOpen && "invisible pointer-events-none")}
+              aria-hidden={workbenchOpen}
+            >
+              <JobsPage
+                key={workspaceVersion}
+                onOpenJob={(jobId, autoPrompt) => setJobWorkbench({ jobId, autoPrompt })}
+                onOpenInterview={(interviewId) => {
+                  setInterviewFocus(interviewId);
+                  setActiveModule("interview");
+                }}
+                {...moduleProps}
+              />
+            </div>
+            {jobWorkbench !== null && (
+              <div className="absolute inset-0">
+                <JobWorkbenchPage
+                  key={`${workspaceVersion}:${jobWorkbench.jobId}`}
+                  jobId={jobWorkbench.jobId}
+                  autoPrompt={jobWorkbench.autoPrompt}
+                  onAutoPromptSent={() =>
+                    setJobWorkbench((prev) =>
+                      prev === null ? prev : { ...prev, autoPrompt: null },
+                    )
+                  }
+                  onBack={() => setJobWorkbench(null)}
+                  {...moduleProps}
+                />
+              </div>
+            )}
+          </>
         );
+      }
       case "applications":
         return <ApplicationsPage key={workspaceVersion} {...moduleProps} />;
       case "interview":
@@ -232,11 +258,25 @@ export function App() {
           />
         );
     }
-  })();
+  };
 
-  // agent:pane-open（BROWSER-AGENT §6 预留事件）的兑现：main（Agent / 后台任务）
-  // 请求把浏览器铺满内容区。右栏已移除，这个事件只服务于浏览器。
+  // 第一次进入某模块时把它挂上，之后不再卸载。
+  useEffect(() => {
+    setMountedModules((prev) => (prev.includes(activeModule) ? prev : [...prev, activeModule]));
+  }, [activeModule]);
+
+  // agent:pane-open 通道保留作为兜底；现在 Agent 在后台跑不会再请求弹面板。
   useEffect(() => window.goodjob.browser.onRequestOpen(() => setBrowserOpen(true)), []);
+
+  // 浏览器任务在跑（agent:step 的 status）：顶栏地球图标亮成「agent 控制中」。
+  useEffect(
+    () =>
+      window.goodjob.agent.onStep((event) => {
+        if (event.type === "status") setAgentRunning(event.running);
+        else setAgentRunning(true);
+      }),
+    [],
+  );
 
   // 「让 Agent 接管」只在挂了 useBrowserTakeover 的会话里出现
   // （companies / jobs / applications；岗位二级工作台的 job:<id> 会话没有浏览器工具）。
@@ -279,7 +319,20 @@ export function App() {
             )}
 
             <main className="relative min-h-0 min-w-0 flex-1">
-              {moduleContent}
+              {mountedModules.map((key) => (
+                <div
+                  key={`${workspaceVersion}:${key}`}
+                  // 非活动模块只隐身不卸载：visibility 会保留布局，滚动位置与
+                  // 消息滚动锚定都还在；invisible 同时也是不可聚焦的。
+                  className={cn(
+                    "absolute inset-0",
+                    key === activeModule ? "visible" : "invisible pointer-events-none",
+                  )}
+                  aria-hidden={key !== activeModule}
+                >
+                  {renderModule(key)}
+                </div>
+              ))}
               {/*
                * 浏览器铺满整个内容块（原生 WebContentsView 停在其中留出的矩形上）。
                * 模块页留在下层不卸载：它的会话与「让 Agent 接管」监听都要继续活着。
@@ -315,9 +368,38 @@ export function App() {
   );
 }
 
+/** 顶栏地球图标：Agent 在后台跑浏览器时亮起来（像任务栏的“工作中”）。 */
+function AgentGlobe({ running }: { running: boolean }) {
+  return (
+    <span className="relative inline-flex">
+      <Globe className={running ? "text-primary" : undefined} />
+      {running && (
+        <span className="absolute -top-0.5 -right-0.5 flex size-2">
+          <span className="absolute inline-flex size-full animate-ping rounded-full bg-primary/60" />
+          <span className="relative inline-flex size-2 rounded-full bg-primary" />
+        </span>
+      )}
+    </span>
+  );
+}
+
+/** 「agent 控制中」字样：跟着地球图标出现，带一点流光，不抢内容区的空间。 */
+function AgentRunningHint() {
+  return (
+    <span
+      className="no-drag flex shrink-0 items-center gap-1.5 rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-medium text-primary"
+      aria-live="polite"
+    >
+      <span className="size-1.5 animate-pulse rounded-full bg-primary" />
+      agent 控制中
+    </span>
+  );
+}
+
 function IconToggle({
   label,
   active = false,
+  className,
   children,
   ...props
 }: React.ComponentProps<typeof Button> & { label: string; active?: boolean }) {
@@ -327,7 +409,7 @@ function IconToggle({
         <Button
           variant={active ? "secondary" : "ghost"}
           size="icon-sm"
-          className={cn("no-drag text-muted-foreground", active && "text-foreground")}
+          className={cn("no-drag text-muted-foreground", active && "text-foreground", className)}
           aria-label={label}
           {...props}
         >

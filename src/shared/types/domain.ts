@@ -6,6 +6,17 @@
  * 排序 / 过滤在渲染层做（内存排序），store 只保证数据可排：list 原样返回全量。
  */
 
+/** 会被 Agent 工具 / IPC 写入的领域集合（变更事件按集合名广播）。 */
+export type DomainEntity = "companies" | "jobs" | "applications" | "interviews";
+
+/**
+ * 领域集合变更事件：main 在任意一次写入（用户操作或 Agent 工具）之后广播，
+ * 渲染层的表格据此重拉。只带集合名，不带内容——列表本来就该由 IPC 读。
+ */
+export interface DomainChangedEvent {
+  entity: DomainEntity;
+}
+
 /** 公司档案（`companies/<id>.json`）。 */
 export interface Company {
   id: string;

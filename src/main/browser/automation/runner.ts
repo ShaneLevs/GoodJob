@@ -201,8 +201,9 @@ export class BrowserAgentService {
         error: null,
         durationMs: 0,
       });
-      // 浏览器任务开场把内容区的浏览器打开，让用户看得见它在干什么。
-      this.deps.sendToUi(IPC.agentPaneOpen, { pane: "browser" });
+      // 任务开场**不**把浏览器摊到前台：读页面 / snapshot 全程在后台跑，顶栏地球
+      // 图标会亮成「agent 控制中」。只有用户批准了写动作（点击 / 填写 / 提交）才由
+      // 渲染层打开面板——那时候他需要看见 Agent 到底点了哪。
       this.pushStatus();
     } else if (this.current.key !== input.key) {
       throw new Error("另一个会话正在操作浏览器（一次只允许一个浏览器任务）。请等它完成或在浏览器工具条中止。");

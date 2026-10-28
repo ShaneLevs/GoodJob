@@ -49,7 +49,9 @@ export function useConversationInitial(key: ConversationKey): UIMessage[] | null
     let alive = true;
     setMessages(null);
     void window.goodjob.conversations.get(key).then((state) => {
-      if (alive) setMessages(state.messages as unknown as UIMessage[]);
+      if (alive) {
+        setMessages(repairInterrupted(state.messages as unknown as UIMessage[]));
+      }
     });
     return () => {
       alive = false;
@@ -57,6 +59,37 @@ export function useConversationInitial(key: ConversationKey): UIMessage[] | null
   }, [key]);
 
   return messages;
+}
+
+/**
+ * 修补「半路死掉的一轮」：run 被中止（切工作区、钻进岗位工作台、崩溃）时，
+ * 落盘的快照里可能带着还停在流式中的 part。这类 part 如果原样回放，正文会一直
+ * 停在半截、工具行会一直转圈。读回来时把它们收成终态：
+ * - 已经产出文字的部分（text / reasoning）标记 done——文字就是它死时的样子；
+ * - 参数还没生成完的工具调用直接丢掉（模型连参数都没写完，什么都没执行过）。
+ */
+function repairInterrupted(messages: UIMessage[]): UIMessage[] {
+  let touched = false;
+  const repaired = messages.map((message) => {
+    const parts = message.parts.map((part) => {
+      const view = part as unknown as { type: string; state?: string };
+      if (view.state === "streaming" && (view.type === "text" || view.type === "reasoning")) {
+        touched = true;
+        return { ...part, state: "done" } as UIMessage["parts"][number];
+      }
+      return part;
+    });
+    const kept = parts.filter((part) => {
+      const view = part as unknown as { type: string; state?: string };
+      if (view.type.startsWith("tool-") && view.state === "input-streaming") {
+        touched = true;
+        return false;
+      }
+      return true;
+    });
+    return kept.length === parts.length ? message : { ...message, parts: kept };
+  });
+  return touched ? repaired : messages;
 }
 
 export interface ModuleChat {
@@ -127,10 +160,71 @@ export function useModuleChat(key: ConversationKey, initialMessages: UIMessage[]
     },
   });
 
+  /*
+   * 这份会话属于哪个工作区：写回时带回 main 校验。切工作区后页面按新 key 重挂载，
+   * 旧实例的收尾写入不能落进新工作区的同名会话（拿不到 id 就不写）。
+   */
+  const workspaceIdRef = useRef<string | null>(null);
   useEffect(() => {
-    if (status !== "ready" && status !== "error") return;
-    void window.goodjob.conversations.sync(key, messages as unknown as WireMessage[]);
+    let alive = true;
+    void window.goodjob.conversations.get(key).then((state) => {
+      if (alive) workspaceIdRef.current = state.workspaceId;
+    });
+    return () => {
+      alive = false;
+    };
+  }, [key]);
+
+  /*
+   * 落盘策略：空闲时同步写，run 进行中按 600ms 节流写。
+   *
+   * 为什么流式期间也要写：以前只在 run 结束（ready / error）时 sync，于是「刚发出去
+   * 的消息」只在内存里——页面一卸载就整轮都没了。现在的写入点跟着 messages 走，
+   * 任何时候关掉页面 / 崩溃，最坏也只丢最后半秒。
+   *
+   * 用节流而不是防抖：token 连续到达时防抖会被一直取消，永远不落盘。
+   */
+  const pendingRef = useRef<WireMessage[] | null>(null);
+  const flushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    pendingRef.current = messages as unknown as WireMessage[];
+    const flush = (): void => {
+      flushTimerRef.current = null;
+      const pending = pendingRef.current;
+      pendingRef.current = null;
+      if (pending !== null) {
+        void window.goodjob.conversations.sync(key, pending, workspaceIdRef.current ?? undefined);
+      }
+    };
+    const streaming = status === "streaming" || status === "submitted";
+    if (!streaming) {
+      if (flushTimerRef.current !== null) {
+        clearTimeout(flushTimerRef.current);
+        flushTimerRef.current = null;
+      }
+      flush();
+      return;
+    }
+    if (flushTimerRef.current === null) flushTimerRef.current = setTimeout(flush, 600);
   }, [key, status, messages]);
+
+  // 卸载（切工作区 / 从岗位表钻进工作台）时把没来得及写的尾巴补上：这时页面已经
+  // 离开，流会被 transport 的 cancel 中止，但已经出现在界面上的消息得留下。
+  useEffect(
+    () => () => {
+      const timer = flushTimerRef.current;
+      if (timer !== null) clearTimeout(timer);
+      flushTimerRef.current = null;
+      const pending = pendingRef.current;
+      pendingRef.current = null;
+      const workspaceId = workspaceIdRef.current;
+      // 拿不到工作区 id 就不写：宁可不落这一笔，也不要把旧工作区的消息写串。
+      if (pending !== null && pending.length > 0 && workspaceId !== null) {
+        void window.goodjob.conversations.sync(key, pending, workspaceId);
+      }
+    },
+    [key],
+  );
 
   return {
     messages,

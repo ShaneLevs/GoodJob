@@ -9,6 +9,8 @@ export interface ModulePageProps {
   onOpenModelSettings: () => void;
   /** 下拉浮层打开时，原生浏览器视图要让位。 */
   onOverlayChange: (open: boolean) => void;
+  /** 把浏览器面板打开（批准浏览器写动作后自动调，让用户看见 Agent 在操作什么）。 */
+  onOpenBrowser: () => void;
 }
 
 export function ModuleLoadingCard() {

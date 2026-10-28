@@ -16,6 +16,7 @@ import type {
   ApplicationPatch,
   Company,
   CompanyPatch,
+  DomainChangedEvent,
   Interview,
   InterviewCreateInput,
   Job,
@@ -81,6 +82,8 @@ export const IPC = {
   resumePhoto: "resume:photo",
   resumeTailoredList: "resume:tailored-list",
   resumeFileChanged: "resume:file-changed",
+  // 领域集合变更（companies / jobs / applications / interviews）：单向 main → 渲染层。
+  domainChanged: "domain:changed",
   resumeScriptList: "resume:script-list",
   resumeScriptRead: "resume:script-read",
   resumeScriptSave: "resume:script-save",
@@ -154,7 +157,10 @@ export interface GoodjobApi {
     /** 当前状态快照：面板重新挂载时主动拉一次（main 只在变化时推送）。 */
     getState: () => Promise<BrowserState>;
     onState: (listener: (state: BrowserState) => void) => () => void;
-    /** main 侧请求把浏览器铺满内容区（agent:pane-open，浏览器任务开场触发）。 */
+    /**
+     * main 侧请求把浏览器铺满内容区（agent:pane-open）。浏览器任务本身不再触发它：
+     * 面板只在用户批准浏览器写动作时由渲染层自己打开，这里保留给以后的主动请求。
+     */
     onRequestOpen: (listener: (event: AgentPaneOpenEvent) => void) => () => void;
   };
   chat: {
@@ -180,9 +186,10 @@ export interface GoodjobApi {
     uploadPreview: (key: ConversationKey, fileName: string) => Promise<string | null>;
   };
   conversations: {
-    /** 模块滚动会话：挂载时取初始消息，run 结束后用 sync 落盘装配结果。 */
+    /** 模块滚动会话：挂载时取初始消息，随消息变化增量落盘（流式期间节流）。 */
     get: (key: ConversationKey) => Promise<ConversationState>;
-    sync: (key: ConversationKey, messages: WireMessage[]) => Promise<void>;
+    /** workspaceId 来自 get：与 main 的当前工作区不符时这次写入被忽略。 */
+    sync: (key: ConversationKey, messages: WireMessage[], workspaceId?: string) => Promise<void>;
   };
   resume: {
     list: () => Promise<ResumeListState>;
@@ -212,6 +219,13 @@ export interface GoodjobApi {
     };
     /** 主简历完整性报告（后台任务写入 reports/，保留历史）。 */
     integrityReports: (resumeId: string) => Promise<IntegrityReport[]>;
+  };
+  /**
+   * 领域集合变更订阅：main 在任何一次写入（用户操作或 Agent 工具）之后广播集合名，
+   * 表格据此重拉，不用等切模块重挂载。
+   */
+  domain: {
+    onChanged: (listener: (event: DomainChangedEvent) => void) => () => void;
   };
   companies: {
     list: () => Promise<Company[]>;

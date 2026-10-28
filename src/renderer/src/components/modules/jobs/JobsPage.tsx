@@ -34,6 +34,7 @@ import { JobRowMenu } from "./JobRowMenu";
 import { ModelGateDialog } from "../shared/ModelGateDialog";
 import { DeleteDialog } from "../shared/DeleteDialog";
 import { ModuleLoadingCard, type ModulePageProps } from "../shared/module-page";
+import { useDomainChange } from "../shared/use-domain-change";
 import { ScorecardDialog } from "../shared/ScorecardDialog";
 import { ScriptDialog, ScriptStatusBadge } from "./ScriptDialog";
 import { cmpNumber, cmpText, cmpTime, SortableHead, useTableSort } from "../shared/table-bits";
@@ -76,6 +77,7 @@ function JobsPageLoaded({
   onSelectModel,
   onOpenModelSettings,
   onOverlayChange,
+  onOpenBrowser,
   onOpenJob,
   onOpenInterview,
 }: JobsPageProps & { initialMessages: UIMessage[] }) {
@@ -124,6 +126,8 @@ function JobsPageLoaded({
   }, []);
 
   useEffect(() => reload(), [reload]);
+  // Agent 在同一页右边建档：写完就刷新表格 / 公司名 / 定制稿标记，不用切模块。
+  useDomainChange(["jobs", "companies"], reload);
 
   // 任务注册表：挂载取一次，事件增量更新；评估完成时匹配度已写回岗位，重拉岗位表。
   useEffect(() => {
@@ -239,6 +243,7 @@ function JobsPageLoaded({
             onSelectModel={onSelectModel}
             onOpenModelSettings={onOpenModelSettings}
             onOverlayChange={onOverlayChange}
+            onOpenBrowser={onOpenBrowser}
             onSend={chat.send}
             onStop={chat.stop}
             onApprovalResponse={chat.respondApproval}

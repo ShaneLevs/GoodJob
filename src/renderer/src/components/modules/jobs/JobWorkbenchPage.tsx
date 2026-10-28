@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import type { UIMessage } from "ai";
 import { ArrowLeft } from "lucide-react";
@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/resizable";
 
 import { ModuleLoadingCard, type ModulePageProps } from "../shared/module-page";
+import { useDomainChange } from "../shared/use-domain-change";
 import { ResumeEditorCard } from "../shared/ResumeEditorCard";
 
 const CHAT_MIN_WIDTH = 380;
@@ -56,22 +57,24 @@ function JobWorkbenchLoaded({
   const [job, setJob] = useState<Job | null>(null);
   const [companyName, setCompanyName] = useState<string | null>(null);
 
-  useEffect(() => {
-    let alive = true;
+  const reload = useCallback((): void => {
     void window.goodjob.jobs.list().then((jobs) => {
-      if (!alive) return;
       const found = jobs.find((item) => item.id === jobId) ?? null;
       setJob(found);
-      if (found?.companyId != null) {
-        void window.goodjob.companies.list().then((companies: Company[]) => {
-          if (alive) setCompanyName(companies.find((item) => item.id === found.companyId)?.name ?? null);
-        });
+      if (found?.companyId == null) {
+        setCompanyName(null);
+        return;
       }
+      void window.goodjob.companies.list().then((companies: Company[]) => {
+        setCompanyName(companies.find((item) => item.id === found.companyId)?.name ?? null);
+      });
     });
-    return () => {
-      alive = false;
-    };
   }, [jobId]);
+
+  useEffect(() => reload(), [reload]);
+  // Agent 补关联公司 / 改岗位信息后，标题栏跟着变（这里不做卸载保护：
+  // setState 落在已卸载组件上在 React 18+ 是无害的 no-op，reload 的 promise 链更短更好读）。
+  useDomainChange(["jobs", "companies"], reload);
 
   // 自动起草指令：只在拿到会话初始消息后发一次（发完由父级清掉，回来不再重复发）。
   useEffect(() => {
@@ -116,6 +119,7 @@ function JobWorkbenchLoaded({
                 onSelectModel={props.onSelectModel}
                 onOpenModelSettings={props.onOpenModelSettings}
                 onOverlayChange={props.onOverlayChange}
+                onOpenBrowser={props.onOpenBrowser}
                 onSend={chat.send}
                 onStop={chat.stop}
                 onApprovalResponse={chat.respondApproval}

@@ -51,6 +51,7 @@ import { ApplicationEditDialog } from "./ApplicationEditDialog";
 import { OfferCompareDialog } from "./OfferCompareDialog";
 import { PipelineDialog } from "./PipelineDialog";
 import { ModuleLoadingCard, type ModulePageProps } from "../shared/module-page";
+import { useDomainChange } from "../shared/use-domain-change";
 import { cmpNumber, cmpText, cmpTime, SortableHead, stageDotClass, useTableSort } from "../shared/table-bits";
 import { formatTime } from "@/lib/format";
 
@@ -71,6 +72,7 @@ function ApplicationsPageLoaded({
   onSelectModel,
   onOpenModelSettings,
   onOverlayChange,
+  onOpenBrowser,
 }: ModulePageProps & { initialMessages: UIMessage[] }) {
   const chat = useModuleChat("applications", initialMessages);
   // 浏览器面板工具条「让 Agent 接管」：在本会话发一条起手指令（P4）。
@@ -105,6 +107,8 @@ function ApplicationsPageLoaded({
   }, []);
 
   useEffect(() => reload(), [reload]);
+  // Agent 改投递 / 岗位时刷新（岗位标题在表里要跟着变）。
+  useDomainChange(["applications", "jobs"], reload);
 
   const jobOf = useCallback(
     (appId: string | null): { job: Job | null; title: string; dangling: boolean } => {
@@ -198,6 +202,7 @@ function ApplicationsPageLoaded({
             onSelectModel={onSelectModel}
             onOpenModelSettings={onOpenModelSettings}
             onOverlayChange={onOverlayChange}
+            onOpenBrowser={onOpenBrowser}
             onSend={chat.send}
             onStop={chat.stop}
             onApprovalResponse={chat.respondApproval}

@@ -37,6 +37,7 @@ import { cn } from "@/lib/utils";
 
 import { ModelGateDialog } from "../shared/ModelGateDialog";
 import { ModuleLoadingCard, type ModulePageProps } from "../shared/module-page";
+import { useDomainChange } from "../shared/use-domain-change";
 import { formatTime } from "@/lib/format";
 
 const LIST_MIN_WIDTH = 264;
@@ -88,6 +89,8 @@ export function InterviewPage({
   }, []);
 
   useEffect(() => reload(), [reload]);
+  // 面试记录由面试官 Agent 在会话里写回：写完就刷新轮次与状态。
+  useDomainChange(["interviews"], reload);
 
   useEffect(() => {
     void window.goodjob.jobs.list().then(setJobs).catch(() => setJobs([]));

@@ -34,6 +34,7 @@ export function ResumePage(props: ModulePageProps) {
 function ResumePageLoaded({
   initialMessages,
   onOverlayChange,
+  onOpenBrowser,
   ...props
 }: ModulePageProps & { initialMessages: UIMessage[] }) {
   const chat = useModuleChat("resume", initialMessages);

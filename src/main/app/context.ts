@@ -15,6 +15,7 @@ import { CompaniesStore } from "../stores/domain/companies";
 import { InterviewsStore } from "../stores/domain/interviews";
 import { JobsStore } from "../stores/domain/jobs";
 import { PipelineStore } from "../stores/domain/pipeline";
+import { onCollectionChanged } from "../stores/json-collection";
 import { MemoryStore } from "../stores/memory";
 import { ModelsStore } from "../stores/models";
 import { NotifyStore } from "../stores/notify";
@@ -65,6 +66,13 @@ export function createAppContext({
   // 领域实体（P2）：pipeline 先建（投递的时间线校验要用），再 companies → jobs →
   // applications（引用校验的方向：投递引岗位、岗位引公司）。
   const pipeline = new PipelineStore(workspaces.currentPaths);
+  // 领域集合写入广播：Agent 工具与 IPC 走同一套 store，所以在这里注册一次就够——
+  // 页面表格不必等切模块重挂载才看到 Agent 刚建的岗位 / 公司。
+  onCollectionChanged((entity) => {
+    const win = getWindow();
+    if (win === null || win.isDestroyed()) return;
+    win.webContents.send(IPC.domainChanged, { entity });
+  });
   const companies = new CompaniesStore(workspaces.currentPaths);
   const jobs = new JobsStore(workspaces.currentPaths, companies);
   const applications = new ApplicationsStore(workspaces.currentPaths, jobs, pipeline);

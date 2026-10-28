@@ -111,6 +111,10 @@ export class BrowserPanel {
     tab.view.setBackgroundColor("#ffffff");
     this.tabs.set(tab.id, tab);
     this.bindContents(tab);
+    // 面板没打开时标签是「挂上但不可见」，Chromium 默认会把这种页面节流（定时器 /
+    // rAF 降压），Agent 在后台读页面会因此变慢甚至拿不到更新后的 DOM。关掉节流：
+    // 自动化读的就是这个页面的真实状态。
+    tab.view.webContents.setBackgroundThrottling(false);
 
     this.activate(tab.id);
     if (target !== BLANK) {

@@ -186,7 +186,14 @@ src/main/browser/automation/settings-store.ts  开关 / 限速 / 提交记账
 src/shared/types/                        AgentStep / AgentStepEvent 类型 + IPC 频道名
 src/preload/index.ts                     agent 事件订阅（窄接口）
 src/renderer/src/components/browser/     BrowserPanel 工具条 + App 顶栏开关（agent:pane-open）
+src/renderer/src/components/chat/ApprovalCard.tsx  审批卡片（AI Elements confirmation）
 ```
+
+**面板是后台的**：任务开场不再把浏览器摊到前台，读取 / snapshot 全程静默，只在顶栏
+地球图标上亮「agent 控制中」。用户批准浏览器写动作（browser_act / browser_submit）时
+渲染层才打开面板——那一刻他需要看见 Agent 点了哪、填了什么。审批卡片不进思维链，
+放在工作过程外面。设置里的「自动通过所有请求」（默认关）打开后不再弹卡片，也不再
+因为批准而打开面板。
 
 `BrowserPanel` 通过 `agentTabs()` / `createAgentTab()` 暴露受控标签接口，UI 与 Agent 共享同一组标签；
 其余标签池细节留在 main。

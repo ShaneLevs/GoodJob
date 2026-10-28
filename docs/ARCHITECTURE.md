@@ -66,6 +66,13 @@ workspaces/<id>/
   全量载内存（`src/main/stores/json-collection.ts` 的通用底座 + `src/main/stores/domain/`
   下的实体 store；`stores/domain/interviews.ts` 复用同一底座）。
   引用存名不存内容，删除不级联，悬空引用由渲染层提示。
+- 公司名的确定性去重：`CompaniesStore.findByName` 先比归一化全名（忽略大小写 / 空格 /
+  标点），再比去掉「有限公司」这类法人后缀的核心名；`ensure()` 有则返回、无则新建。
+  岗位建档（`job_create` / `job_update` 的 `companyName`）走它自动入库，避免同一家公司
+  被建成「字节跳动」「字节跳动有限公司」两条。只做确定性匹配，不做模糊打分。
+- 集合写入广播：`json-collection.ts` 的 `onCollectionChanged` 在每次 `put` / `remove`
+  之后把集合名推给渲染层（`domain:changed`），模块页据此重拉——Agent 在右边对话里建的
+  岗位 / 公司不必等切模块才出现。
 - 新目录 / 文件一律先登记 `src/main/workspace/paths.ts` 的 `WorkspacePaths`，再由 `ensureWorkspaceDirs()`
   创建——不绕过工作区往根目录写东西。通知配置跟随工作区（不同工作区可对不同邮箱）。
 
@@ -77,6 +84,15 @@ workspaces/<id>/
 - 会话类型：`ConversationKey` = `"resume" | "companies" | "jobs" | "applications" | \`job:${jobId}\` | \`interview:${id}\``
   （复合 key 是通用机制；interview:<id> 自 P3 M1 起）。没有独立「对话」页——
   产品决策：所有 LLM 交互都发生在具体模块里。UIMessage[] 与元数据持久化到 `conversations/`。
+- 会话落盘节奏（`renderer/components/chat/use-module-chat.ts`）：空闲时消息一变就写，
+  run 进行中按 600ms **节流**写（不是防抖——token 连续到达时防抖会被一直取消，永远不落盘）。
+  以前只在 run 结束（ready / error）时 sync，于是「刚发出 / 流到一半」的消息只在内存里，
+  页面一卸载整轮就没了。写入带 `workspaceId`（`conversations.get` 拿到的），main 对不上
+  当前工作区就丢弃——页面卸载时的收尾写入可能晚于「切换工作区」，不能写串。
+- 模块页常驻（`App.tsx` 的 `mountedModules`）：会话状态住在页面里的 `useChat` 实例上，
+  `useChat` 卸载时会 `chat.stop()` → transport cancel → main `abort`，那一轮就废了。
+  所以模块页第一次进入才挂载，之后只切 `visible / invisible`（保留布局，滚动锚定不丢）；
+  岗位表与二级工作台同时挂载，钻进某个岗位不打断表格那边的对话。
 - 工具注册表按域分组（file / domain / task / notify / browser / skill），入口在
   `agent/tools/index.ts` 的 `toolsFor(key)`，各域工厂在 `agent/tools/` 下按会话类型组装：领域会话拿类型化 CRUD（写操作的枚举 / 引用校验在 store，错误以 tool-error 带回
   模型）；`job:<jobId>` 会话的工具全部锁定该岗位（定制稿 / 话术无 id 参数）；

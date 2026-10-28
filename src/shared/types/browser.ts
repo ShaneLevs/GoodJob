@@ -59,8 +59,13 @@ export type AgentStepEvent =
 
 /** 浏览器自动化设置（<workspace>/agent-browser.json 的公开投影）。 */
 export interface BrowserAgentSettings {
-  /** 总开关：关闭时 companies / jobs / applications 会话不注册浏览器工具。 */
+  /** 总开关：关闭时 companies / jobs / applications 会话不注册浏览器工具。默认开启。 */
   enabled: boolean;
+  /**
+   * 自动通过所有需要审批的工具（浏览器写动作、提交、外发邮件）。默认关闭：
+   * 打开后 Agent 不再弹确认卡片，重要账号不建议开。
+   */
+  autoApprove: boolean;
   submit: {
     /** 单站每日提交上限（默认 10）。 */
     dailyLimitPerSite: number;
@@ -74,6 +79,7 @@ export interface BrowserAgentSettings {
 /** 保存浏览器自动化设置：只传要改的部分，数值由 main 夹紧。 */
 export interface BrowserAgentSettingsDraft {
   enabled?: boolean;
+  autoApprove?: boolean;
   submit?: {
     dailyLimitPerSite?: number;
     minIntervalSeconds?: number;

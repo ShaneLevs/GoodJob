@@ -8,6 +8,25 @@ import { ensureDir, writeJsonFile, type WorkspacePaths } from "../workspace/path
 /** 实体集合目录（路径先在 paths.ts 的 WorkspacePaths 登记过；interviews 由 stores/domain/interviews 复用）。 */
 type CollectionDir = "companies" | "jobs" | "applications" | "interviews";
 
+/**
+ * 集合写入监听：装配时由 main/app/context 注册一次，广播给渲染层。
+ * 放在模块级而不是构造参数里，是因为 interviews 等 store 自己 new 底层集合，
+ * 逐个改构造签名只会让调用方到处传回调。
+ */
+let collectionChangeListener: ((dir: CollectionDir) => void) | null = null;
+
+export function onCollectionChanged(listener: ((dir: CollectionDir) => void) | null): void {
+  collectionChangeListener = listener;
+}
+
+function notifyChanged(dir: CollectionDir): void {
+  try {
+    collectionChangeListener?.(dir);
+  } catch {
+    // 通知失败不影响这次写入本身。
+  }
+}
+
 /** ID 惯例：前缀 + 12 位 hex（对齐 resume 的 `rs_` / workspace 的 `ws_`）。 */
 export function newId(prefix: string): string {
   return `${prefix}${randomUUID().replace(/-/g, "").slice(0, 12)}`;
@@ -64,6 +83,7 @@ export class JsonCollectionStore<T extends { id: string; createdAt: string }> {
   put(entity: T): void {
     this.items.set(entity.id, entity);
     writeJsonFile(this.fileFor(entity.id), entity);
+    notifyChanged(this.dir);
   }
 
   remove(id: string): boolean {
@@ -73,6 +93,7 @@ export class JsonCollectionStore<T extends { id: string; createdAt: string }> {
     } catch {
       // 文件已被手动删掉之类：内存才是事实，忽略磁盘错误。
     }
+    notifyChanged(this.dir);
     return true;
   }
 
