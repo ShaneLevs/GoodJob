@@ -10,6 +10,7 @@ import type {
   WireMessage,
 } from "./chat";
 import type { Rect } from "./common";
+import type { MarkdownSettings } from "./document";
 import type {
   Application,
   ApplicationPatch,
@@ -41,6 +42,7 @@ import type {
   ScriptDoc,
   TailoredDoc,
 } from "./resume";
+import type { SkillInfo } from "./skill";
 import type { TaskEvent, TaskState, TaskType } from "./tasks";
 import type { AppearanceSettings, AppInfo, WorkspacesState } from "./workspace";
 
@@ -66,6 +68,7 @@ export const IPC = {
   chatContext: "chat:context",
   chatCompact: "chat:compact",
   chatUpload: "chat:upload",
+  chatUploadPreview: "chat:upload-preview",
   conversationsGet: "conversations:get",
   conversationsSync: "conversations:sync",
   resumeList: "resume:list",
@@ -119,6 +122,9 @@ export const IPC = {
   modelsSelect: "models:select",
   appearanceGet: "appearance:get",
   appearanceSave: "appearance:save",
+  markdownGet: "markdown:get",
+  markdownSave: "markdown:save",
+  skillsList: "skills:list",
   workspaceGet: "workspace:get",
   workspaceSwitch: "workspace:switch",
   workspaceChanged: "workspace:changed",
@@ -162,8 +168,14 @@ export interface GoodjobApi {
      * 打开系统选择框，把所选文件原样复制进这个会话所属模块的上传目录
      * （公司 / 岗位 / 投递 / 面试各自己的 `upload/`，简历落当前简历文件夹）；
      * 取消返回 null。正文由 Agent 用 upload_list / upload_read 按需读。
+     * 图片（png / jpg / jpeg）会以缩略图展示，并由 main 交给支持视觉的模型。
      */
     upload: (key: ConversationKey) => Promise<UploadedFileMeta[] | null>;
+    /**
+     * 已上传图片 → 320px 缩略图的 data URL；不是图片、越界或读不出来时返回 null。
+     * 图片本体留在工作区 upload/，只在展示时取一次。
+     */
+    uploadPreview: (key: ConversationKey, fileName: string) => Promise<string | null>;
   };
   conversations: {
     /** 模块滚动会话：挂载时取初始消息，run 结束后用 sync 落盘装配结果。 */
@@ -180,7 +192,7 @@ export interface GoodjobApi {
     read: (target: ResumeDocTarget) => Promise<ResumeDoc | null>;
     save: (target: ResumeDocTarget, content: string) => Promise<ResumeDoc | null>;
     /**
-     * `photo:` 指令指向的证件照 → data URL（只允许当前简历 upload/ 下的
+     * 正文引用的 upload/ 图片 → data URL（只允许当前简历 upload/ 下的
      * png / jpg / jpeg）。文件不存在或格式不支持时返回 null。
      */
     photo: (relPath: string) => Promise<string | null>;
@@ -277,6 +289,15 @@ export interface GoodjobApi {
   appearance: {
     get: () => Promise<AppearanceSettings>;
     save: (patch: Partial<AppearanceSettings>) => Promise<AppearanceSettings>;
+  };
+  /** 文档预览与 PDF 导出的 Markdown 主题（机器级偏好）。 */
+  markdown: {
+    get: () => Promise<MarkdownSettings>;
+    save: (patch: Partial<MarkdownSettings>) => Promise<MarkdownSettings>;
+  };
+  /** 内置技能库（设置 → Skill 管理）：只读列表，含 SKILL.md 与 references 正文。 */
+  skills: {
+    list: () => Promise<SkillInfo[]>;
   };
   workspace: {
     get: () => Promise<WorkspacesState>;

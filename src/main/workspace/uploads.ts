@@ -1,8 +1,11 @@
 import fs from "node:fs";
 import path from "node:path";
 
+import { nativeImage } from "electron";
+
 import {
   interviewKeyTarget,
+  isImageUploadName,
   jobKeyTarget,
   type ConversationKey,
   type UploadedFileMeta,
@@ -14,6 +17,8 @@ import { ensureDir, type WorkspacePaths } from "./paths";
 export const MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
 /** 工具读取上传文件时的文本上限，防止巨型文本撑爆上下文。 */
 const READ_TEXT_LIMIT = 300_000;
+/** 图片解码上限：超过就不读进内存，避免原图撑爆主进程。 */
+const MAX_IMAGE_BYTES = 20 * 1024 * 1024;
 
 /**
  * 会话 → 上传目录（每个模块自己的目录，互不串）：
@@ -25,7 +30,8 @@ const READ_TEXT_LIMIT = 300_000;
  *   interview:<id> → interviews/upload/<id>/
  *
  * 上传只落盘、不解析：正文留给 Agent 用 upload_list / upload_read 按需读
- * （对话里只出现文件名，不塞全文）。
+ * （对话里只出现文件名，不塞全文）。图片（png / jpg / jpeg）额外提供
+ * 缩略图与视觉模型的读取入口，原文件同样只落盘、不预先解析。
  */
 export function uploadDirFor(
   workspace: WorkspacePaths,
@@ -63,6 +69,48 @@ export function saveUploadFile(dir: string, srcPath: string): UploadedFileMeta {
   fs.copyFileSync(srcPath, dest);
   fs.chmodSync(dest, 0o600);
   return { fileName, size: fs.statSync(dest).size };
+}
+
+/**
+ * 上传目录里的图片 → data URL（对话缩略图与视觉模型共用）。
+ * 只认上传目录内的 png / jpg / jpeg；realpath 防越界，超过 maxWidth 时等比缩小。
+ * 文件不存在、越界、过大或解不出来时返回 null。
+ */
+export function readUploadImageDataUrl(
+  dir: string,
+  fileName: string,
+  maxWidth: number,
+): string | null {
+  let safe: string;
+  try {
+    safe = sanitizeUploadName(fileName);
+  } catch {
+    return null;
+  }
+  if (!isImageUploadName(safe)) return null;
+
+  let realDir: string;
+  let realFile: string;
+  let stat: fs.Stats;
+  try {
+    realDir = fs.realpathSync(dir);
+    realFile = fs.realpathSync(path.join(dir, safe));
+    stat = fs.statSync(realFile);
+  } catch {
+    return null;
+  }
+  if (!realFile.startsWith(`${realDir}${path.sep}`)) return null;
+  if (!stat.isFile() || stat.size > MAX_IMAGE_BYTES) return null;
+
+  const image = nativeImage.createFromPath(realFile);
+  if (image.isEmpty()) return null;
+  const scaled =
+    image.getSize().width > maxWidth
+      ? image.resize({ width: maxWidth, quality: "good" })
+      : image;
+  const isPng = path.extname(realFile).toLowerCase() === ".png";
+  const bytes = isPng ? scaled.toPNG() : scaled.toJPEG(85);
+  return `data:image/${isPng ? "png" : "jpeg"};base64,${bytes.toString("base64")}`;
 }
 
 /** 上传目录里的文件清单，最近上传的排前面。 */
@@ -103,6 +151,16 @@ export async function readUploadFile(
   }
 
   const ext = path.extname(safe).toLowerCase();
+  // 图片没有可抽取的文本：把二进制按 UTF-8 读出来只会是一串乱码。
+  if (isImageUploadName(safe)) {
+    const size = fs.statSync(file).size;
+    return {
+      fileName: safe,
+      kind: "image",
+      text: `「${safe}」是图片（${Math.max(1, Math.round(size / 1024))} KB），没有可抽取的文字。如果当前模型支持视觉输入，图片会随用户消息一起提供；直接描述你看到的内容即可。`,
+    };
+  }
+
   const text = await extractDocumentText(file);
   const kind =
     ext === ".pdf"

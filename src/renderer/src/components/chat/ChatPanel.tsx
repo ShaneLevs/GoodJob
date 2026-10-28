@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 
-import { Check, CircleAlert, Copy, FileText, MessageCircleDashed } from "lucide-react";
+import { Check, CircleAlert, Copy, MessageCircleDashed } from "lucide-react";
 
 import type { ChatStatus, UIMessage } from "ai";
 import type {
@@ -11,13 +11,6 @@ import type {
   UploadedFileMeta,
 } from "@shared/types";
 
-import {
-  Attachment,
-  AttachmentContent,
-  AttachmentDescription,
-  AttachmentMedia,
-  AttachmentTitle,
-} from "@/components/ui/ai-elements/attachment";
 import { Bubble, BubbleContent } from "@/components/ui/ai-elements/bubble";
 import { Message, MessageContent, MessageFooter } from "@/components/ui/ai-elements/message";
 import {
@@ -30,11 +23,12 @@ import {
 } from "@/components/ui/ai-elements/message-scroller";
 import { Button } from "@/components/ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
-import { formatBytes, formatDuration } from "@/lib/format";
+import { formatDuration } from "@/lib/format";
 
 import { AssistantMarkdown } from "./AssistantMarkdown";
 import { Composer } from "./Composer";
 import { groupTraceParts, WorkBlock } from "./ToolTrace";
+import { UploadAttachment } from "./UploadAttachment";
 
 interface ChatPanelProps {
   messages: UIMessage[];
@@ -91,6 +85,20 @@ function durationOf(message: UIMessage): number | null {
   return typeof metadata?.durationMs === "number" ? metadata.durationMs : null;
 }
 
+/** 消息流里的系统事件行（居中细分隔线），与用户 / 助手消息区分开。 */
+function CompactNoticeRow() {
+  return (
+    <div
+      role="status"
+      className="flex items-center justify-center gap-3 py-0.5 text-xs text-muted-foreground"
+    >
+      <span className="h-px w-10 bg-border" />
+      <span>上下文已压缩</span>
+      <span className="h-px w-10 bg-border" />
+    </div>
+  );
+}
+
 /** busy 期间逐秒走的计数器：等首字节的空窗里给用户一个「还在动」的凭据。 */
 function useBusySeconds(busy: boolean): number {
   const [seconds, setSeconds] = useState(0);
@@ -126,6 +134,22 @@ export function ChatPanel({
   conversationKey,
 }: ChatPanelProps) {
   const busy = status === "submitted" || status === "streaming";
+
+  // 手动压缩成功后，在消息流里留一条界面级系统提示（不进会话、不进模型上下文）。
+  // at 记录压缩时的消息条数，后续新消息会排在提示之后。
+  const [compactNotices, setCompactNotices] = useState<Array<{ id: string; at: number }>>([]);
+  const compactNoticeSeq = useRef(0);
+  const handleCompacted = useCallback(() => {
+    compactNoticeSeq.current += 1;
+    setCompactNotices((prev) => [
+      ...prev,
+      { id: `compact-${Date.now()}-${compactNoticeSeq.current}`, at: messages.length },
+    ]);
+  }, [messages.length]);
+  const renderNotices = (at: number) =>
+    compactNotices
+      .filter((notice) => notice.at === at)
+      .map((notice) => <CompactNoticeRow key={notice.id} />);
 
   // 发出后到首段文本出现前的空窗：流光占位，否则用户不知道 Agent 是否在动。
   const lastMessage = messages.at(-1);
@@ -169,6 +193,7 @@ export function ChatPanel({
           <MessageScroller className="min-h-0 flex-1">
             <MessageScrollerViewport>
               <MessageScrollerContent className="mx-auto w-full max-w-3xl gap-6 px-5 py-5">
+                {renderNotices(0)}
                 {messages.map((message, index) => {
                   const isLast = index === messages.length - 1;
 
@@ -176,34 +201,27 @@ export function ChatPanel({
                     const uploads = uploadParts(message);
                     const text = messageText(message);
                     return (
-                      <MessageScrollerItem key={message.id} scrollAnchor>
-                        <Message align="end">
-                          <MessageContent>
-                            {text !== "" && (
-                              <Bubble align="end" variant="muted">
-                                <BubbleContent className="whitespace-pre-wrap">{text}</BubbleContent>
-                              </Bubble>
-                            )}
-                            {uploads.map((file, partIndex) => (
-                              <Attachment
-                                key={`${file.fileName}-${partIndex}`}
-                                size="sm"
-                                className="max-w-60"
-                              >
-                                <AttachmentMedia>
-                                  <FileText />
-                                </AttachmentMedia>
-                                <AttachmentContent>
-                                  <AttachmentTitle>{file.fileName}</AttachmentTitle>
-                                  <AttachmentDescription>
-                                    {formatBytes(file.size)}
-                                  </AttachmentDescription>
-                                </AttachmentContent>
-                              </Attachment>
-                            ))}
-                          </MessageContent>
-                        </Message>
-                      </MessageScrollerItem>
+                      <Fragment key={message.id}>
+                        <MessageScrollerItem scrollAnchor>
+                          <Message align="end">
+                            <MessageContent>
+                              {text !== "" && (
+                                <Bubble align="end" variant="muted">
+                                  <BubbleContent className="whitespace-pre-wrap">{text}</BubbleContent>
+                                </Bubble>
+                              )}
+                              {uploads.map((file, partIndex) => (
+                                <UploadAttachment
+                                  key={`${file.fileName}-${partIndex}`}
+                                  file={file}
+                                  conversationKey={conversationKey}
+                                />
+                              ))}
+                            </MessageContent>
+                          </Message>
+                        </MessageScrollerItem>
+                        {renderNotices(index + 1)}
+                      </Fragment>
                     );
                   }
 
@@ -222,36 +240,39 @@ export function ChatPanel({
                   const showFooter = !(isLast && busy) && (duration !== null || fullText !== "");
 
                   return (
-                    <MessageScrollerItem key={message.id}>
-                      <Message>
-                        <MessageContent className="gap-3">
-                          {work.length > 0 && (
-                            <WorkBlock
-                              groups={work}
-                              streaming={streaming}
-                              tailPart={tailPart}
-                              elapsedMs={streaming ? busySeconds * 1000 : duration}
-                              onRespond={onApprovalResponse}
-                            />
-                          )}
+                    <Fragment key={message.id}>
+                      <MessageScrollerItem>
+                        <Message>
+                          <MessageContent className="gap-3">
+                            {work.length > 0 && (
+                              <WorkBlock
+                                groups={work}
+                                streaming={streaming}
+                                tailPart={tailPart}
+                                elapsedMs={streaming ? busySeconds * 1000 : duration}
+                                onRespond={onApprovalResponse}
+                              />
+                            )}
 
-                          {answer !== null && (
-                            <AssistantMarkdown streaming={isLast && status === "streaming"}>
-                              {answer.part.text}
-                            </AssistantMarkdown>
-                          )}
+                            {answer !== null && (
+                              <AssistantMarkdown streaming={isLast && status === "streaming"}>
+                                {answer.part.text}
+                              </AssistantMarkdown>
+                            )}
 
-                          {showFooter && (
-                            <MessageFooter className="gap-1 px-0">
-                              {duration !== null && work.length === 0 && (
-                                <span className="tabular-nums">耗时 {formatDuration(duration)}</span>
-                              )}
-                              <CopyButton text={fullText} />
-                            </MessageFooter>
-                          )}
-                        </MessageContent>
-                      </Message>
-                    </MessageScrollerItem>
+                            {showFooter && (
+                              <MessageFooter className="gap-1 px-0">
+                                {duration !== null && work.length === 0 && (
+                                  <span className="tabular-nums">耗时 {formatDuration(duration)}</span>
+                                )}
+                                <CopyButton text={fullText} />
+                              </MessageFooter>
+                            )}
+                          </MessageContent>
+                        </Message>
+                      </MessageScrollerItem>
+                      {renderNotices(index + 1)}
+                    </Fragment>
                   );
                 })}
 
@@ -293,6 +314,7 @@ export function ChatPanel({
             onSelectModel={onSelectModel}
             onOpenModelSettings={onOpenModelSettings}
             onOverlayChange={onOverlayChange}
+            onCompacted={handleCompacted}
           />
         </div>
       </div>

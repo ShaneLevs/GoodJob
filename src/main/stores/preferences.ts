@@ -1,6 +1,11 @@
 import fs from "node:fs";
 
-import type { AppearanceSettings, ThemeMode } from "@shared/types";
+import {
+  DEFAULT_MARKDOWN_THEME_ID,
+  type AppearanceSettings,
+  type MarkdownSettings,
+  type ThemeMode,
+} from "@shared/types";
 
 import { createRootPaths, writeJsonFile, type RootPaths } from "../workspace/paths";
 
@@ -12,13 +17,16 @@ export const FONT_SIZE_MAX = 18;
 interface PreferencesDoc {
   version: number;
   appearance: AppearanceSettings;
+  markdown: MarkdownSettings;
 }
 
 const DEFAULTS: AppearanceSettings = { themeMode: "system", fontSize: 13 };
+const MARKDOWN_DEFAULTS: MarkdownSettings = { themeId: DEFAULT_MARKDOWN_THEME_ID };
 
 /**
  * 机器级偏好（`~/.goodjob/preferences.json`，0600）。
- * 主题和字号是"这个人对这台机器的偏好"，切工作区不该跟着变，所以不放进工作区目录。
+ * 界面主题 / 字号 / 文档预览的 Markdown 主题都是"这个人对这台机器的偏好"，
+ * 切工作区不该跟着变，所以不放进工作区目录。
  */
 export class PreferencesStore {
   readonly root: RootPaths;
@@ -33,13 +41,26 @@ export class PreferencesStore {
     return this.doc.appearance;
   }
 
+  get markdown(): MarkdownSettings {
+    return this.doc.markdown;
+  }
+
   saveAppearance(patch: Partial<AppearanceSettings>): AppearanceSettings {
     this.doc = {
       ...this.doc,
-      appearance: normalize({ ...this.doc.appearance, ...patch }),
+      appearance: normalizeAppearance({ ...this.doc.appearance, ...patch }),
     };
     writeJsonFile(this.root.preferences, this.doc);
     return this.doc.appearance;
+  }
+
+  saveMarkdown(patch: Partial<MarkdownSettings>): MarkdownSettings {
+    this.doc = {
+      ...this.doc,
+      markdown: normalizeMarkdown({ ...this.doc.markdown, ...patch }),
+    };
+    writeJsonFile(this.root.preferences, this.doc);
+    return this.doc.markdown;
   }
 
   private read(): PreferencesDoc {
@@ -49,20 +70,30 @@ export class PreferencesStore {
       const appearance = typeof record.appearance === "object" && record.appearance !== null
         ? (record.appearance as Record<string, unknown>)
         : {};
+      const markdown = typeof record.markdown === "object" && record.markdown !== null
+        ? (record.markdown as Record<string, unknown>)
+        : {};
       return {
         version: VERSION,
-        appearance: normalize({
+        appearance: normalizeAppearance({
           themeMode: appearance.themeMode as ThemeMode | undefined,
           fontSize: typeof appearance.fontSize === "number" ? appearance.fontSize : undefined,
         }),
+        markdown: normalizeMarkdown({
+          themeId: typeof markdown.themeId === "string" ? markdown.themeId : undefined,
+        }),
       };
     } catch {
-      return { version: VERSION, appearance: { ...DEFAULTS } };
+      return {
+        version: VERSION,
+        appearance: { ...DEFAULTS },
+        markdown: { ...MARKDOWN_DEFAULTS },
+      };
     }
   }
 }
 
-function normalize(input: Partial<AppearanceSettings>): AppearanceSettings {
+function normalizeAppearance(input: Partial<AppearanceSettings>): AppearanceSettings {
   const mode = input.themeMode;
   const size = input.fontSize;
   return {
@@ -71,5 +102,16 @@ function normalize(input: Partial<AppearanceSettings>): AppearanceSettings {
       typeof size === "number" && Number.isFinite(size)
         ? Math.min(FONT_SIZE_MAX, Math.max(FONT_SIZE_MIN, Math.round(size)))
         : DEFAULTS.fontSize,
+  };
+}
+
+/**
+ * 主题 id 的合法性由渲染层模板注册表兜底（未知 id 回退默认），main 只保证是非空字符串。
+ * 这样新增模板只需要渲染层加一份 CSS + 一行登记。
+ */
+function normalizeMarkdown(input: Partial<MarkdownSettings>): MarkdownSettings {
+  const themeId = input.themeId?.trim();
+  return {
+    themeId: themeId !== undefined && themeId !== "" ? themeId : MARKDOWN_DEFAULTS.themeId,
   };
 }

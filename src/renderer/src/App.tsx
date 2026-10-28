@@ -2,15 +2,19 @@ import { useEffect, useState } from "react";
 
 import { Globe, PanelLeftClose, PanelLeftOpen } from "lucide-react";
 
-import type {
-  AppearanceSettings,
-  ModelSelection,
-  ModelsConfig,
-  TaskState,
-  WorkspacesState,
+import {
+  DEFAULT_MARKDOWN_THEME_ID,
+  type AppearanceSettings,
+  type MarkdownSettings,
+  type ModelSelection,
+  type ModelsConfig,
+  type TaskState,
+  type WorkspacesState,
 } from "@shared/types";
 
 import { BrowserPanel } from "@/components/browser/BrowserPanel";
+import { MarkdownThemeProvider } from "@/components/document/MarkdownTheme";
+import { getDocumentTemplate } from "@/components/document/templates";
 import { SettingsModal, type SettingsSection } from "@/components/settings/SettingsModal";
 import { Sidebar } from "@/components/shell/Sidebar";
 import { TasksBadge } from "@/components/shell/TasksBadge";
@@ -33,6 +37,9 @@ export function App() {
   const [appearance, setAppearance] = useState<AppearanceSettings>({
     themeMode: "system",
     fontSize: 13,
+  });
+  const [markdown, setMarkdown] = useState<MarkdownSettings>({
+    themeId: DEFAULT_MARKDOWN_THEME_ID,
   });
   const [systemDark, setSystemDark] = useState(
     () => window.matchMedia("(prefers-color-scheme: dark)").matches,
@@ -66,6 +73,15 @@ export function App() {
     void window.goodjob.models.get().then(setModels);
     void window.goodjob.workspace.get().then(setWorkspaces);
     void window.goodjob.appearance.get().then(setAppearance);
+    // 旧版 / 已下线主题的 id 在这里收敛成当前注册表里的 id，顺手写回偏好；
+    // 否则设置页下拉的 value 与存储值不一致，重选同一个主题不会触发保存。
+    void window.goodjob.markdown.get().then((settings) => {
+      const themeId = getDocumentTemplate(settings.themeId).id;
+      setMarkdown({ ...settings, themeId });
+      if (themeId !== settings.themeId) {
+        void window.goodjob.markdown.save({ themeId }).then(setMarkdown);
+      }
+    });
   }, []);
 
   // 后台任务：挂载取一次注册表，事件增量更新（任务只在内存，切工作区会清空重取）。
@@ -104,6 +120,12 @@ export function App() {
     void window.goodjob.appearance.save(patch).then(setAppearance);
   };
 
+  const changeMarkdown = (patch: Partial<MarkdownSettings>): void => {
+    // 主题切换同样先本地生效，预览与设置页里的示例立刻换装。
+    setMarkdown((prev) => ({ ...prev, ...patch }));
+    void window.goodjob.markdown.save(patch).then(setMarkdown);
+  };
+
   const switchWorkspace = (id: string): void => {
     void window.goodjob.workspace.switchTo(id).then((state) => {
       setWorkspaces(state);
@@ -130,6 +152,10 @@ export function App() {
    * 顶栏一条 48px：左边让出 macOS 交通灯（实测窗口 x 16–75 / y 19–30.5，中心 y≈24.5，
    * 正好落在 48px 的中线上），右边放我们自己的操作按钮 —— 展开/收起、以及后续新功能。
    * 内容区不再各自留位置，也不再往卡片里塞把手。
+   *
+   * 内容区不要加 no-drag：-webkit-app-region 会继承给后代，而 Blink 计算拖拽区域时
+   * 不按滚动容器的裁剪处理。消息流往上滚后，内容的布局盒会伸进顶栏，整片 no-drag
+   * 区域就在顶栏上挖出一个洞，表现为「对话上方的顶栏拖不动窗口」。
    */
   const topbar = (
     <div className="drag flex h-12 shrink-0 items-center gap-0.5 pr-2 pl-[92px]">
@@ -219,69 +245,73 @@ export function App() {
     !(activeModule === "jobs" && jobWorkbench !== null);
 
   return (
-    <TooltipProvider delayDuration={300}>
-      <ThemeApplier dark={dark} fontSize={appearance.fontSize} />
-      {/*
-       * 窗口 = 48px 顶栏（交通灯 + 我们的操作按钮）+ 下面分块的内容。
-       * 左栏直接铺在窗口底色上（没有卡片、没有描边），只有内容块是白色卡片，
-       * 层级因此是：窗口底 → 侧栏（导航）→ 内容卡（模块页 / 浏览器面板）。
-       */}
-      <div className="flex h-screen flex-col overflow-hidden bg-shell text-foreground">
-        {topbar}
+    <MarkdownThemeProvider themeId={markdown.themeId}>
+      <TooltipProvider delayDuration={300}>
+        <ThemeApplier dark={dark} fontSize={appearance.fontSize} />
+        {/*
+         * 窗口 = 48px 顶栏（交通灯 + 我们的操作按钮）+ 下面分块的内容。
+         * 左栏直接铺在窗口底色上（没有卡片、没有描边），只有内容块是白色卡片，
+         * 层级因此是：窗口底 → 侧栏（导航）→ 内容卡（模块页 / 浏览器面板）。
+         */}
+        <div className="flex h-screen flex-col overflow-hidden bg-shell text-foreground">
+          {topbar}
 
-        <div className="no-drag flex min-h-0 flex-1 gap-2 px-2 pb-2">
-          {sidebarOpen && (
-            <div className="w-[248px] shrink-0 overflow-hidden">
-              <Sidebar
-                activeModule={activeModule}
-                onSelectModule={(key) => {
-                  setActiveModule(key);
-                  // 浏览器是为当前模块打开的，换模块就收起来（否则它盖住新页面，看着像没反应）。
-                  setBrowserOpen(false);
-                  // 离开岗位模块即退出二级工作台（回来落在岗位表）。
-                  if (key !== "jobs") setJobWorkbench(null);
-                }}
-                workspaces={workspaces?.items ?? []}
-                currentWorkspace={
-                  workspaces?.items.find((item) => item.id === workspaces.currentId) ?? null
-                }
-                onOpenSettings={() => openSettings()}
-                onSwitchWorkspace={switchWorkspace}
-              />
-            </div>
-          )}
-
-          <main className="relative min-h-0 min-w-0 flex-1">
-            {moduleContent}
-            {/*
-             * 浏览器铺满整个内容块（原生 WebContentsView 停在其中留出的矩形上）。
-             * 模块页留在下层不卸载：它的会话与「让 Agent 接管」监听都要继续活着。
-             */}
-            {browserOpen && (
-              <div className="absolute inset-0 overflow-hidden rounded-2xl bg-card shadow-sm">
-                <BrowserPanel
-                  active
-                  suspended={settingsOpen || overlayOpen}
-                  takeoverAvailable={takeoverAvailable}
-                  onClose={() => setBrowserOpen(false)}
+          <div className="flex min-h-0 flex-1 gap-2 px-2 pb-2">
+            {sidebarOpen && (
+              <div className="w-[248px] shrink-0 overflow-hidden">
+                <Sidebar
+                  activeModule={activeModule}
+                  onSelectModule={(key) => {
+                    setActiveModule(key);
+                    // 浏览器是为当前模块打开的，换模块就收起来（否则它盖住新页面，看着像没反应）。
+                    setBrowserOpen(false);
+                    // 离开岗位模块即退出二级工作台（回来落在岗位表）。
+                    if (key !== "jobs") setJobWorkbench(null);
+                  }}
+                  workspaces={workspaces?.items ?? []}
+                  currentWorkspace={
+                    workspaces?.items.find((item) => item.id === workspaces.currentId) ?? null
+                  }
+                  onOpenSettings={() => openSettings()}
+                  onSwitchWorkspace={switchWorkspace}
                 />
               </div>
             )}
-          </main>
-        </div>
-      </div>
 
-      <SettingsModal
-        open={settingsOpen}
-        models={models}
-        appearance={appearance}
-        workspaceName={workspaceName}
-        initialSection={settingsSection}
-        onClose={() => setSettingsOpen(false)}
-        onSaved={setModels}
-        onAppearanceChange={changeAppearance}
-      />
-    </TooltipProvider>
+            <main className="relative min-h-0 min-w-0 flex-1">
+              {moduleContent}
+              {/*
+               * 浏览器铺满整个内容块（原生 WebContentsView 停在其中留出的矩形上）。
+               * 模块页留在下层不卸载：它的会话与「让 Agent 接管」监听都要继续活着。
+               */}
+              {browserOpen && (
+                <div className="absolute inset-0 overflow-hidden rounded-2xl bg-card shadow-sm">
+                  <BrowserPanel
+                    active
+                    suspended={settingsOpen || overlayOpen}
+                    takeoverAvailable={takeoverAvailable}
+                    onClose={() => setBrowserOpen(false)}
+                  />
+                </div>
+              )}
+            </main>
+          </div>
+        </div>
+
+        <SettingsModal
+          open={settingsOpen}
+          models={models}
+          appearance={appearance}
+          markdown={markdown}
+          workspaceName={workspaceName}
+          initialSection={settingsSection}
+          onClose={() => setSettingsOpen(false)}
+          onSaved={setModels}
+          onAppearanceChange={changeAppearance}
+          onMarkdownChange={changeMarkdown}
+        />
+      </TooltipProvider>
+    </MarkdownThemeProvider>
   );
 }
 

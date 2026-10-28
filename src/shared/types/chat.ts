@@ -107,3 +107,12 @@ export interface UploadedFileMeta {
   /** 文件大小（字节）。 */
   size: number;
 }
+
+/** 能预览缩略图、能交给视觉模型的图片扩展名。 */
+const IMAGE_UPLOAD_EXTENSIONS = new Set([".png", ".jpg", ".jpeg"]);
+
+/** 上传文件名是否是上面这几种图片（大小写不敏感）。 */
+export function isImageUploadName(fileName: string): boolean {
+  const dot = fileName.lastIndexOf(".");
+  return dot >= 0 && IMAGE_UPLOAD_EXTENSIONS.has(fileName.slice(dot).toLowerCase());
+}

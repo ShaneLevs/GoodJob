@@ -13,7 +13,8 @@ renderer   模块页（内嵌 Chat + 模块内容）· 浏览器浮层 · 模块
 preload    window.goodjob 窄接口（新增 agent / file / notify 频道）
 main       app/context.ts（store / service 装配）
              ├─ agent/runtime.ts（ToolLoopAgent + 指令 + 压缩）
-             │    └─ agent/tools/*（file / domain / skill / notify / browser）
+             │    └─ agent/tools/*（file / domain / task / notify / browser / skill）
+             │        + agent/skills/*（内置技能：SKILL.md + references，按需加载）
              ├─ stores/*（conversations / resumes / models / … + domain/*）
              ├─ services/*（tasks / notify / pdf-export）✅ P3
              └─ browser/automation/*（agent-browser，P4，见 BROWSER-AGENT.md）
@@ -32,7 +33,7 @@ main       app/context.ts（store / service 装配）
 | 7 | 通知整条流程封装为独立工具 | 模型只见 `notify` / `requestConfirmation` 两个工具与 approved / timeout 结果；SMTP/IMAP 凭据 safeStorage 加密，不进渲染层、不进日志 |
 | 8 | 语音后置（P5） | 文本先行；届时用 AI SDK `transcribe`（ASR）+ `generateSpeech`（TTS） |
 | 9 | 门控分级 | 在场：`toolApproval` 界面审批；离场：邮件确认工具。副作用动作必过其一 |
-| 10 | 无会话列表 | 每个模块一条滚动会话（`conversations/<key>.json`）；预算按模型配置的 `contextWindow`（默认 200K）算，用到约 90%（并为 `maxOutputTokens` 预留空间）就把更早消息压缩进摘要，切点对齐到 user 消息；完整历史始终保留。渲染层有上下文用量气泡（可手动压缩） |
+| 10 | 无会话列表 | 每个模块一条滚动会话（`conversations/<key>.json`）；预算按模型配置的 `contextWindow`（默认 200K）算，用到约 90%（并为 `maxOutputTokens` 预留空间）就把更早消息压缩进摘要，切点对齐到 user 消息；完整历史始终保留，Agent 可用 `conversation_search` / `conversation_read` 回查被压缩的原文。渲染层有上下文用量气泡（可手动压缩） |
 
 ## 3. 目录布局（工作区内）
 
@@ -46,7 +47,8 @@ workspaces/<id>/
     tailored/<jobId>.md (+ history/)     岗位定制简历（与岗位 1:1；P1 旧 name 文件兼容读取）
     scripts/<jobId>.md (+ .json + history/)   岗位话术：当前版 + 定稿 sidecar（final /
                                          finalizedAt / sha 指纹，改过即「待重新定稿」）+ 版本快照
-    reports/<ts>-integrity.json          主简历完整性报告（后台任务写入，保留历史）
+    reports/<ts>-integrity.json          主简历完整性报告（score + 模型生成的整页 HTML；
+                                         后台任务写入，保留历史；旧版结构化报告兼容读取）
     upload/                              用户上传的参考文件（Agent 用工具读取）
   companies/<id>.json                    公司档案（含调研快照 research + researchedAt）
   jobs/<id>.json                         岗位（JD 原文 + 匹配度报告 matchReport）
@@ -75,7 +77,7 @@ workspaces/<id>/
 - 会话类型：`ConversationKey` = `"resume" | "companies" | "jobs" | "applications" | \`job:${jobId}\` | \`interview:${id}\``
   （复合 key 是通用机制；interview:<id> 自 P3 M1 起）。没有独立「对话」页——
   产品决策：所有 LLM 交互都发生在具体模块里。UIMessage[] 与元数据持久化到 `conversations/`。
-- 工具注册表分五类（file / domain / skill / notify / browser），入口在
+- 工具注册表按域分组（file / domain / task / notify / browser / skill），入口在
   `agent/tools/index.ts` 的 `toolsFor(key)`，各域工厂在 `agent/tools/` 下按会话类型组装：领域会话拿类型化 CRUD（写操作的枚举 / 引用校验在 store，错误以 tool-error 带回
   模型）；`job:<jobId>` 会话的工具全部锁定该岗位（定制稿 / 话术无 id 参数）；
   `interview:<id>` 会话材料全只读（主简历 / 定制稿 / 话术 / JD），唯一写入口是面试记录
@@ -83,6 +85,14 @@ workspaces/<id>/
   （收束并写总评），轮次进度每次 send 由 runtime 注入指令（硬约束不靠模型自觉）。
   skill（评分）走后台任务：模块页按钮与会话内工具触发的是同一个 `TaskManager.run`，
   状态经 `task:event` 推渲染层，结果落库（匹配度报告写回岗位、完整性报告进 `reports/`）。
+- 内置技能库（`agent/skills/`）：一个技能一个目录（`SKILL.md` + `references/*.md`），
+  构建时以 `?raw` 内联进主进程产物；系统提示只注入当前会话适用的技能索引，
+  正文由 `skill_read` 按需读取。技能只提供方法论，不授予新工具；场景过滤在
+  `skills/index.ts` 的 `scenarioOf(key)`，当前给简历会话与 `job:<jobId>` 工作台。
+  同一份注册表经 `skills:list` 暴露给设置 → Skill 管理（只读查看元数据与全部文件正文）。
+- 后台 `resume-integrity` 任务直接复用 `resume-review` 的 `references/scoring-rubric.md`
+  作为评分规则，输出 `score` + 整页 HTML；评分卡在 sandbox iframe 里渲染，
+  渲染前经 DOMPurify 清洗并注入 CSP。
 - 审批分级：只读自动放行；工作区内写文件自动放行但先快照到 `history/`；
   邮件外发、浏览器写动作（browser_act）走 `toolApproval` 界面审批；浏览器提交
   （browser_submit）双重门——在场（默认）界面审批并展示「将要提交的内容摘要」，
@@ -121,7 +131,8 @@ Agent 写入以整文件覆盖为主，避免局部补丁错位。
 | Agent 运行时 | `src/main/agent/runtime.ts`（run / abort / context / compact / runDigest） |
 | 上下文预算与压缩 | `src/main/agent/context.ts` |
 | 会话指令 / persona | `src/main/agent/instructions.ts`、`src/main/agent/prompts/` |
-| 工具注册表 | `src/main/agent/tools/index.ts` + `tools/`（shared / resume / domain / job / interview） |
+| 工具注册表 | `src/main/agent/tools/index.ts` + `tools/`（conversation / shared / resume / domain / job / interview / skills） |
+| 内置技能库 | `src/main/agent/skills/`（resume-writing / resume-review / interview-prep；SKILL.md + references，`?raw` 内联） |
 | 持久化 | `src/main/stores/json-collection.ts` + `stores/`（conversations / resumes / models / …） |
 | 领域实体 | `src/main/stores/domain/companies.ts`、`jobs.ts`、`applications.ts`、`pipeline.ts`、`interviews.ts` |
 | 通知 / 后台任务 / PDF | `src/main/services/notify.ts`、`tasks.ts`、`pdf-export.ts` |
@@ -146,9 +157,11 @@ Agent 写入以整文件覆盖为主，避免局部补丁错位。
 > 而是把文件原样落盘到**当前会话所属模块的 upload/ 目录**（`chat:upload` IPC 带会话 key，
 > main 侧系统选择框 + `src/main/workspace/uploads.ts` 的 `uploadDirFor` 选目录：简历落
 > `resumes/<id>/upload/`，公司 / 岗位 / 投递落各自集合下的 `upload/`，`job:<id>` 与
-> `interview:<id>` 再下一层），消息只附 `data-upload` part 展示文件名（data part 不进模型
-> 输入），内容由 Agent 用 `upload_list` / `upload_read` 两个通用工具按需抽取（unpdf /
-> mammoth 在工具里跑）；模拟面试会话不发这对工具（角色限定），所以那里的输入框不显示
+> `interview:<id>` 再下一层），消息只附 `data-upload` part 展示文件名 / 图片缩略图，
+> 内容由 Agent 用 `upload_list` / `upload_read` 两个通用工具按需抽取（unpdf / mammoth
+> 在工具里跑）；图片（png / jpg / jpeg）例外——勾了「视觉输入」的模型会在
+> `convertToModelMessages` 的 `convertDataPart` 里拿到缩到 1024px 的图片 file part，
+> 没勾时仍只落盘。模拟面试会话不发这对工具（角色限定），所以那里的输入框不显示
 > 「+」。run 结束由渲染层把耗时写进助手消息 `metadata.durationMs` 并在消息脚展示，
 > 另补复制按钮、shimmer 思考动效，输入框去掉快捷键提示。
 1. AgentRuntime：ToolLoopAgent、UIMessage 流迁移、会话持久化与会话列表

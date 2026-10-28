@@ -1,4 +1,6 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+
+import DOMPurify from "dompurify";
 
 import type { IntegrityReport, JobMatchReport, ScorecardTarget } from "@shared/types";
 
@@ -22,7 +24,7 @@ type Loaded =
 /**
  * 评分卡弹窗：后台评分类任务写回的报告。
  * 两种定位：岗位匹配度（Job.matchReport，由 job-match 任务写回）与
- * 主简历完整性（resumes/<id>/reports/，由 resume-integrity 任务写入）。
+ * 主简历完整性（新版 report.html 直接渲染整页；旧版 reports/ 里的结构化字段兜底）。
  * 右栏工作台删除后，这里是报告唯一的展示入口（岗位表点匹配度徽标 / 简历页点完整性报告）。
  */
 export function ScorecardDialog({
@@ -76,7 +78,7 @@ export function ScorecardDialog({
       window.goodjob.resume.integrityReports(wanted.resumeId),
       window.goodjob.resume.list(),
     ]);
-    const latest = reports.at(-1) ?? null;
+    const latest = reports[0] ?? null;
     const name = resumeState.items.find((item) => item.id === wanted.resumeId)?.name ?? "简历";
     if (latest === null) {
       setReport({ kind: "missing", message: "这份简历还没有完整性报告。" });
@@ -110,7 +112,12 @@ export function ScorecardDialog({
 
   return (
     <Dialog open={open} onOpenChange={(next) => !next && onClose()}>
-      <DialogContent className="flex max-h-[86vh] flex-col gap-4 overflow-hidden sm:max-w-lg">
+      <DialogContent
+        className={cn(
+          "flex max-h-[86vh] flex-col gap-4 overflow-hidden",
+          target?.kind === "integrity" ? "sm:max-w-3xl" : "sm:max-w-lg",
+        )}
+      >
         {report === null ? (
           <ReportShell title="正在读取报告…" subtitle="">
             <p className="py-6 text-center text-sm text-muted-foreground">正在读取…</p>
@@ -121,7 +128,11 @@ export function ScorecardDialog({
           </ReportShell>
         ) : (
           <ReportShell title={report.title} subtitle={report.subtitle}>
-            <ReportBody report={report} />
+            {report.kind === "integrity" && report.report.html !== undefined ? (
+              <HtmlReport html={report.report.html} />
+            ) : (
+              <ReportBody report={report} />
+            )}
           </ReportShell>
         )}
       </DialogContent>
@@ -149,23 +160,98 @@ function ReportShell({
   );
 }
 
+/**
+ * 报告来自模型，进 iframe 前先过 DOMPurify；iframe 里再注入 CSP，
+ * 双保险地禁掉脚本、表单与外部资源。`allow-same-origin` 只用于量高度，
+ * 没有 `allow-scripts`，模型写的 JS 不会执行。
+ */
+const REPORT_CSP =
+  "<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:\">";
+
+const REPORT_FORBID_TAGS = [
+  "script",
+  "iframe",
+  "object",
+  "embed",
+  "form",
+  "input",
+  "button",
+  "textarea",
+  "select",
+  "link",
+  "meta",
+  "base",
+  "a",
+];
+
+function buildReportDocument(raw: string): string {
+  const clean = DOMPurify.sanitize(raw, {
+    WHOLE_DOCUMENT: true,
+    FORBID_TAGS: REPORT_FORBID_TAGS,
+    FORBID_ATTR: ["srcdoc", "formaction"],
+  });
+  // DOMPurify 可能丢掉 doctype；补回来，避免 iframe 落进怪异模式。
+  const doc = /^<!doctype/i.test(clean) ? clean : `<!doctype html>${clean}`;
+  if (/<head[^>]*>/i.test(doc)) {
+    return doc.replace(/<head([^>]*)>/i, `<head$1>${REPORT_CSP}`);
+  }
+  if (/<html[^>]*>/i.test(doc)) {
+    return doc.replace(/<html([^>]*)>/i, `<html$1><head>${REPORT_CSP}</head>`);
+  }
+  return `<!doctype html><html><head>${REPORT_CSP}</head><body>${doc}</body></html>`;
+}
+
+/** 新版 HTML 报告：等宽纸面 + 自动高度；内容自带样式，外层只负责边框和滚动。 */
+function HtmlReport({ html }: { html: string }) {
+  const frameRef = useRef<HTMLIFrameElement>(null);
+  const [height, setHeight] = useState(560);
+  const srcDoc = useMemo(() => buildReportDocument(html), [html]);
+
+  const measure = useCallback(() => {
+    const doc = frameRef.current?.contentDocument;
+    if (!doc) return;
+    const next = Math.ceil(doc.documentElement.scrollHeight);
+    if (Number.isFinite(next) && next > 0) {
+      // 报告整页交给外层弹窗滚动：iframe 本身不再套一层滚动条。
+      // 多留 48px，避免「刚好差一点 → 出现滚动条 → 重排变高」的循环。
+      setHeight(Math.min(Math.max(next + 48, 360), 4000));
+    }
+  }, []);
+
+  return (
+    <iframe
+      ref={frameRef}
+      title="简历完整性报告"
+      sandbox="allow-same-origin"
+      srcDoc={srcDoc}
+      onLoad={measure}
+      className="w-full rounded-xl border bg-white"
+      style={{ height }}
+    />
+  );
+}
+
 function ReportBody({
   report,
 }: {
   report: Extract<Loaded, { kind: "job" | "integrity" }>;
 }) {
   const data = report.report;
+  const dimensions = data.dimensions ?? [];
+  const conclusion = data.conclusion ?? "";
   return (
     <>
       <div className="mb-4 flex items-center gap-4 rounded-2xl bg-muted/40 p-4">
         <ScoreDial score={data.score} />
-        <p className="min-w-0 flex-1 text-sm leading-relaxed text-muted-foreground">
-          {data.conclusion}
-        </p>
+        {conclusion !== "" && (
+          <p className="min-w-0 flex-1 text-sm leading-relaxed text-muted-foreground">
+            {conclusion}
+          </p>
+        )}
       </div>
 
       <div className="flex flex-col gap-3">
-        {data.dimensions.map((dimension) => (
+        {dimensions.map((dimension) => (
           <div key={dimension.name} className="rounded-xl border border-border/60 p-3">
             <div className="mb-1.5 flex items-center gap-2">
               <span className="min-w-0 flex-1 truncate text-sm font-medium">{dimension.name}</span>

@@ -5,8 +5,9 @@ import { z } from "zod";
 
 import type { JobMatchDimension, TaskEvent, TaskState, TaskType } from "@shared/types";
 
-import type { JobsStore } from "../stores/domain/jobs";
 import { createLanguageModel, requireActiveModel } from "../agent/model-provider";
+import { RESUME_REVIEW_RUBRIC } from "../agent/skills/resume-review";
+import type { JobsStore } from "../stores/domain/jobs";
 import type { ModelsStore, ResolvedModel } from "../stores/models";
 import type { ResumeStore } from "../stores/resumes";
 
@@ -25,7 +26,7 @@ export interface TaskDeps {
   emit: (event: TaskEvent) => void;
 }
 
-/** 评分类输出的统一形状：job-match 与 resume-integrity 共用。 */
+/** 岗位匹配度报告的结构化形状（完整性报告已改成 score + 整页 HTML）。 */
 const reportSchema = z.object({
   score: z.number().min(0).max(100),
   dimensions: z
@@ -42,6 +43,12 @@ const reportSchema = z.object({
 });
 
 type ReportOutput = z.infer<typeof reportSchema>;
+
+/** 完整性报告改成整页 HTML：分数仍单独留字段，任务角标与评分卡头部直接可用。 */
+const integrityReportSchema = z.object({
+  score: z.number().min(0).max(100),
+  html: z.string().min(1),
+});
 
 export class TaskManager {
   private readonly registry = new Map<string, TaskState>();
@@ -206,29 +213,42 @@ export class TaskManager {
     this.patch(task, { progress: "正在评估完整性…" });
     const { output } = await generateText({
       model,
-      output: Output.object({ schema: reportSchema }),
+      output: Output.object({ schema: integrityReportSchema }),
       abortSignal: signal,
       prompt: [
-        "你是简历顾问，请审查下面这份求职简历的完整性，找出最影响投递效果的问题。",
+        "你是简历顾问，请严格按下面的评分细则审查这份求职简历，找出最影响投递效果的问题。",
+        "",
+        "【评分细则】",
+        RESUME_REVIEW_RUBRIC.trim(),
         "",
         "【简历】",
         resume.trim(),
         "",
         [
           "输出要求：",
-          "- score：完整性 0-100 的整数。",
-          "- dimensions：3-6 个维度，每个含 name / score(0-100) / comment。常见维度：基本信息完整度、",
-          "  经历量化程度（有没有数字与成果）、技能表述、结构与排版一致性、教育与其他背景；按实际内容取舍。",
-          "- conclusion：120 字以内，列出最值得先补的三件事。",
-          "只评论已有内容的完整度与说服力，不要替用户编造经历。",
+          "- score：按评分细则的七个维度与权重算出的总分（0-100 整数），必须与 HTML 报告里的总分一致。",
+          "- html：一份完整、可直接在浏览器打开的 HTML 报告（包含 <!doctype html>、<head>、<style>、<body>），简体中文。",
+          "  报告结构：",
+          "  1. 头部：简历标题、评测时间、总分（大号数字或环形）、一句话结论；",
+          "  2. 七维评分：每个维度的得分 / 满分 / 依据（引用简历原句或指出缺失）；",
+          "  3. 最值得先改的三件事，按影响排序；",
+          "  4. 2-3 组改写示例（原句 → 改写），只改表述、不新增事实；",
+          "  5. 仍然缺失、需要用户补充的信息清单。",
+          "  设计要求：白底深色文字，内容最大宽度 720px 居中，留白充足，使用系统字体，强调色 #2563eb，表格用浅灰边框；适合桌面阅读和打印。",
+          "  禁止：script、iframe、表单、外部 CSS / JS / 字体 / 图片、动画；所有样式写在 <style> 里。",
+          "只评论已有内容的完整度与说服力，不要替用户编造经历；分数克制，证据不足的维度给低分。",
         ].join("\n"),
       ].join("\n"),
     });
 
-    const report = normalizeReport(output);
+    const report = {
+      score: Math.round(output.score),
+      html: stripCodeFence(output.html),
+    };
+    if (report.html === "") throw new Error("模型没有返回报告正文，请重试。");
     this.patch(task, { progress: "正在保存报告…" });
     const saved = this.deps.resumes.saveIntegrityReport(task.target, report);
-    return `完整性 ${saved.score}/100：${saved.conclusion}（已存 ${saved.file}）`;
+    return `完整性 ${saved.score}/100（HTML 报告已存 ${saved.file}）`;
   }
 
   private patch(task: TaskState, changes: Partial<TaskState>): void {
@@ -247,6 +267,13 @@ export class TaskManager {
     Object.assign(current, outcome, { updatedAt: new Date().toISOString() });
     this.deps.emit({ type: "finish", task: current });
   }
+}
+
+/** 有些模型会把整页 HTML 包进 ```html 代码块；落库前剥掉围栏。 */
+function stripCodeFence(text: string): string {
+  const trimmed = text.trim();
+  const match = trimmed.match(/^```(?:html)?\s*\n?([\s\S]*?)\n?```$/i);
+  return (match?.[1] ?? trimmed).trim();
 }
 
 /** 模型输出 → 落库形状：分数取整、维度清洗，保证报告字段稳定。 */

@@ -232,7 +232,7 @@ export class ResumeStore {
   }
 
   /**
-   * `photo:` 指令指向的证件照 → data URL（预览与 PDF 导出共用）。
+   * 正文引用的 upload/ 图片 → data URL（预览与 PDF 导出共用）。
    * 只接受当前简历 `upload/` 下的 png / jpg / jpeg：realpath 校验防越界，
    * main 侧缩到 320px，渲染层只拿到小图，不需要为它开自定义协议。
    */
@@ -390,8 +390,7 @@ export class ResumeStore {
 
   saveIntegrityReport(resumeId: string, report: {
     score: number;
-    dimensions: JobMatchDimension[];
-    conclusion: string;
+    html: string;
   }): IntegrityReport {
     if (!this.doc.items.some((item) => item.id === resumeId)) throw new Error(`简历不存在：${resumeId}`);
     const dir = path.join(this.resumeDir(resumeId), "reports");
@@ -431,12 +430,17 @@ export class ResumeStore {
                   },
                 ];
               })
-            : [];
+            : undefined;
+          const html =
+            typeof record.html === "string" && record.html.trim() !== "" ? record.html : undefined;
+          const conclusion =
+            typeof record.conclusion === "string" ? record.conclusion : undefined;
           return {
             file,
             score: typeof record.score === "number" ? record.score : 0,
-            dimensions,
-            conclusion: typeof record.conclusion === "string" ? record.conclusion : "",
+            ...(html === undefined ? {} : { html }),
+            ...(dimensions === undefined ? {} : { dimensions }),
+            ...(conclusion === undefined ? {} : { conclusion }),
             createdAt: typeof record.createdAt === "string" ? record.createdAt : "",
           } satisfies IntegrityReport;
         } catch {

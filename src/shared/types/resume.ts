@@ -55,7 +55,10 @@ export interface IntegrityReport {
   /** 文件名（不含路径），按时间排序的键。 */
   file: string;
   score: number;
-  dimensions: JobMatchDimension[];
-  conclusion: string;
+  /** 新版：模型生成的完整 HTML 报告；旧版报告没有这个字段。 */
+  html?: string;
+  /** 旧版结构化报告字段（兼容历史文件；新版只写 HTML）。 */
+  dimensions?: JobMatchDimension[];
+  conclusion?: string;
   createdAt: string;
 }

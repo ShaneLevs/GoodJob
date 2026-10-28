@@ -1,0 +1,242 @@
+/*
+ * 「藏蓝」主题：标准商务风。
+ *   - 系统无衬线字体，藏蓝标题 + 亮蓝点缀，层级靠左侧色条与标题分隔线；
+ *   - 表格只保留表头底线，顶部联系方式表保持无框；
+ *   - 所有选择器挂在 .tpl-navy 下，由 DocumentPreview 以 <style> 注入。
+ */
+
+.tpl-navy {
+  --tpl-accent: #1d4ed8;
+  --tpl-navy: #1e3a8a;
+  --tpl-soft: #dbeafe;
+  --tpl-rule: #dbe4f0;
+  --tpl-muted: #5b6b82;
+  --tpl-code-bg: #0f1f3d;
+
+  position: relative;
+  max-width: 760px;
+  padding: 38px 46px 30px;
+  color: #1e293b;
+  font-family:
+    -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei",
+    sans-serif;
+  font-size: 14px;
+  line-height: 1.64;
+}
+
+/* —— 标题层级：1～4 级标题都带通栏下划线 —— */
+.tpl-navy h1,
+.tpl-navy h2,
+.tpl-navy h3,
+.tpl-navy h4 {
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--tpl-rule);
+}
+.tpl-navy h1 {
+  margin: 0 0 14px;
+  padding-bottom: 8px;
+  border-bottom: 3px solid var(--tpl-accent);
+  color: var(--tpl-navy);
+  font-size: 2em;
+  font-weight: 700;
+  line-height: 1.2;
+  letter-spacing: 0.01em;
+}
+.tpl-navy h2 {
+  margin: 20px 0 8px;
+  padding-left: 10px;
+  border-left: 4px solid var(--tpl-accent);
+  color: var(--tpl-navy);
+  font-size: 1.28em;
+  font-weight: 700;
+  line-height: 1.35;
+}
+.tpl-navy h3 {
+  margin: 16px 0 6px;
+  color: var(--tpl-navy);
+  font-size: 1.12em;
+  font-weight: 700;
+}
+.tpl-navy h4,
+.tpl-navy h5,
+.tpl-navy h6 {
+  margin: 12px 0 6px;
+  font-size: 1em;
+  font-weight: 600;
+}
+
+/* ==高亮== */
+.tpl-navy mark {
+  padding: 0 5px;
+  border-radius: 2px;
+  background: var(--tpl-soft);
+  color: var(--tpl-navy);
+}
+
+/* —— 两端对齐：普通行（左:::右）与条目标题（A | B | C）共用 —— */
+.tpl-navy .doc-split {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  column-gap: 1em;
+}
+.tpl-navy .doc-split-left {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.tpl-navy .doc-split-right {
+  margin-left: auto;
+  text-align: right;
+}
+.tpl-navy .entry-head {
+  margin: 15px 0 6px;
+  font-weight: 600;
+}
+
+/* —— 行内图标：icon:github —— */
+.tpl-navy .doc-icon {
+  display: inline-flex;
+  width: 1em;
+  height: 1em;
+  margin-right: 0.2em;
+  vertical-align: -0.125em;
+}
+.tpl-navy .doc-icon svg {
+  width: 100%;
+  height: 100%;
+}
+
+/* —— 正文 —— */
+.tpl-navy p {
+  margin: 5px 0;
+}
+.tpl-navy ul,
+.tpl-navy ol {
+  margin: 5px 0;
+  padding-left: 1.5em;
+}
+/* Tailwind preflight 把列表标记重置成 none；模板自己给回标记与嵌套层级。 */
+.tpl-navy ul {
+  list-style: disc;
+}
+.tpl-navy ul ul {
+  list-style: circle;
+}
+.tpl-navy ul ul ul {
+  list-style: square;
+}
+.tpl-navy ol {
+  list-style: decimal;
+}
+.tpl-navy ol ol {
+  list-style: lower-alpha;
+}
+.tpl-navy ol ol ol {
+  list-style: lower-roman;
+}
+.tpl-navy li {
+  margin: 4px 0;
+}
+.tpl-navy li > p {
+  margin: 0;
+}
+.tpl-navy strong {
+  font-weight: 700;
+}
+.tpl-navy hr {
+  margin: 16px 0;
+  border: none;
+  border-top: 1px solid var(--tpl-rule);
+}
+.tpl-navy a {
+  color: var(--tpl-accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.tpl-navy img {
+  max-width: 100%;
+}
+
+/* 引用：浅蓝底 + 左侧色条 */
+.tpl-navy blockquote {
+  margin: 8px 0;
+  padding: 8px 12px;
+  border-left: 3px solid #93c5fd;
+  border-radius: 0 4px 4px 0;
+  background: #f5f9ff;
+  color: var(--tpl-muted);
+  font-size: 0.95em;
+}
+.tpl-navy blockquote p {
+  margin: 0;
+}
+
+/* 表格：数据表只留表头底线；顶部联系方式表没有 thead，保持无框 */
+.tpl-navy table {
+  width: 100%;
+  margin: 8px 0;
+  border-collapse: collapse;
+}
+.tpl-navy th,
+.tpl-navy td {
+  padding: 5px 14px 5px 0;
+  text-align: left;
+  vertical-align: top;
+  font-weight: normal;
+}
+.tpl-navy thead th {
+  border-bottom: 1px solid var(--tpl-accent);
+  color: var(--tpl-navy);
+  font-weight: 600;
+}
+
+/* —— 代码 —— */
+.tpl-navy code,
+.tpl-navy tt {
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: #eff6ff;
+  color: var(--tpl-navy);
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 0.9em;
+}
+.tpl-navy pre {
+  margin: 8px 0;
+  padding: 10px 12px;
+  border-radius: 6px;
+  background: var(--tpl-code-bg);
+  color: #dbeafe;
+  overflow-x: auto;
+}
+.tpl-navy pre code {
+  padding: 0;
+  background: none;
+  color: inherit;
+}
+
+/* —— 打印 / PDF 导出 —— */
+@page {
+  size: A4;
+}
+@media print {
+  .tpl-navy {
+    max-width: none;
+    padding: 0;
+  }
+  .tpl-navy h1,
+  .tpl-navy h2,
+  .tpl-navy h3,
+  .tpl-navy h4,
+  .tpl-navy .entry-head,
+  .tpl-navy .doc-split {
+    break-after: avoid;
+  }
+  .tpl-navy .entry-head,
+  .tpl-navy .doc-split,
+  .tpl-navy table,
+  .tpl-navy blockquote,
+  .tpl-navy pre {
+    break-inside: avoid;
+  }
+}

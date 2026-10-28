@@ -15,7 +15,7 @@
 | AI 对话 UI | AI Elements patterns | shadcn 版 | 源码在 `components/ui/ai-elements/`，按 pattern 组合 message / bubble / message-scroller / input-group |
 | Markdown | Streamdown | 2.x | 流式增量解析 + 代码块 / 表格（对话区用） |
 | 简历编辑 | CodeMirror 6（`@uiw/react-codemirror` + `@codemirror/lang-markdown`） | 6.x | 编辑模式：Markdown 源码 + 高亮 |
-| 简历预览 | marked + DOMPurify + 模板 CSS | 18.x / 3.x | 预览模式：通用文档预览组件 `DocumentPreview`（`src/renderer/src/components/document/`），扩展语法 `==高亮==`、`#### A \| B \| C`、`左:::右`、`icon:name`、`photo:`；外观由模板决定，一个 CSS 文件一套主题（`templates/*.css`） |
+| 简历预览 | marked + DOMPurify + 模板 CSS | 18.x / 3.x | 预览模式：通用文档预览组件 `DocumentPreview`（`src/renderer/src/components/document/`），扩展语法 `==高亮==`、`#### A \| B \| C`、`左:::右`、`icon:name`；照片用 Markdown / HTML `<img src="upload/...">` 排版；外观由模板决定，一个 CSS 文件一套主题（`templates/*.css`，内置薄荷 / 石墨 / 藏蓝） |
 | 文档图标 | lucide-react + simple-icons | 1.x / 16.x | 通用图标走 lucide（已装）；品牌图标走 simple-icons（CC0），`icon:name` 注册表在 `components/document/icons.ts`，按需导入、单图标渲染缓存 |
 | React AI 钩子 | @ai-sdk/react | 4.x | `useChat` + 自定义 `ChatTransport`（IPC 桥），与 `ai@7` 成对 |
 | 文档抽取 | unpdf / mammoth | 1.x / 1.x | 上传旧简历抽正文（PDF / DOCX），只跑在 main |
@@ -66,7 +66,7 @@ renderer shadcn/ui + Tailwind 界面，不接触 node / 凭据
 
 - 一切运行时数据在 `~/.goodjob/`，不写 Application Support。根目录只放索引与机器级偏好，
   其余都跟着工作区走：
-  `workspaces.json`（工作区索引）、`preferences.json`（主题/字号）、
+  `workspaces.json`（工作区索引）、`preferences.json`（主题/字号/Markdown 预览主题）、
   `workspaces/<workspaceId>/`（`models.json`、`conversations/`、`cache/`、`logs/`）。
   目录名一律是 `ws_` 前缀的 ID，人类可读的名字只存在索引里，所以改名不用动磁盘。
 - 启动时 `process.umask(0o077)`；目录 `0700`，JSON 文件 `0600`。新增持久化路径先登记到
@@ -139,11 +139,13 @@ pnpm dist:mac   # electron-builder 打 dmg/zip（当前为未签名本地构建�
   `agent:pane-open` 事件打开，模块页留在下层不卸载（会话与「让 Agent 接管」监听要活着）。
   原生视图必须拿到一块矩形，这是它不能做成并排收窄的唯一原因。
 - **评分卡是弹层**（`ScorecardDialog`），不是常驻面板：岗位表的匹配度徽标、
-  简历页的完整性按钮各自弹出自己的报告。
+  简历页的完整性按钮各自弹出自己的报告。完整性报告由后台任务产出整页 HTML，
+  弹层内用 sandbox iframe 渲染（DOMPurify + CSP 双重清洗）。
 - 窗口用 `titleBarStyle: "hiddenInset"`（`trafficLightPosition: { x: 16, y: 18 }`），
   顶栏 `pl-[92px]` 让出交通灯。
 - 主题与字号来自机器级 `preferences.json`，由 `ThemeApplier` 写 `.dark` 类与 `--font-base`；
-  token 全部在 `src/renderer/src/globals.css`。
+  Markdown 预览主题也存在这里，由设置页「Markdown」分区写入，`DocumentPreview` 与 PDF
+  导出共用；token 全部在 `src/renderer/src/globals.css`。
 
 ## 已知坑
 

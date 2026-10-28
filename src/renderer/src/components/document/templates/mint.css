@@ -107,20 +107,6 @@
   height: 100%;
 }
 
-/* —— 证件照：photo: upload/xxx.jpg（模板决定位置：右上角，与信息表并排）—— */
-.tpl-mint .doc-photo {
-  position: absolute;
-  top: 36px;
-  right: 46px;
-  width: 96px;
-  height: 128px;
-  object-fit: cover;
-  border-radius: 4px;
-}
-.tpl-mint.has-photo .doc-body > table:first-of-type {
-  width: calc(100% - 116px);
-}
-
 /* —— 正文 —— */
 .tpl-mint p {
   margin: 4px 0;
@@ -129,6 +115,25 @@
 .tpl-mint ol {
   margin: 4px 0;
   padding-left: 1.6em;
+}
+/* Tailwind preflight 把列表标记重置成 none；模板自己给回标记与嵌套层级。 */
+.tpl-mint ul {
+  list-style: disc;
+}
+.tpl-mint ul ul {
+  list-style: circle;
+}
+.tpl-mint ul ul ul {
+  list-style: square;
+}
+.tpl-mint ol {
+  list-style: decimal;
+}
+.tpl-mint ol ol {
+  list-style: lower-alpha;
+}
+.tpl-mint ol ol ol {
+  list-style: lower-roman;
 }
 .tpl-mint li {
   margin: 4px 0;
@@ -212,10 +217,6 @@
     max-width: none;
     padding: 0;
   }
-  .tpl-mint .doc-photo {
-    top: 0;
-    right: 0;
-  }
   .tpl-mint h1,
   .tpl-mint h2,
   .tpl-mint h3,
@@ -225,7 +226,6 @@
   }
   .tpl-mint .entry-head,
   .tpl-mint .doc-split,
-  .tpl-mint .doc-photo,
   .tpl-mint table,
   .tpl-mint blockquote,
   .tpl-mint pre {

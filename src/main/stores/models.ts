@@ -66,6 +66,8 @@ export interface ResolvedModel {
   maxOutputTokens: number;
   /** 推理模型：勾上才把思考等级发给供应商。 */
   reasoning: boolean;
+  /** 视觉输入：勾上才把上传的图片交给模型。 */
+  vision: boolean;
 }
 
 /**
@@ -190,6 +192,7 @@ export class ModelsStore {
       contextWindow: active.model.contextWindow,
       maxOutputTokens: active.model.maxOutputTokens,
       reasoning: active.model.reasoning === true,
+      vision: active.model.vision === true,
     };
   }
 
@@ -231,6 +234,7 @@ export class ModelsStore {
       name: normalizeModelName(model),
       ready: provider.apiKeyEncrypted !== null || !requiresApiKey(provider.baseURL),
       reasoning: model.reasoning === true,
+      vision: model.vision === true,
     };
   }
 

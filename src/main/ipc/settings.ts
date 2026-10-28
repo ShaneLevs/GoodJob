@@ -5,6 +5,7 @@ import {
   type AppearanceSettings,
   type BrowserAgentSettingsDraft,
   type DigestKind,
+  type MarkdownSettings,
   type ModelSelection,
   type ModelsDraft,
   type NotificationDraft,
@@ -13,6 +14,7 @@ import {
   type TaskType,
 } from "@shared/types";
 
+import { listSkillInfos } from "../agent/skills";
 import { exportPdf } from "../services/pdf-export";
 import type { IpcDeps } from "./deps";
 
@@ -26,8 +28,12 @@ export function registerSettingsIpc(deps: IpcDeps): void {
   ipcMain.handle(IPC.tasksRerun, (_event, taskId: string) => tasks.rerun(taskId));
 
   // —— PDF 导出：隐藏窗口走渲染层 #export 路由（约定见 pdf-export.ts 文件头）——
+  // 调用方没指定模板时跟随设置里的 Markdown 主题：预览与成品用同一套排版。
   ipcMain.handle(IPC.pdfExport, (_event, payload: PdfExportPayload) =>
-    exportPdf(getWindow(), payload),
+    exportPdf(getWindow(), {
+      ...payload,
+      templateId: payload.templateId ?? preferences.markdown.themeId,
+    }),
   );
 
   // —— 通知（P3 M3）：配置 / 连通性测试 / 手动日报。密码只在 main 解密，不回渲染层 ——
@@ -55,4 +61,12 @@ export function registerSettingsIpc(deps: IpcDeps): void {
   ipcMain.handle(IPC.appearanceSave, (_event, patch: Partial<AppearanceSettings>) =>
     preferences.saveAppearance(patch),
   );
+
+  ipcMain.handle(IPC.markdownGet, () => preferences.markdown);
+  ipcMain.handle(IPC.markdownSave, (_event, patch: Partial<MarkdownSettings>) =>
+    preferences.saveMarkdown(patch),
+  );
+
+  // —— 内置技能库（只读）：设置 → Skill 管理展示 SKILL.md 与 references ——
+  ipcMain.handle(IPC.skillsList, () => listSkillInfos());
 }

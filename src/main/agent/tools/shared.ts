@@ -28,7 +28,7 @@ export function uploadTools(deps: AgentDeps, key: ConversationKey): ToolSet {
     }),
     upload_read: tool({
       description:
-        "读取一份上传文件的文本：PDF / DOCX 自动抽成纯文本，Markdown / 文本文件返回原文。fileName 用 upload_list 里的名字。",
+        "读取一份上传文件的文本：PDF / DOCX 自动抽成纯文本，Markdown / 文本文件返回原文。fileName 用 upload_list 里的名字。图片没有可抽取的文字：支持视觉的模型会直接看到用户消息里随附的图片，不要用本工具读图片。",
       inputSchema: z.object({ fileName: z.string() }),
       execute: ({ fileName }) => readUploadFile(deps.uploadDir(key), fileName),
     }),

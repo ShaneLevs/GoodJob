@@ -1,18 +1,19 @@
 import { useMemo } from "react";
 
 import { cn } from "@/lib/utils";
+import { useMarkdownTheme } from "@/components/document/MarkdownTheme";
 import { extractPhotoDirective, renderMarkdownHtml } from "@/components/document/render";
-import { DEFAULT_TEMPLATE_ID, getDocumentTemplate } from "@/components/document/templates";
+import { getDocumentTemplate } from "@/components/document/templates";
 
 interface DocumentPreviewProps {
   markdown: string;
   /** 模板 id，缺省用默认模板。 */
   templateId?: string;
   /**
-   * `photo:` 指令解析出的证件照（data URL）。图片读取在 main，渲染层只负责放；
-   * 传入时纸面会多一个 .doc-photo，模板 CSS 决定它放哪。
+   * 正文里 upload/ 图片路径 → data URL。图片读取在 main，渲染层只替换 src；
+   * 图片放在哪由 Markdown / HTML 自己决定，模板 CSS 不再参与定位。
    */
-  photoUrl?: string | null;
+  imageUrls?: Readonly<Record<string, string>>;
   /** 内容为空时纸面位置的提示文案（各使用处自己给，别在这里塞业务话术）。 */
   emptyText?: string;
 }
@@ -25,17 +26,17 @@ interface DocumentPreviewProps {
  */
 export function DocumentPreview({
   markdown,
-  templateId = DEFAULT_TEMPLATE_ID,
-  photoUrl,
+  templateId,
+  imageUrls,
   emptyText,
 }: DocumentPreviewProps) {
-  const template = getDocumentTemplate(templateId);
-  // `photo:` 是文档级指令，先抽掉再解析正文；照片本身由调用方从 main 取。
+  const themeId = useMarkdownTheme();
+  const template = getDocumentTemplate(templateId ?? themeId);
+  // 旧版 `photo:` 指令只从正文里去掉，不再生成照片节点：位置由 Markdown 决定。
   const { markdown: body } = useMemo(() => extractPhotoDirective(markdown), [markdown]);
-  const html = useMemo(() => renderMarkdownHtml(body), [body]);
-  const hasPhoto = photoUrl !== undefined && photoUrl !== null && photoUrl !== "";
+  const html = useMemo(() => renderMarkdownHtml(body, imageUrls), [body, imageUrls]);
 
-  if (body.trim() === "" && !hasPhoto) {
+  if (body.trim() === "") {
     return (
       <div className="flex h-full items-center justify-center bg-muted/40 px-8 text-center text-sm text-muted-foreground">
         {emptyText ?? "暂无内容"}
@@ -50,10 +51,8 @@ export function DocumentPreview({
         className={cn(
           "doc-paper mx-auto min-h-full bg-white shadow-sm ring-1 ring-black/5 print:min-h-0 print:shadow-none print:ring-0",
           template.paperClass,
-          hasPhoto && "has-photo",
         )}
       >
-        {hasPhoto && <img className="doc-photo" src={photoUrl ?? undefined} alt="" />}
         <div className="doc-body" dangerouslySetInnerHTML={{ __html: html }} />
       </div>
     </div>

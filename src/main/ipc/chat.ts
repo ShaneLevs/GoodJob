@@ -7,8 +7,11 @@ import {
   type WireMessage,
 } from "@shared/types";
 
-import { saveUploadFile, uploadDirFor } from "../workspace/uploads";
+import { readUploadImageDataUrl, saveUploadFile, uploadDirFor } from "../workspace/uploads";
 import type { IpcDeps, SendToUi } from "./deps";
+
+/** 对话里的图片缩略图宽度：气泡内只显示 32px，320px 在高分屏上也不糊。 */
+const UPLOAD_PREVIEW_WIDTH = 320;
 
 export function registerChatIpc(deps: IpcDeps, sendToUi: SendToUi): void {
   const { getWindow, runtime, conversations, resumes, workspaces } = deps;
@@ -35,8 +38,15 @@ export function registerChatIpc(deps: IpcDeps, sendToUi: SendToUi): void {
   ipcMain.handle(IPC.chatUpload, async (_event, key: ConversationKey) => {
     const win = getWindow();
     const options = {
-      title: "上传参考文件",
-      filters: [{ name: "可读取的文档", extensions: ["pdf", "docx", "md", "markdown", "txt", "csv"] }],
+      title: "上传参考文件或图片",
+      filters: [
+        {
+          name: "文档与图片",
+          extensions: ["pdf", "docx", "md", "markdown", "txt", "csv", "png", "jpg", "jpeg"],
+        },
+        { name: "图片", extensions: ["png", "jpg", "jpeg"] },
+        { name: "文档", extensions: ["pdf", "docx", "md", "markdown", "txt", "csv"] },
+      ],
       properties: ["openFile" as const, "multiSelections" as const],
     };
     const picked =
@@ -44,5 +54,12 @@ export function registerChatIpc(deps: IpcDeps, sendToUi: SendToUi): void {
     if (picked.canceled || picked.filePaths.length === 0) return null;
     const dir = uploadDirFor(workspaces.currentPaths, key, resumes.currentUploadDir());
     return picked.filePaths.map((filePath) => saveUploadFile(dir, filePath));
+  });
+
+  // 对话里已发出的图片缩略图：只读当前会话 upload/ 内的 png / jpg / jpeg，
+  // main 缩到 320px 再给 data URL，渲染层不需要文件系统权限。
+  ipcMain.handle(IPC.chatUploadPreview, (_event, key: ConversationKey, fileName: string) => {
+    const dir = uploadDirFor(workspaces.currentPaths, key, resumes.currentUploadDir());
+    return readUploadImageDataUrl(dir, fileName, UPLOAD_PREVIEW_WIDTH);
   });
 }

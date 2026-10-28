@@ -13,8 +13,8 @@ import { iconSvg } from "./icons";
  *   - `#### A | B | C` 竖线分段标题，渲染成两端对齐的 .entry-head。
  *   - `左边:::右边`    普通行两端对齐；标题里也能用：`#### 标题:::日期`。
  *   - `icon:github`    行内图标；在 Markdown 与原始 HTML（顶部信息表）里都生效。
- *   - `photo: upload/x.jpg` 不是这里处理的：由 extractPhotoDirective 抽出来，
- *     交给 MarkdownPreview 的 photoUrl prop（图片读取在 main）。
+ *   - `upload/x.jpg`   正文里的图片引用（Markdown 或 HTML <img>）由调用方在 main 读成
+ *     data URL 后通过 imageUrls 传入，本文件只负责替换 src；位置完全由正文决定。
  */
 
 interface EntryHeadToken extends Tokens.Generic {
@@ -227,17 +227,67 @@ function injectIcons(html: string): string {
   return template.innerHTML;
 }
 
+/** 去掉 `./` 前缀、统一斜杠，只保留 upload/ 相对路径。 */
+function normalizeUploadPath(src: string): string {
+  const normalized = src.trim().replace(/\\/g, "/");
+  return normalized.startsWith("./") ? normalized.slice(2) : normalized;
+}
+
+/** 正文里引用的 upload/ 图片路径（HTML <img src> 与 Markdown ![](...) 都算）。 */
+export function extractUploadImagePaths(markdown: string): string[] {
+  const paths = new Set<string>();
+  const collect = (src: string | undefined): void => {
+    if (src === undefined) return;
+    const normalized = normalizeUploadPath(src);
+    if (normalized.startsWith("upload/")) paths.add(normalized);
+  };
+
+  for (const match of markdown.matchAll(
+    /<img\b[^>]*?\bsrc\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/gi,
+  )) {
+    collect(match[1] ?? match[2] ?? match[3]);
+  }
+  for (const match of markdown.matchAll(
+    /!\[[^\]]*\]\(\s*<?([^)\s>]+)>?(?:\s+["'][^"']*["'])?\s*\)/g,
+  )) {
+    collect(match[1]);
+  }
+  return [...paths];
+}
+
+/** 把正文里的 upload/ 相对路径换成 main 读出的 data URL；其余图片原样保留。 */
+function applyImageUrls(html: string, imageUrls?: Readonly<Record<string, string>>): string {
+  if (imageUrls === undefined || Object.keys(imageUrls).length === 0) return html;
+
+  const template = document.createElement("template");
+  template.innerHTML = html;
+  for (const image of template.content.querySelectorAll("img[src]")) {
+    const src = image.getAttribute("src");
+    if (src === null) continue;
+    const url = imageUrls[src] ?? imageUrls[normalizeUploadPath(src)];
+    if (url !== undefined) image.setAttribute("src", url);
+  }
+  return template.innerHTML;
+}
+
 /**
  * Markdown 正文 → 可直接注入预览纸面的 HTML。
  * 禁掉 `<style>`：文档里的样式块是 Typora 的用法，外观只由模板 CSS 决定。
+ * imageUrls 是 upload/ 相对路径 → data URL 的映射；图片位置由正文自身的 HTML 决定。
  */
-export function renderMarkdownHtml(markdown: string): string {
+export function renderMarkdownHtml(
+  markdown: string,
+  imageUrls?: Readonly<Record<string, string>>,
+): string {
   const html = marked.parse(protectEscapes(markdown)) as string;
   const sanitized = DOMPurify.sanitize(html, { FORBID_TAGS: ["style"] });
-  return restoreEscapes(injectIcons(sanitized));
+  return restoreEscapes(injectIcons(applyImageUrls(sanitized, imageUrls)));
 }
 
-/** 文档第一行的 `photo: upload/xxx.jpg`；返回去掉指令后的正文与照片相对路径。 */
+/**
+ * 旧版文档第一行的 `photo: upload/xxx.jpg`。照片位置现在由正文决定，
+ * 这里只负责把旧指令从正文里去掉；要显示照片请在 Markdown 里写 <img>。
+ */
 const PHOTO_DIRECTIVE = /^(?:[ \t]*\r?\n)*[ \t]*photo:[ \t]*(.+?)[ \t]*(?:\r?\n|$)/;
 
 export interface ParsedDocumentMarkdown {

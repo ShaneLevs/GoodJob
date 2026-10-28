@@ -81,6 +81,12 @@ AI SDK 4/5，本项目跑 Tailwind 4 + AI SDK 7，都是破坏性版本）。
   （shadcn 变量 + 壳层语义变量 + `@custom-variant` 桥接 + markdown 排版）。
 - `.agents/skills/antd`、`skills/x-*` 是迁移前的历史知识库，**已不适用**，不要再按其写代码。
 
+### 内置技能库
+
+- `src/main/agent/skills/` 是产品内置技能（简历写作 / 简历优化与判断 / 面试准备），
+  会被注入模型上下文，按会话场景通过 `skill_read` 加载。
+- 它与上面的 `.agents/skills/` 无关：后者是迁移前的开发知识库，不会进产品。
+
 ## 界面结构（渲染层）
 
 三层，从外到内：**48px 顶栏 → 平铺的左栏 → 白色内容块**。
@@ -125,7 +131,11 @@ src/main/       Electron 主进程
   agent/        LLM Agent：runtime.ts（run / abort / context / compact / runDigest）、
                 context.ts（预算 / 压缩 / 摘要）、instructions.ts（会话指令）、
                 prompts/resume-format.ts、model-provider.ts、deps.ts、
-                tools/（shared / resume / domain / job / interview 按会话组装）
+                tools/（conversation / shared / resume / domain / job / interview / skills
+                按会话组装）、
+                skills/（内置技能库：resume-writing / resume-review / interview-prep；
+                一个技能一个目录，SKILL.md + references/ 构建时以 ?raw 内联，
+                系统提示只放索引，正文由 skill_read 按会话场景按需读取）
   browser/      内嵌浏览器：panel.ts（多标签 WebContentsView 池）；
                 automation/（cli.ts 二进制定位与 spawn、actions.ts 受控动作与 argv、
                 target.ts tab 锁定、runner.ts 任务包络与审计、settings-store.ts 开关与限速）
@@ -147,7 +157,7 @@ src/renderer/   React + shadcn/ui + Tailwind 4
                        AssistantMarkdown（AI 流式 Markdown）/ IPC transport / 会话 hooks
   components/browser/  BrowserPanel（内嵌多标签浏览器：标签条 + 工具条）
   components/document/ DocumentPreview（文档纸面）+ render / icons / templates
-  components/settings/ SettingsModal + 外观 / 模型 / 通知 / 浏览器分区
+  components/settings/ SettingsModal + 外观 / 模型 / 通知 / 浏览器 / Skill 管理分区
   components/modules/  resume / companies / jobs / applications / interview 各模块页与
                        同目录弹窗；shared/ 放跨模块组件（ModelGate / Scorecard /
                        ResumeEditorCard / DeleteDialog / table-bits / module-page）
@@ -171,7 +181,7 @@ scripts/        图标管线：make-icons.mjs 用 Electron 渲染 build/icon-dra
 ```
 ~/.goodjob/                 0700
   workspaces.json           0600  索引：items[]（id / name / createdAt）+ currentId
-  preferences.json          0600  机器级偏好：界面主题、界面字号
+  preferences.json          0600  机器级偏好：界面主题、界面字号、Markdown 预览主题
   workspaces/               0700
     <workspaceId>/          0700  目录名一律 ID（ws_ 前缀 + 12 位 hex）
       models.json           0600  模型供应商 + 加密 Key
@@ -205,8 +215,10 @@ scripts/        图标管线：make-icons.mjs 用 Electron 渲染 build/icon-dra
                                   直方图 / 错误，不含 prompt 与模型输出）
 ```
 
-- **外观（主题 / 字号）是机器级偏好，不进工作区**：存根目录 `preferences.json`，
-  切工作区不跟着变。字号 10–18px，主题 `system | light | dark`。
+- **外观（主题 / 字号）与 Markdown 预览主题是机器级偏好，不进工作区**：存根目录
+  `preferences.json`，切工作区不跟着变。字号 10–18px，主题 `system | light | dark`；
+  Markdown 主题存模板 id（见 `components/document/templates`：`mint` / `graphite` / `navy`），
+  设置页的「Markdown」标签页修改，预览与 PDF 导出共用。
 - **agent-browser 自己的状态目录是 `~/.agent-browser`**（P4）：daemon pid / socket /
   会话恢复都在那里，不在 `~/.goodjob` 里——这是既有约定的一处偏离，设置页已如实
   告知；不要试图改 HOME 迁移它。

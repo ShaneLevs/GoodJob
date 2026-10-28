@@ -1,16 +1,8 @@
 import { useMemo, useRef, useState } from "react";
 
-import {
-  ArrowUp,
-  ChevronDown,
-  FileText,
-  Plus,
-  Settings2,
-  Square,
-  X,
-} from "lucide-react";
+import { ArrowUp, ChevronDown, Plus, Settings2, Square } from "lucide-react";
 
-import { DEFAULT_REASONING_EFFORT } from "@shared/types";
+import { DEFAULT_REASONING_EFFORT, isImageUploadName } from "@shared/types";
 import type {
   ContextUsage,
   ConversationKey,
@@ -20,15 +12,6 @@ import type {
   UploadedFileMeta,
 } from "@shared/types";
 
-import {
-  Attachment,
-  AttachmentAction,
-  AttachmentActions,
-  AttachmentContent,
-  AttachmentDescription,
-  AttachmentMedia,
-  AttachmentTitle,
-} from "@/components/ui/ai-elements/attachment";
 import {
   InputGroup,
   InputGroupAddon,
@@ -48,8 +31,9 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
 import { Progress } from "@/components/ui/progress";
-import { formatBytes, formatContext, formatTokens } from "@/lib/format";
+import { formatContext, formatTokens } from "@/lib/format";
 
+import { UploadAttachment } from "./UploadAttachment";
 import { useContextUsage } from "./use-context-usage";
 
 interface ModelOption {
@@ -75,6 +59,8 @@ interface ComposerProps {
   onSelectModel: (selection: ModelSelection) => void;
   onOpenModelSettings: () => void;
   onOverlayChange: (open: boolean) => void;
+  /** 一次手动压缩成功落盘后通知外层，好在消息流里插入系统提示。 */
+  onCompacted: () => void;
 }
 
 const EFFORT_OPTIONS: Array<{ value: ReasoningEffort; label: string }> = [
@@ -112,15 +98,22 @@ export function Composer({
   onSelectModel,
   onOpenModelSettings,
   onOverlayChange,
+  onCompacted,
 }: ComposerProps) {
   const [draft, setDraft] = useState("");
   const [effort, setEffort] = useState<ReasoningEffort>(DEFAULT_REASONING_EFFORT);
   const [pendingUploads, setPendingUploads] = useState<UploadedFileMeta[]>([]);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  // 压缩在 main 里同步执行：期间只锁发送，输入框继续可编辑。
+  const [compacting, setCompacting] = useState(false);
+  const [compactError, setCompactError] = useState<string | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
   const active = models?.activeModel ?? null;
   const activeKey = active === null ? null : optionKey(active.providerId, active.modelId);
+  const hasImagePending = pendingUploads.some((file) => isImageUploadName(file.fileName));
+  // 没勾「视觉输入」的模型仍可收图（保存成文件），只是看不到画面，提前说明。
+  const visionOff = active !== null && !active.vision;
 
   /*
    * 只列出「启用的供应商 × 启用的模型」，和 main 里 resolveActive 的可用范围保持一致，
@@ -151,14 +144,19 @@ export function Composer({
     usage.limit > 0 ? Math.min(100, Math.round((usage.used / usage.limit) * 100)) : 0;
   const thresholdPercent =
     usage.limit > 0 ? Math.round((usage.threshold / usage.limit) * 100) : 0;
-  const canSend = (draft.trim() !== "" || pendingUploads.length > 0) && !busy;
+  const canSend = (draft.trim() !== "" || pendingUploads.length > 0) && !busy && !compacting;
 
   const submit = (): void => {
     if (!canSend) return;
+    const imageOnly =
+      pendingUploads.length > 0 &&
+      pendingUploads.every((file) => isImageUploadName(file.fileName));
     const text =
       draft.trim() !== ""
         ? draft.trim()
-        : `我上传了文件 ${pendingUploads.map((file) => `「${file.fileName}」`).join("、")}，请查看。`;
+        : `${imageOnly ? "我上传了图片" : "我上传了文件"} ${pendingUploads
+            .map((file) => `「${file.fileName}」`)
+            .join("、")}，请查看。`;
     onSend(text, pendingUploads, effort);
     setDraft("");
     setPendingUploads([]);
@@ -180,6 +178,21 @@ export function Composer({
       });
   };
 
+  // 手动压缩：main 的摘要调用是同步 IPC，压缩期间锁发送、按钮显示「压缩中」。
+  const handleCompact = async (): Promise<void> => {
+    if (compacting || busy || usage.used === 0) return;
+    setCompacting(true);
+    setCompactError(null);
+    try {
+      await compact();
+      onCompacted();
+    } catch (cause: unknown) {
+      setCompactError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setCompacting(false);
+    }
+  };
+
   return (
     <form
       className="w-full"
@@ -191,31 +204,26 @@ export function Composer({
       {uploadError !== null && (
         <p className="px-1 pb-1.5 text-xs text-destructive">{uploadError}</p>
       )}
+      {visionOff && hasImagePending && (
+        <p className="px-1 pb-1.5 text-xs text-muted-foreground">
+          当前模型没有勾选「视觉输入」：图片会保存到上传目录，但模型看不到画面。可在设置 →
+          模型里勾选。
+        </p>
+      )}
       <InputGroup>
         {pendingUploads.length > 0 && (
           <InputGroupAddon align="block-start" className="flex-wrap">
             {pendingUploads.map((file) => (
-              <Attachment key={file.fileName} size="sm" className="max-w-60">
-                <AttachmentMedia>
-                  <FileText />
-                </AttachmentMedia>
-                <AttachmentContent>
-                  <AttachmentTitle>{file.fileName}</AttachmentTitle>
-                  <AttachmentDescription>{formatBytes(file.size)}</AttachmentDescription>
-                </AttachmentContent>
-                <AttachmentActions>
-                  <AttachmentAction
-                    aria-label={`移除 ${file.fileName}`}
-                    onClick={() =>
-                      setPendingUploads((prev) =>
-                        prev.filter((item) => item.fileName !== file.fileName),
-                      )
-                    }
-                  >
-                    <X />
-                  </AttachmentAction>
-                </AttachmentActions>
-              </Attachment>
+              <UploadAttachment
+                key={file.fileName}
+                file={file}
+                conversationKey={conversationKey}
+                onRemove={() =>
+                  setPendingUploads((prev) =>
+                    prev.filter((item) => item.fileName !== file.fileName),
+                  )
+                }
+              />
             ))}
           </InputGroupAddon>
         )}
@@ -238,7 +246,7 @@ export function Composer({
               size="icon-sm"
               variant="ghost"
               className="text-muted-foreground"
-              aria-label="上传参考文件（PDF / Word / Markdown / 文本）"
+              aria-label="上传参考文件或图片（PDF / Word / Markdown / 文本 / 图片）"
               disabled={busy}
               onClick={uploadFiles}
             >
@@ -279,14 +287,18 @@ export function Composer({
                     到 {thresholdPercent}% 自动压缩
                   </span>
                   <Button
+                    type="button"
                     size="sm"
                     variant="outline"
-                    disabled={busy || usage.used === 0}
-                    onClick={() => void compact()}
+                    disabled={busy || compacting || usage.used === 0}
+                    onClick={() => void handleCompact()}
                   >
-                    压缩
+                    {compacting ? "压缩中" : "压缩"}
                   </Button>
                 </div>
+                {compactError !== null && (
+                  <p className="text-xs text-destructive">{compactError}</p>
+                )}
               </HoverCardContent>
             </HoverCard>
           )}

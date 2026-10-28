@@ -23,6 +23,7 @@ import type {
   Interview,
   Job,
   JobPatch,
+  MarkdownSettings,
   ModelSelection,
   ModelsConfig,
   ModelsDraft,
@@ -42,6 +43,7 @@ import type {
   ResumeFileEvent,
   ResumeListState,
   ScriptDoc,
+  SkillInfo,
   TailoredDoc,
   TaskEvent,
   TaskState,
@@ -92,6 +94,8 @@ const api: GoodjobApi = {
       ipcRenderer.invoke(IPC.chatCompact, key) as Promise<ContextUsage>,
     upload: (key: ConversationKey) =>
       ipcRenderer.invoke(IPC.chatUpload, key) as Promise<UploadedFileMeta[] | null>,
+    uploadPreview: (key: ConversationKey, fileName: string) =>
+      ipcRenderer.invoke(IPC.chatUploadPreview, key, fileName) as Promise<string | null>,
     onChunk: (listener: (event: ChatStreamEvent) => void) =>
       subscribe(IPC.chatChunk, listener),
   },
@@ -208,6 +212,14 @@ const api: GoodjobApi = {
     get: () => ipcRenderer.invoke(IPC.appearanceGet) as Promise<AppearanceSettings>,
     save: (patch: Partial<AppearanceSettings>) =>
       ipcRenderer.invoke(IPC.appearanceSave, patch) as Promise<AppearanceSettings>,
+  },
+  markdown: {
+    get: () => ipcRenderer.invoke(IPC.markdownGet) as Promise<MarkdownSettings>,
+    save: (patch: Partial<MarkdownSettings>) =>
+      ipcRenderer.invoke(IPC.markdownSave, patch) as Promise<MarkdownSettings>,
+  },
+  skills: {
+    list: () => ipcRenderer.invoke(IPC.skillsList) as Promise<SkillInfo[]>,
   },
   workspace: {
     get: () => ipcRenderer.invoke(IPC.workspaceGet) as Promise<WorkspacesState>,

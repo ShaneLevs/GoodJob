@@ -1,0 +1,235 @@
+/*
+ * 「石墨」主题：冷灰蓝的现代商务风。
+ *   - 无衬线系统字体、克制的分隔线、单一钢蓝点缀；
+ *   - 表格只保留表头底线，顶部联系方式表保持无框；
+ *   - 所有选择器挂在 .tpl-graphite 下，由 DocumentPreview 以 <style> 注入。
+ */
+
+.tpl-graphite {
+  --tpl-accent: #3d648c;
+  --tpl-rule: #dfe3e8;
+  --tpl-soft: #e7edf4;
+  --tpl-muted: #6b7280;
+  --tpl-code-bg: #1f2937;
+
+  position: relative;
+  max-width: 760px;
+  padding: 40px 48px 32px;
+  color: #1f2328;
+  font-family:
+    -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei",
+    sans-serif;
+  font-size: 14px;
+  line-height: 1.68;
+}
+
+/* —— 标题层级：1～4 级标题都带通栏下划线 —— */
+.tpl-graphite h1,
+.tpl-graphite h2,
+.tpl-graphite h3,
+.tpl-graphite h4 {
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--tpl-rule);
+}
+.tpl-graphite h1 {
+  margin: 0 0 14px;
+  padding-bottom: 8px;
+  border-bottom: 2px solid #1f2328;
+  font-size: 2em;
+  font-weight: 700;
+  line-height: 1.2;
+  letter-spacing: 0.01em;
+}
+.tpl-graphite h2 {
+  margin: 20px 0 8px;
+  font-size: 1.25em;
+  font-weight: 700;
+  line-height: 1.35;
+}
+.tpl-graphite h3 {
+  margin: 16px 0 6px;
+  font-size: 1.1em;
+  font-weight: 700;
+}
+.tpl-graphite h4,
+.tpl-graphite h5,
+.tpl-graphite h6 {
+  margin: 12px 0 6px;
+  font-size: 1em;
+  font-weight: 600;
+}
+
+/* ==高亮== */
+.tpl-graphite mark {
+  padding: 0 5px;
+  border-radius: 2px;
+  background: var(--tpl-soft);
+  color: #24415e;
+}
+
+/* —— 两端对齐：普通行（左:::右）与条目标题（A | B | C）共用 —— */
+.tpl-graphite .doc-split {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  column-gap: 1em;
+}
+.tpl-graphite .doc-split-left {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.tpl-graphite .doc-split-right {
+  margin-left: auto;
+  text-align: right;
+}
+.tpl-graphite .entry-head {
+  margin: 16px 0 6px;
+  font-weight: 600;
+}
+
+/* —— 行内图标：icon:github —— */
+.tpl-graphite .doc-icon {
+  display: inline-flex;
+  width: 1em;
+  height: 1em;
+  margin-right: 0.2em;
+  vertical-align: -0.125em;
+}
+.tpl-graphite .doc-icon svg {
+  width: 100%;
+  height: 100%;
+}
+
+/* —— 正文 —— */
+.tpl-graphite p {
+  margin: 5px 0;
+}
+.tpl-graphite ul,
+.tpl-graphite ol {
+  margin: 5px 0;
+  padding-left: 1.5em;
+}
+/* Tailwind preflight 把列表标记重置成 none；模板自己给回标记与嵌套层级。 */
+.tpl-graphite ul {
+  list-style: disc;
+}
+.tpl-graphite ul ul {
+  list-style: circle;
+}
+.tpl-graphite ul ul ul {
+  list-style: square;
+}
+.tpl-graphite ol {
+  list-style: decimal;
+}
+.tpl-graphite ol ol {
+  list-style: lower-alpha;
+}
+.tpl-graphite ol ol ol {
+  list-style: lower-roman;
+}
+.tpl-graphite li {
+  margin: 4px 0;
+}
+.tpl-graphite li > p {
+  margin: 0;
+}
+.tpl-graphite strong {
+  font-weight: 700;
+}
+.tpl-graphite hr {
+  margin: 18px 0;
+  border: none;
+  border-top: 1px solid var(--tpl-rule);
+}
+.tpl-graphite a {
+  color: var(--tpl-accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.tpl-graphite img {
+  max-width: 100%;
+}
+
+/* 引用：左侧细线 + 很浅的底色 */
+.tpl-graphite blockquote {
+  margin: 8px 0;
+  padding: 8px 12px;
+  border-left: 3px solid var(--tpl-accent);
+  border-radius: 0 4px 4px 0;
+  background: #f6f8fa;
+  color: var(--tpl-muted);
+  font-size: 0.95em;
+}
+.tpl-graphite blockquote p {
+  margin: 0;
+}
+
+/* 表格：数据表只留表头底线；顶部联系方式表没有 thead，保持无框 */
+.tpl-graphite table {
+  width: 100%;
+  margin: 8px 0;
+  border-collapse: collapse;
+}
+.tpl-graphite th,
+.tpl-graphite td {
+  padding: 6px 14px 6px 0;
+  text-align: left;
+  vertical-align: top;
+  font-weight: normal;
+}
+.tpl-graphite thead th {
+  border-bottom: 1px solid #1f2328;
+  font-weight: 600;
+}
+
+/* —— 代码 —— */
+.tpl-graphite code,
+.tpl-graphite tt {
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: #eef1f4;
+  color: #24303c;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 0.9em;
+}
+.tpl-graphite pre {
+  margin: 8px 0;
+  padding: 10px 12px;
+  border-radius: 6px;
+  background: var(--tpl-code-bg);
+  color: #e5e7eb;
+  overflow-x: auto;
+}
+.tpl-graphite pre code {
+  padding: 0;
+  background: none;
+  color: inherit;
+}
+
+/* —— 打印 / PDF 导出 —— */
+@page {
+  size: A4;
+}
+@media print {
+  .tpl-graphite {
+    max-width: none;
+    padding: 0;
+  }
+  .tpl-graphite h1,
+  .tpl-graphite h2,
+  .tpl-graphite h3,
+  .tpl-graphite h4,
+  .tpl-graphite .entry-head,
+  .tpl-graphite .doc-split {
+    break-after: avoid;
+  }
+  .tpl-graphite .entry-head,
+  .tpl-graphite .doc-split,
+  .tpl-graphite table,
+  .tpl-graphite blockquote,
+  .tpl-graphite pre {
+    break-inside: avoid;
+  }
+}

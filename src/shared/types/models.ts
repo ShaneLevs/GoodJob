@@ -60,6 +60,8 @@ export interface ActiveModel {
   ready: boolean;
   /** 推理模型：输入框才显示思考等级选项。 */
   reasoning: boolean;
+  /** 视觉输入：图片会随用户消息交给模型，否则只保存文件。 */
+  vision: boolean;
 }
 
 export interface ModelsConfig {

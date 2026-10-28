@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 
-import { ArrowLeft, Bell, Globe, Palette, Plug } from "lucide-react";
+import { ArrowLeft, Bell, FileText, Globe, Palette, Plug, Sparkles } from "lucide-react";
 
-import type { AppearanceSettings, ModelsConfig } from "@shared/types";
+import type { AppearanceSettings, MarkdownSettings, ModelsConfig } from "@shared/types";
 
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
@@ -10,14 +10,18 @@ import { cn } from "@/lib/utils";
 
 import { AppearanceSettings as AppearanceSettingsPane } from "./AppearanceSettings";
 import { BrowserAgentSettings } from "./BrowserAgentSettings";
+import { MarkdownSettings as MarkdownSettingsPane } from "./MarkdownSettings";
 import { ModelsSettings } from "./ModelsSettings";
 import { NotifySettings } from "./NotifySettings";
+import { SkillSettings } from "./SkillSettings";
 
-export type SettingsSection = "appearance" | "models" | "notify" | "browser";
+export type SettingsSection = "appearance" | "markdown" | "models" | "skills" | "notify" | "browser";
 
 const NAV: { key: SettingsSection; label: string; icon: React.ReactNode }[] = [
   { key: "appearance", label: "外观", icon: <Palette /> },
+  { key: "markdown", label: "Markdown", icon: <FileText /> },
   { key: "models", label: "模型设置", icon: <Plug /> },
+  { key: "skills", label: "Skill 管理", icon: <Sparkles /> },
   { key: "notify", label: "通知", icon: <Bell /> },
   { key: "browser", label: "浏览器", icon: <Globe /> },
 ];
@@ -26,6 +30,7 @@ interface SettingsModalProps {
   open: boolean;
   models: ModelsConfig | null;
   appearance: AppearanceSettings;
+  markdown: MarkdownSettings;
   /** 左下角显示当前工作区，和主界面一致。 */
   workspaceName: string;
   /** 打开时落在哪一页：从对话区的模型菜单跳进来时直接看模型。 */
@@ -33,6 +38,7 @@ interface SettingsModalProps {
   onClose: () => void;
   onSaved: (models: ModelsConfig) => void;
   onAppearanceChange: (patch: Partial<AppearanceSettings>) => void;
+  onMarkdownChange: (patch: Partial<MarkdownSettings>) => void;
 }
 
 /**
@@ -43,11 +49,13 @@ export function SettingsModal({
   open,
   models,
   appearance,
+  markdown,
   workspaceName,
   initialSection = "appearance",
   onClose,
   onSaved,
   onAppearanceChange,
+  onMarkdownChange,
 }: SettingsModalProps) {
   const [section, setSection] = useState<SettingsSection>(initialSection);
 
@@ -106,10 +114,14 @@ export function SettingsModal({
           <div className="flex min-w-0 flex-1 flex-col">
             {section === "appearance" ? (
               <AppearanceSettingsPane appearance={appearance} onChange={onAppearanceChange} />
+            ) : section === "markdown" ? (
+              <MarkdownSettingsPane settings={markdown} onChange={onMarkdownChange} />
             ) : section === "notify" ? (
               <NotifySettings />
             ) : section === "browser" ? (
               <BrowserAgentSettings />
+            ) : section === "skills" ? (
+              <SkillSettings />
             ) : models === null ? (
               <div className="p-8 text-sm text-muted-foreground">正在读取模型…</div>
             ) : (

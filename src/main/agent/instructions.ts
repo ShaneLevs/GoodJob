@@ -2,6 +2,7 @@ import { interviewKeyTarget, jobKeyTarget, type ConversationKey } from "@shared/
 
 import type { AgentDeps } from "./deps";
 import { RESUME_FORMAT } from "./prompts/resume-format";
+import { skillIndexSection } from "./skills";
 
 /** 平台适配模板注入指令的上限（模板是用户手编文件，失控时别拖垮上下文）。 */
 const PLAYBOOKS_INSTRUCTION_LIMIT = 4_000;
@@ -15,6 +16,10 @@ export function buildInstructions(deps: AgentDeps, key: ConversationKey, summary
         [interviewInstructions(deps, interviewKey)]
       : [moduleInstructions(key)];
 
+  // 技能库索引：只列当前会话适用的技能（简历 / 岗位工作台才有），正文按需 skill_read。
+  const skillIndex = skillIndexSection(key);
+  if (skillIndex !== "") sections.push(skillIndex);
+
   // 投递会话追加平台适配模板（用户手编的 browser-playbooks.md，P4）：
   // 没启用浏览器自动化就不注入，省上下文。
   if (key === "applications" && deps.browser.isEnabled()) {
@@ -23,7 +28,7 @@ export function buildInstructions(deps: AgentDeps, key: ConversationKey, summary
 
   if (summary !== null && summary.trim() !== "") {
     sections.push(
-      `# 之前对话的摘要\n\n更早的消息已压缩，以下是保留的要点：\n\n${summary.trim()}`,
+      `# 之前对话的摘要\n\n更早的消息已压缩，以下是保留的要点：\n\n${summary.trim()}\n\n摘要不够时，用 conversation_search 搜索被压缩的原文，或 conversation_read 按时间读取。`,
     );
   }
   // 面试会话不挂长期记忆：面试官只对材料与本场面试负责，也没有 memory 工具。
@@ -185,8 +190,9 @@ const RESUME_INSTRUCTIONS = `你是 GoodJob 的简历协作 Agent，和用户共
 - 主简历就是 resume.md，用 resume_read 读取、resume_write 整体覆写（写入前系统会自动快照，不必担心丢内容）。
 - 用户在右侧编辑器里和你共编同一份文件，你的写入会实时出现在编辑器里，他手动保存的修改也会在你下次读取时生效。所以：每次修改前先读最新内容。
 - 每次写入必须是完整文件内容，不要只写改动片段；大改前用一两句话说明你打算怎么改。
-- resume.md 的格式规则（渲染器只认这些语法，外观由主题决定，不要在正文里写样式）：
+- resume.md 的格式规则（渲染器只认这些语法，颜色等外观由主题决定；照片位置由你写的 Markdown 决定）：
 ${RESUME_FORMAT}
+- 技能库：从零写简历前读 resume-writing；判断简历质量或按 JD 定制前读 resume-review；准备面试 / 写话术前读 interview-prep。用 skill_read 读 SKILL.md，需要细则再读它列出的 references/ 文件。
 - 岗位定制简历：与岗位 1:1，文件名就是岗位的 jobId（用 job_list 把用户说的岗位对应到 id）。先读主简历，针对 JD 取舍改写，用 resume_tailored_write 按 jobId 存；遇到 P1 旧版按岗位名存的文件，读取后用 migrateFrom 一次性迁移成 jobId 键。改完说明你做了哪些取舍。
 - 面试话术也按 jobId 存（script_write / script_finalize）：结构按「自我介绍 / 项目深挖（预判 JD 相关的问题给要点式回答）/ 反问环节」组织；定稿锁定的是供引用的版本，之后仍可继续改。
 - 评分技能是后台任务：resume_job_evaluate（JD 匹配度）与 resume_integrity_check（主简历完整性）发起后不用等待，结果分别写进岗位的匹配度报告和简历的 reports/ 目录，告诉用户去哪看即可。
@@ -255,6 +261,7 @@ const JOB_WORKBENCH_INSTRUCTIONS = `你是 GoodJob 的岗位定制简历协作 A
 - 定制简历与岗位 1:1：用 job_tailored_write 整体覆写（写入前系统自动快照旧版），必须写完整 Markdown，不要只写改动片段。
 - 定制稿与主简历使用同一套格式规则：
 ${RESUME_FORMAT}
+- 技能库：从零写或大改定制稿前读 resume-writing；按 JD 对标改写或判断质量前读 resume-review；准备面试 / 写话术前读 interview-prep。用 skill_read 读 SKILL.md，需要细则再读它列出的 references/ 文件。
 - 针对 JD 取舍：最匹配的经历放前面、成果量化、技能表述贴近 JD 关键词；JD 没要求的内容果断砍，不编造经历。
 - 面试话术也属于这个岗位：job_script_read / job_script_write（Markdown，结构按「自我介绍 / 项目深挖 / 反问环节」），定稿用 job_script_finalize——锁定的是供引用的版本，之后仍可继续编辑，改过会提示重新定稿。
 - 重新评估匹配度：让用户在岗位表点「简历评估」（后台任务会读你写好的定制稿），本会话没有评估工具。

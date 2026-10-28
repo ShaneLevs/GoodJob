@@ -107,7 +107,7 @@ export function skillTools(deps: AgentDeps): ToolSet {
     }),
     resume_integrity_check: tool({
       description:
-        "发起主简历完整性评分后台任务：报告存进这份简历的 reports/ 目录，完成后简历页的「完整性」按钮可看。",
+        "发起主简历完整性评分后台任务：按 Resume Review 的评分细则生成 HTML 报告，存进这份简历的 reports/ 目录，完成后简历页的「完整性」按钮可看。",
       inputSchema: z.object({}),
       execute: () => {
         const currentId = resumes.list().currentId;

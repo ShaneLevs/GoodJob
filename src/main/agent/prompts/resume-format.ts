@@ -3,9 +3,9 @@
  *
  * 这里只定义「语法 + 语义」，不定义颜色 / 字号 / 间距——外观全部在渲染层的
  * `components/document/templates/*.css`（一个 CSS 文件 = 一套主题）。改语法时同步改
- * `src/renderer/src/markdown/render.ts` 与主题 CSS，三处必须一致。
+ * `src/renderer/src/components/document/render.ts` 与主题 CSS，三处必须一致。
  */
-export const RESUME_FORMAT = `简历正文是纯 Markdown（GFM），渲染器只认下面这些语法；外观由主题 CSS 决定，不要在正文里写颜色、字号、间距等样式。
+export const RESUME_FORMAT = `简历正文是纯 Markdown（GFM），渲染器只认下面这些语法；颜色、字号、间距等外观由主题 CSS 决定。顶部信息表和照片可以用少量 inline style 控制尺寸与对齐，不要写颜色。
 
 - 顶部信息区：用 HTML <table> 排两列，一格一条。首行左格放姓名（<td style="font-size: 1.8em;"><strong>姓名</strong></td>），右格放求职意向；后面依次放经验年限 / 电话 / 邮箱 / 城市 / 链接。表内不要空行。
 - 章节标题：### ==章节名==（三级标题 + == 高亮，== 不能省略）。
@@ -14,9 +14,9 @@ export const RESUME_FORMAT = `简历正文是纯 Markdown（GFM），渲染器�
 - 标题两端对齐：#### 标题:::日期（标题里出现 ::: 时按左右两段排，::: 优先于 |）。
 - 普通行两端对齐：左边:::右边（一行一条，::: 前后各自写行内 Markdown；左边或右边可以为空）。
 - 图标：icon:github（行内任意位置可用，正文和顶部表格都行）。常用：mail / phone / map-pin / globe / link / calendar / clock / github / linkedin / wechat / zhihu / bilibili / x / telegram / youtube / code / database / cloud / briefcase / graduation-cap / award / star。未知名字原样显示。
-- 照片（可选）：文档第一行写 photo: upload/文件名。照片位置由主题决定（当前模板放在右上角，与信息表并排），不要自己写 <img>；只有 upload/ 里确实有这张图时才写。
+- 照片（可选）：把 upload/ 里的照片直接写进 Markdown（通常放进顶部信息表的目标格子），例如 <td rowspan="6" style="width: 116px; vertical-align: top;"><img src="upload/文件名" alt="证件照" style="width: 96px; height: 128px; object-fit: cover; border-radius: 4px;" /></td>。照片位置和尺寸由你写的 HTML 决定，主题只负责颜色等样式；只有 upload/ 里确实有这张图时才写。
 - 条目内容用无序列表分点；关键技能 **加粗**，最亮眼的成果可用 ==高亮==。
-- 除顶部信息表外不要写别的 HTML；不放正文图片（照片只用 photo: 指令）。
+- 除顶部信息表和其中的照片外不要写别的 HTML；照片必须用 <img> 写进正文，不要再写 photo: 指令。读到旧版开头的 photo: 行时，把照片按上面的方式移进正文，并删掉该行。
 - 章节顺序按用户情况调整，常用：基本信息（表格）/ 专业技能 / 工作经历 / 项目经历 / 教育背景 / 获奖与其他。`;
 
 /** 新建简历时的空骨架：与 RESUME_FORMAT 使用同一套语法，避免新文件一出生就跑偏。 */

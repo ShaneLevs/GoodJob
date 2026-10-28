@@ -6,6 +6,8 @@ import {
   generateText,
   toUIMessageStream,
   tool,
+  type FilePart,
+  type TextPart,
   type ToolSet,
   type UIMessage,
 } from "ai";
@@ -13,13 +15,17 @@ import { z } from "zod";
 
 import {
   DEFAULT_REASONING_EFFORT,
+  isImageUploadName,
   type ChatSendPayload,
   type ChatStreamEvent,
   type ContextUsage,
   type ConversationKey,
   type DigestKind,
   type ReasoningEffort,
+  type WireMessage,
 } from "@shared/types";
+
+import { readUploadImageDataUrl } from "../workspace/uploads";
 
 import { createLanguageModel } from "./model-provider";
 import type { ResolvedModel } from "../stores/models";
@@ -48,6 +54,34 @@ type Emit = (event: ChatStreamEvent) => void;
  * 「正在思考…」——用户只能靠猜，日志里也留不下任何痕迹。
  */
 const STREAM_IDLE_TIMEOUT_MS = 90_000;
+/** 视觉模型单张图片的最长边：1024px 足够读文字 / 看证件照，又不会把请求撑大。 */
+const MODEL_IMAGE_WIDTH = 1024;
+/** 一次请求最多附带最近这么多张图，避免整个会话的图片反复把上下文顶满。 */
+const MODEL_IMAGE_LIMIT = 6;
+
+/**
+ * 从会话尾部挑出最新的图片附件。只把图片送进模型（文档仍由 upload_read 读），
+ * 并按上传顺序取最后 MODEL_IMAGE_LIMIT 张；同名文件不会重复出现（落盘时去重）。
+ */
+function imageAttachmentsForModel(messages: WireMessage[]): Set<string> {
+  const names: string[] = [];
+  for (const message of messages) {
+    for (const raw of message.parts as unknown[]) {
+      if (typeof raw !== "object" || raw === null) continue;
+      const part = raw as { type?: unknown; data?: unknown };
+      if (part.type !== "data-upload") continue;
+      const fileName = (part.data as { fileName?: unknown } | null | undefined)?.fileName;
+      if (
+        typeof fileName === "string" &&
+        isImageUploadName(fileName) &&
+        !names.includes(fileName)
+      ) {
+        names.push(fileName);
+      }
+    }
+  }
+  return new Set(names.slice(-MODEL_IMAGE_LIMIT));
+}
 
 export class AgentRuntime {
   private readonly running = new Map<ConversationKey, AbortController>();
@@ -156,7 +190,31 @@ export class AgentRuntime {
         },
       });
 
-      const modelMessages = await convertToModelMessages(tail as UIMessage[]);
+      // 图片附件：只给勾了「视觉输入」的模型；图片本体从当前会话的 upload/ 读，
+      // 缩到 1024px 后作为 file part 随用户消息发送。data-upload 仍原样留在落盘消息里
+      // （界面靠它显示文件名 / 缩略图），不把 base64 写进 conversations 的 JSON。
+      const modelImages = target.vision ? imageAttachmentsForModel(tail) : new Set<string>();
+      const modelMessages = await convertToModelMessages(tail as UIMessage[], {
+        convertDataPart: (part): TextPart | FilePart | undefined => {
+          if (part.type !== "data-upload") return undefined;
+          const fileName = (part.data as { fileName?: unknown } | null | undefined)?.fileName;
+          if (typeof fileName !== "string" || !modelImages.has(fileName)) return undefined;
+          const dataUrl = readUploadImageDataUrl(
+            this.deps.uploadDir(key),
+            fileName,
+            MODEL_IMAGE_WIDTH,
+          );
+          if (dataUrl === null) return undefined;
+          const separator = dataUrl.indexOf(",");
+          if (separator < 0) return undefined;
+          return {
+            type: "file",
+            mediaType: dataUrl.startsWith("data:image/png") ? "image/png" : "image/jpeg",
+            filename: fileName,
+            data: dataUrl.slice(separator + 1),
+          };
+        },
+      });
       armIdleWatchdog();
       const result = await agent.stream({
         messages: modelMessages,

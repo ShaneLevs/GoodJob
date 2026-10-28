@@ -2,11 +2,13 @@ import { interviewKeyTarget, jobKeyTarget, type ConversationKey } from "@shared/
 import type { ToolSet } from "ai";
 
 import type { AgentDeps } from "../deps";
+import { conversationTools } from "./conversation";
 import { applicationTools, companyTools, jobTools } from "./domain";
 import { interviewSessionTools } from "./interview";
 import { jobWorkbenchTools } from "./job";
 import { resumeTools, skillTools } from "./resume";
 import { browserTools, memoryTools, notifyTools, uploadTools } from "./shared";
+import { skillLibraryTools } from "./skills";
 
 /**
  * 工具注册表：按会话 key 分发（模块会话 + `job:<jobId>` 岗位工作台 +
@@ -22,32 +24,69 @@ export function toolsFor(
   const memory = memoryTools(deps);
   // 上传的参考文件：每个会话都有（落各自模块的 upload/），面试官是限定角色所以不给。
   const upload = uploadTools(deps, key);
+  // 压缩后的旧上下文回查：只读当前会话，所有角色都可用。
+  const conversation = conversationTools(deps, key);
+  // 技能库：按会话场景过滤，没有适用技能的会话拿到空对象。
+  const skills = skillLibraryTools(key);
 
   const jobKey = jobKeyTarget(key);
-  if (jobKey !== null) return { ...memory, ...upload, ...jobWorkbenchTools(deps, jobKey) };
+  if (jobKey !== null) {
+    return {
+      ...conversation,
+      ...memory,
+      ...upload,
+      ...skills,
+      ...jobWorkbenchTools(deps, jobKey),
+    };
+  }
 
   const interviewKey = interviewKeyTarget(key);
-  if (interviewKey !== null) return interviewSessionTools(deps, interviewKey);
+  if (interviewKey !== null) {
+    return { ...conversation, ...skills, ...interviewSessionTools(deps, interviewKey) };
+  }
 
   switch (key) {
     case "companies":
       // 公司调研（P4）：浏览器只读动作辅助调研，快照整理进 research。
-      return { ...memory, ...upload, ...companyTools(deps), ...browserTools(deps, key, lastActivityAt) };
+      return {
+        ...conversation,
+        ...memory,
+        ...upload,
+        ...skills,
+        ...companyTools(deps),
+        ...browserTools(deps, key, lastActivityAt),
+      };
     case "jobs":
       // 链接抓 JD / 自动搜索（P4）：只读浏览，回填岗位档案。
-      return { ...memory, ...upload, ...jobTools(deps), ...browserTools(deps, key, lastActivityAt) };
+      return {
+        ...conversation,
+        ...memory,
+        ...upload,
+        ...skills,
+        ...jobTools(deps),
+        ...browserTools(deps, key, lastActivityAt),
+      };
     case "applications":
       // 投递会话拿通知工具（P3 M3）：外发 / 邮件确认门都以「用户自己的邮箱」为准。
       // 填表投递（P4 M4）：browser_act / browser_submit 双重门 + 限速也在这里。
       return {
+        ...conversation,
         ...memory,
         ...upload,
+        ...skills,
         ...applicationTools(deps),
         ...notifyTools(deps),
         ...browserTools(deps, key, lastActivityAt),
       };
     default:
-      // resume：简历协作工具（P1）+ 话术 + 评分技能（后台任务）。
-      return { ...memory, ...upload, ...resumeTools(deps), ...skillTools(deps) };
+      // resume：简历协作工具（P1）+ 话术 + 评分技能（后台任务）+ 技能库。
+      return {
+        ...conversation,
+        ...memory,
+        ...upload,
+        ...skills,
+        ...resumeTools(deps),
+        ...skillTools(deps),
+      };
   }
 }
