@@ -239,6 +239,27 @@ export class AgentBrowserCli {
   }
 
   /**
+   * 异步关会话（关浏览器连接 + 收 daemon），**不阻塞主进程**。
+   *
+   * run 结束时用它：`close()` 里的 spawnSync 最长会卡主进程 5s（界面当场冻），
+   * 而那个时机正是用户刚发完话、最不该卡的。清理本身是 fire-and-forget，
+   * 不等结果也没关系（退出路径还有 killAll 的按 pid 兜底）。
+   */
+  closeAsync(): void {
+    try {
+      const child = spawn(this.binary, ["--session", AGENT_SESSION, "close"], {
+        stdio: "ignore",
+      });
+      child.on("error", () => {
+        // 二进制不在 / 起不来：交给 killAll 兜底。
+      });
+      child.unref();
+    } catch {
+      // 同上。
+    }
+  }
+
+  /**
    * 优雅关闭本会话（关浏览器连接 + 收 daemon）：任务中止后和退出钩子都会调。
    * close 自身也要限时，退出时不被它拖住。
    */

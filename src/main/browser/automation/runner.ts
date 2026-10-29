@@ -134,11 +134,36 @@ export class BrowserAgentService {
   /**
    * 任务收尾：会话 run 结束（正常 / 出错）时由 AgentRuntime 调。tab 锁是
    * 会话级的——run 之间保留绑定没有意义，收掉等待下一个任务重新锁定。
+   *
+   * 这里还要做两件「善后」，都是为了不让 Agent 走了之后浏览器还在自己动：
+   * 1. **断掉 CDP 会话**（`cli.closeAsync`）。实测（2026-10-28）：BOSS直聘这类站点
+   *    一检测到 CDP 就在页面里折腾——先是 `window.close()` 杀自己的标签，被守卫
+   *    拦住后改成每 1–8 秒 `location.reload()` 一次；**断开 daemon 后重载循环立刻停**。
+   *    不主动断的话，会话会一直活着直到下一次 abort / 退出。
+   * 2. **停下锁定标签上正在跑的加载**，别让一个还在翻页的请求接着拖下去。
    */
   endTask(key: string): void {
     if (this.current === null || this.current.key !== key) return;
+    const tabId = this.current.lock.tabId;
     this.current = null;
+    this.settleTab(tabId);
+    try {
+      this.deps.cli.closeAsync();
+    } catch {
+      // 关不掉不影响什么。
+    }
     this.pushStatus();
+  }
+
+  /** 任务收尾时把锁定标签的加载掐掉（页面自己 reload 的定时器掐不掉，那是站点的事）。 */
+  private settleTab(tabId: string): void {
+    try {
+      const tab = this.deps.panel().tabs().find((item) => item.id === tabId);
+      if (tab === undefined || tab.contents.isDestroyed()) return;
+      tab.contents.stop();
+    } catch {
+      // 面板已销毁 / 标签刚消失：不用处理。
+    }
   }
 
   // ———————————————————— 用户面（顶栏开关 / 浏览器工具条） ————————————————————
@@ -152,8 +177,10 @@ export class BrowserAgentService {
   abort(): void {
     if (this.current === null) return;
     const key = this.current.key;
+    const tabId = this.current.lock.tabId;
     this.deps.cli.abortCurrent();
-    this.deps.cli.close();
+    this.deps.cli.closeAsync();
+    this.settleTab(tabId);
     this.record({
       key,
       action: "agent.abort",
@@ -373,16 +400,16 @@ export class BrowserAgentService {
 /**
  * CLI 错误 → 模型能直接消化的提示。
  *
- * 主要处理 `tab_gone`：用户把 Agent 正在操作的标签关掉了。CLI 的原文会让模型去执行
- * `agent-browser tab new <url>`，但模型根本拼不了 CLI（命令白名单在类型层）——
- * 所以这里改写成「用 browser_tab 新建或切到别的标签」，并且把锁重新落到一个
- * 还活着的标签上，任务可以继续。
+ * 主要处理 `tab_gone`：锁定标签没了（用户手动关的、网页自己 window.close()、
+ * 渲染进程挂掉）。CLI 的原文会让模型去执行 `agent-browser tab new <url>`，但模型
+ * 根本拼不了 CLI（命令白名单在类型层）——所以这里改写成「用 browser_tab 新建或
+ * 切到别的标签」，并且把锁重新落到一个还活着的标签上，任务可以继续。
  */
 function explainCliError(error: string | null): string {
   const message = error ?? "浏览器命令执行失败。";
   if (!/tab_gone/.test(message)) return message;
   return [
-    "你正在操作的标签被关掉了（可能是用户手动关的）。",
+    "你正在操作的标签没了（用户手动关掉，或者这个网站自己把页面关掉了）。",
     "用 browser_tab 的 list 看现在还有哪些标签，再 switch 过去；没有可用的就 new 一个，",
     "然后重新 snapshot 再继续。不要重试同一个动作。",
     `（底层错误：${message.slice(0, 200)}）`,

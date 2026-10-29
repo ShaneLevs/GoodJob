@@ -27,9 +27,22 @@ interface Tab {
   view: WebContentsView;
   /** 最近一次已知的 URL / 标题（webContents 销毁后仍可读，用作事件兜底）。 */
   url: string;
+  /** 正在导航去的 URL：页面在 commit 前就把自己 close 掉时，url 还没更新。 */
+  pendingUrl?: string;
   title: string;
   loading: boolean;
 }
+
+/**
+ * 页面关不掉自己的标签。
+ *
+ * WebContentsView 托管的页面调 `window.close()` 会**真的**销毁这个 webContents
+ * （Chromium 那条「脚本只能关掉自己开出来的窗口」的限制对 view 不生效），标签就
+ * 从面板里凭空消失，agent 的 CDP target 也跟着没了（tab_gone）。BOSS直聘的登录页
+ * 就会这么干。真正的浏览器里，网页也关不掉用户自己的标签——这里对齐那个语义。
+ * 每个文档 dom-ready 时重新打一次（页面重新导航会换掉 window）。
+ */
+const CLOSE_GUARD = `(() => { try { window.close = function close() {}; } catch (e) {} })()`;
 
 /**
  * The embedded browser — now a tab host.
@@ -59,6 +72,8 @@ export class BrowserPanel {
   private attached: WebContentsView | null = null;
   /** agent 正在操作的标签（工具条据此显示「Agent 在这里干活」）。 */
   private agentTabId: string | null = null;
+  /** 标签死掉后重建的记账：同一个 URL 短时间内只重建一次，否则会成环。 */
+  private readonly recoveries = new Map<string, number>();
 
   constructor(win: BrowserWindow, listener: StateListener) {
     this.win = win;
@@ -309,6 +324,12 @@ export class BrowserPanel {
   private activate(id: string): void {
     const tab = this.tabs.get(id);
     if (tab === undefined) return;
+    // 已被销毁的 view 挂到窗口上会直接抛（"Can't add a destroyed child view"），
+    // 并在主进程里变成未捕获异常——先把死标签摘掉再说。
+    if (tab.view.webContents.isDestroyed()) {
+      this.dropTab(tab, "activate");
+      return;
+    }
 
     if (this.activeId !== null && this.activeId !== id) {
       const previous = this.tabs.get(this.activeId);
@@ -318,11 +339,66 @@ export class BrowserPanel {
     this.activeId = id;
     if (this.attached !== tab.view) {
       if (this.attached !== null) this.detachView(this.attached);
-      this.win.contentView.addChildView(tab.view);
+      try {
+        this.win.contentView.addChildView(tab.view);
+      } catch (error) {
+        // 竞态：刚查到还活着，挂的时候已经死了（窗口正在关 / 页面自己 close）。
+        console.error("[browser] 挂载标签失败:", error instanceof Error ? error.message : error);
+        this.attached = null;
+        this.dropTab(tab, "attach-failed");
+        return;
+      }
       this.attached = tab.view;
     }
     if (this.bounds !== null) tab.view.setBounds(this.bounds);
     this.applyVisibility();
+  }
+
+  /**
+   * 把一个标签从面板里摘掉（它已经不可用了）。
+   *
+   * 三种诱因：页面自己 `window.close()`（守卫没拦住）、渲染进程彻底挂了、外部 CDP
+   * 关掉了这个 target。不论哪种，面板都必须当成「标签没了」处理，而不是留着一个
+   * 死视图等下一次 activate 抛异常。
+   *
+   * 标签全没了时补一个空白页（沿用死掉那个的 URL，用户视角上就是「页面自己退了，
+   * 回到同一个地址」），面板不会变成一片空。
+   */
+  private dropTab(tab: Tab, reason: string): void {
+    if (this.tabs.get(tab.id) !== tab) return;
+    const wasActive = this.activeId === tab.id;
+    // 恢复地址优先用「正在去的 URL」：页面在 commit 前就把自己 close 掉时，url 还是上一个。
+    const resumeUrl = [tab.pendingUrl, tab.url].find((url) => url !== undefined && isHttpUrl(url));
+
+    this.tabs.delete(tab.id);
+    if (this.attached === tab.view) this.attached = null;
+    if (this.agentTabId === tab.id) this.agentTabId = null;
+    console.error(
+      `[browser] 标签已失效（${reason}）：${tab.id} ${tab.title || tab.url}`,
+    );
+
+    if (wasActive) {
+      const next = this.lastTab();
+      this.activeId = next?.id ?? null;
+      if (next !== null) this.activate(next.id);
+    }
+    if (this.tabs.size === 0 && !this.disposed) {
+      // 标签全没了：补一个。能恢复地址就恢复，但同一个 URL 15 秒内只恢复一次——
+      // 否则一个「加载就关自己」的页面会让我们无限建标签。
+      const retry = resumeUrl !== undefined && Date.now() - (this.recoveries.get(resumeUrl) ?? 0) > 15_000;
+      if (retry && resumeUrl !== undefined) this.recoveries.set(resumeUrl, Date.now());
+      // createTab 会抛（上限 / 已 dispose），而这里在事件回调里，抛出去就是主进程未捕获异常。
+      try {
+        this.createTab(retry ? resumeUrl : undefined);
+      } catch (error) {
+        console.error(
+          "[browser] 重建空白标签失败:",
+          error instanceof Error ? error.message : error,
+        );
+      }
+      return;
+    }
+    this.push();
   }
 
   private detachView(view: WebContentsView): void {
@@ -398,13 +474,16 @@ export class BrowserPanel {
     const active = this.activeTab();
     const contents = active?.view.webContents;
     const live = contents !== undefined && !contents.isDestroyed();
-    const tabs: BrowserTab[] = [...this.tabs.values()].map((tab) => ({
-      id: tab.id,
-      url: tab.url,
-      title: tab.title,
-      loading: tab.loading,
-      agentBusy: tab.id === this.agentTabId,
-    }));
+    // 死标签不往界面送：标签条上不该出现一个点开就出事的标签。
+    const tabs: BrowserTab[] = [...this.tabs.values()]
+      .filter((tab) => !tab.view.webContents.isDestroyed())
+      .map((tab) => ({
+        id: tab.id,
+        url: tab.url,
+        title: tab.title,
+        loading: tab.loading,
+        agentBusy: tab.id === this.agentTabId,
+      }));
     return {
       activeId: this.activeId,
       url: live ? contents.getURL() : (active?.url ?? ""),
@@ -418,6 +497,22 @@ export class BrowserPanel {
 
   private bindContents(tab: Tab): void {
     const contents = tab.view.webContents;
+
+    // 页面自己关标签（见 CLOSE_GUARD）：每个文档就绪后重新打一次补丁。
+    contents.on("dom-ready", () => {
+      if (contents.isDestroyed()) return;
+      void contents.executeJavaScript(CLOSE_GUARD, true).catch(() => {
+        // 导航被打断时 eval 会 reject；不影响任何东西。
+      });
+    });
+
+    // webContents 被销毁：不管是页面 window.close()、渲染进程被杀还是外部 CDP
+    // 关掉了 target，面板都得自己摘牌——否则下一次 activate 会拿死视图去
+    // addChildView，直接抛成主进程未捕获异常（界面当场变空）。
+    contents.on("destroyed", () => {
+      if (this.disposed) return;
+      this.dropTab(tab, "contents-destroyed");
+    });
 
     // 站点的 target=_blank / window.open：开成新标签（这是标签式浏览该有的行为）。
     // 返回 deny 表示「不要给我一个原生弹窗」，我们自己建。
@@ -438,11 +533,18 @@ export class BrowserPanel {
       if (!isHttpUrl(event.url) && event.url !== BLANK) event.preventDefault();
     });
 
+    // 导航一开始就记住目标地址：页面如果在 commit 前自杀，标签至少知道该回到哪。
+    contents.on("did-start-navigation", (details) => {
+      if (!details.isMainFrame || details.isSameDocument) return;
+      if (isHttpUrl(details.url)) tab.pendingUrl = details.url;
+    });
+
     const update = (): void => {
       if (this.disposed || contents.isDestroyed()) return;
       tab.url = contents.getURL();
       tab.title = contents.getTitle();
       tab.loading = contents.isLoading();
+      if (tab.url !== "" && tab.url !== BLANK) tab.pendingUrl = undefined;
       this.push();
     };
 

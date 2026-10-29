@@ -36,6 +36,8 @@ GoodJob：一个带内嵌浏览器的求职助手桌面端。技术栈与理由�
    多标签也不会串）。⚠️ **会话未绑定时第一条命令不能带 `--pin-tab`**：它会尝试
    `Target.createTarget`，Electron 不支持该 CDP 命令，会直接报错。
    禁止 `eval` / `cookies` / `storage` / `state` / `network route` / `install` / `upgrade`。
+   **run 结束要断开会话**（`endTask` → `cli.closeAsync()` + 停下锁定标签）：BOSS直聘
+   这类站点一检测到 CDP 就在页面里自我重载/自杀，只有断开 daemon 才会安静下来。
    细节见 `docs/BROWSER-AGENT.md`。
 8. **AI 能力只走 AI SDK。** 模型调用、流式、工具循环、结构化输出、embedding、
    多模态、MCP 客户端，一律用 `ai`（7.x）+ `@ai-sdk/*`（4.x）的现成能力，

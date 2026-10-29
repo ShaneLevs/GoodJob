@@ -82,6 +82,23 @@ BrowserPanel          一个 Map<tabId, WebContentsView>，只有 active 那个�
    会串；`targetIdOf(webContents)` 是确定性的，URL 匹配只作为 DevTools 占着 debugger
    时的回退。
 5. 标签上限 `MAX_TABS = 20`，关掉最后一个自动补一个 `about:blank`，面板不会空掉。
+5.5 **网页能杀掉自己的标签，必须两道防线都留着**（2026-10-28 实测踩坑）：
+   `WebContentsView` 托管的页面调 `window.close()` 会**真的销毁这个 webContents**
+   —— Chromium 那条「脚本只能关掉自己开出来的窗口」的限制对 view 不生效（没有
+   BrowserWindow 兜底）。BOSS直聘登录页就这么干过，症状是：页面空白、daemon 报
+   `tab_gone`、点标签条弹 `Can't add a destroyed child view to a parent view`
+   （主进程未捕获异常，IPC 不返回，界面看起来彻底空掉）。
+   - 防线一（拦住）：每个文档 `dom-ready` 时注入 `window.close = () => {}`
+     （`CLOSE_GUARD`）。只能拦住 `dom-ready` 之后的调用；页面在解析期就调 close
+     的拦不住，这是 webContents 层没有「新文档脚本注入」钩子的已知限制
+     （要彻底解决得上 `Page.addScriptToEvaluateOnNewDocument`，但那需要独占
+     `webContents.debugger`，会挡住 DevTools 与 `targetIdOf`）。
+   - 防线二（自愈）：`webContents.on("destroyed")` → `dropTab()` 摘牌 + 修
+     `activeId` / `attached` → 标签全没了就补一个（同 URL 15 秒内只补一次，防止
+     「加载就自杀」的页面无限重建）。`buildState()` 也不再把死标签送进标签条。
+   - `activate()` 里挂载前先查 `isDestroyed()`，`addChildView` 再包一层 try/catch；
+     `ipc/browser.ts` 所有动作外面还有一层 `guard()` —— 面板的竞态不该变成主进程
+     未捕获异常。
 6. 登录态靠分区 `persist:browser` 持久保留：**用户手动登录一次，之后 Agent 就是已登录
    状态**，这是「用户先登录、Agent 再操控」这条产品路径的基础，不要改成临时分区。
 
@@ -173,6 +190,21 @@ spctl -a -vvv -t install "GoodJob.app"
 2. **导航后 ref 失效**：`open` 之后旧 ref 全部作废（报 `Unknown ref`），必须重新 snapshot。
 3. **多个 target**：UI 窗口与面板同时在列，必须显式锁 tab（M2）。
 4. **守护进程残留**：应用崩溃后 daemon 可能活着，退出钩子要兜底清理。
+5. **`tab_gone` 有三种来源**：用户手动关标签、网页自己 `window.close()`、渲染进程
+   挂掉。三种都走同一条恢复路径（`dropLock()` → 下一步重新 `tab list` 锁定），
+   错误文案里不要只写「用户关的」。
+6. **站点检测到 CDP 会自己折腾，run 结束必须断开 daemon**（2026-10-28 对照实验实测）。
+   BOSS直聘登录页在纯 `WebContentsView` 里 50 秒纹丝不动；一旦 daemon attach 上
+   CDP，7.7 秒时它调 `window.close()` 杀掉自己的标签（就是上面 5.5 那条的诱因）；
+   加守卫拦住后，它改成每 1–8 秒 `location.reload()` 一次。**断开 daemon 会话后
+   重载循环立刻停**（实测断开后 32 秒零导航）。
+   所以 `BrowserAgentService.endTask()` 在 run 结束时做两件事：`cli.closeAsync()`
+   断开会话 + `settleTab()` 停下锁定标签的加载。验证过「断开后重新 attach 仍能
+   `tab list` / 绑定 / snapshot」，不会把下一个任务搞废；重复 close 幂等。
+   - 用 `closeAsync()` 不用 `close()`：后者是 `spawnSync`，最长会把主进程卡 5 秒，
+     而 run 刚结束正是最不该卡的时机（退出路径仍用同步的 `killAll`）。
+   - 我们**不承诺**冻结页面 JS：纯 `setInterval` 的自我重载与 CDP 无关，断开会话
+     也停不下来。能保证的是「没有 agent 侧命令 + 会话已断」。
 
 ## 6. 与现有代码的接口
 
