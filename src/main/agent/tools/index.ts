@@ -1,4 +1,9 @@
-import { interviewKeyTarget, jobKeyTarget, type ConversationKey } from "@shared/types";
+import {
+  conversationScope,
+  interviewKeyTarget,
+  jobKeyTarget,
+  type ConversationKey,
+} from "@shared/types";
 import type { ToolSet } from "ai";
 
 import type { AgentDeps } from "../deps";
@@ -21,6 +26,8 @@ export function toolsFor(
   key: ConversationKey,
   lastActivityAt: () => number,
 ): ToolSet {
+  // 场景决定工具集；key 里的线程后缀只影响会话落盘 / 浏览器任务绑定。
+  const scope = conversationScope(key);
   const memory = memoryTools(deps);
   // 上传的参考文件：每个会话都有（落各自模块的 upload/），面试官是限定角色所以不给。
   const upload = uploadTools(deps, key);
@@ -29,7 +36,7 @@ export function toolsFor(
   // 技能库：按会话场景过滤，没有适用技能的会话拿到空对象。
   const skills = skillLibraryTools(key);
 
-  const jobKey = jobKeyTarget(key);
+  const jobKey = jobKeyTarget(scope);
   if (jobKey !== null) {
     return {
       ...conversation,
@@ -40,12 +47,12 @@ export function toolsFor(
     };
   }
 
-  const interviewKey = interviewKeyTarget(key);
+  const interviewKey = interviewKeyTarget(scope);
   if (interviewKey !== null) {
     return { ...conversation, ...skills, ...interviewSessionTools(deps, interviewKey) };
   }
 
-  switch (key) {
+  switch (scope) {
     case "companies":
       // 公司调研（P4）：浏览器只读动作辅助调研，快照整理进 research。
       return {

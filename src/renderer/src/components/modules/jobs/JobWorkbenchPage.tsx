@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
 
-import type { UIMessage } from "ai";
 import { ArrowLeft } from "lucide-react";
 
 import type { Company, Job } from "@shared/types";
 
-import { useConversationInitial, useModuleChat } from "@/components/chat/use-module-chat";
 import { ChatPanel } from "@/components/chat/ChatPanel";
+import { ConversationPane } from "@/components/chat/conversation-pane";
+import type { ModuleChat } from "@/components/chat/use-module-chat";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -15,7 +15,7 @@ import {
   ResizablePanelGroup,
 } from "@/components/ui/resizable";
 
-import { ModuleLoadingCard, type ModulePageProps } from "../shared/module-page";
+import type { ModulePageProps } from "../shared/module-page";
 import { useDomainChange } from "../shared/use-domain-change";
 import { ResumeEditorCard } from "../shared/ResumeEditorCard";
 
@@ -27,6 +27,9 @@ export interface JobWorkbenchPageProps extends ModulePageProps {
   /** 进入时自动发给岗位 Agent 的起草指令（生成简历 / 生成话术）；发过即焚。 */
   autoPrompt: string | null;
   onAutoPromptSent: () => void;
+  /** 进入时预填进输入框、但不自动发送的提示词（已有简历时点「生成简历」）。 */
+  prefillPrompt: string | null;
+  onPrefillConsumed: () => void;
   /** 顶部返回岗位表。 */
   onBack: () => void;
 }
@@ -37,23 +40,15 @@ export interface JobWorkbenchPageProps extends ModulePageProps {
  * 右边编辑器加载 tailored/<jobId>.md（与主简历同一份编辑器卡，含 PDF 导出）。
  * 顶部一条返回栏：岗位标题 / 公司 / 薪资带都来自岗位档案，不重复维护。
  */
-export function JobWorkbenchPage(props: JobWorkbenchPageProps) {
-  const key = `job:${props.jobId}` as const;
-  const initial = useConversationInitial(key);
-  if (initial === null) return <ModuleLoadingCard />;
-  return <JobWorkbenchLoaded key={props.jobId} initialMessages={initial} {...props} />;
-}
-
-function JobWorkbenchLoaded({
+export function JobWorkbenchPage({
   jobId,
   autoPrompt,
   onAutoPromptSent,
+  prefillPrompt,
+  onPrefillConsumed,
   onBack,
-  initialMessages,
   ...props
-}: JobWorkbenchPageProps & { initialMessages: UIMessage[] }) {
-  const chat = useModuleChat(`job:${jobId}` as const, initialMessages);
-
+}: JobWorkbenchPageProps) {
   const [job, setJob] = useState<Job | null>(null);
   const [companyName, setCompanyName] = useState<string | null>(null);
 
@@ -75,14 +70,6 @@ function JobWorkbenchLoaded({
   // Agent 补关联公司 / 改岗位信息后，标题栏跟着变（这里不做卸载保护：
   // setState 落在已卸载组件上在 React 18+ 是无害的 no-op，reload 的 promise 链更短更好读）。
   useDomainChange(["jobs", "companies"], reload);
-
-  // 自动起草指令：只在拿到会话初始消息后发一次（发完由父级清掉，回来不再重复发）。
-  useEffect(() => {
-    if (autoPrompt === null) return;
-    chat.send(autoPrompt, []);
-    onAutoPromptSent();
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- 只在进入时发一次。
-  }, [autoPrompt, initialMessages]);
 
   return (
     <div className="flex h-full min-w-0 flex-col gap-2">
@@ -108,23 +95,40 @@ function JobWorkbenchLoaded({
         <ResizablePanelGroup orientation="horizontal">
           <ResizablePanel minSize={CHAT_MIN_WIDTH} defaultSize="45%">
             <div className="h-full overflow-hidden rounded-2xl bg-card shadow-sm">
-              <ChatPanel
-                messages={chat.messages}
-                status={chat.status}
-                errorText={chat.errorText}
-                models={props.models}
-                emptyTitle="为这个岗位定制简历"
-                emptyDescription="Agent 能看到 JD 和主简历：让它起草、改写、取舍，右边编辑器与它共编同一份定制稿。"
-                placeholder="例如：把项目经历按这个 JD 的要求重新排一下优先级"
-                onSelectModel={props.onSelectModel}
-                onOpenModelSettings={props.onOpenModelSettings}
+              <ConversationPane
+                scope={`job:${jobId}`}
                 onOverlayChange={props.onOverlayChange}
-                onOpenBrowser={props.onOpenBrowser}
-                onSend={chat.send}
-                onStop={chat.stop}
-                onApprovalResponse={chat.respondApproval}
-                conversationKey={`job:${jobId}`}
-              />
+              >
+                {(chat, conversation) => (
+                  <>
+                    <AutoPromptSender
+                      chat={chat}
+                      prompt={autoPrompt}
+                      onSent={onAutoPromptSent}
+                    />
+                    <ChatPanel
+                      messages={chat.messages}
+                      status={chat.status}
+                      errorText={chat.errorText}
+                      models={props.models}
+                      emptyTitle="为这个岗位定制简历"
+                      emptyDescription="Agent 能看到 JD 和主简历：让它起草、改写、取舍，右边编辑器与它共编同一份定制稿。"
+                      placeholder="例如：把项目经历按这个 JD 的要求重新排一下优先级"
+                      onSelectModel={props.onSelectModel}
+                      onOpenModelSettings={props.onOpenModelSettings}
+                      onOverlayChange={props.onOverlayChange}
+                      onOpenBrowser={props.onOpenBrowser}
+                      onSend={chat.send}
+                      onStop={chat.stop}
+                      onApprovalResponse={chat.respondApproval}
+                      initialDraft={prefillPrompt}
+                      onInitialDraftConsumed={onPrefillConsumed}
+                      conversationKey={conversation.activeKey}
+                      conversation={conversation}
+                    />
+                  </>
+                )}
+              </ConversationPane>
             </div>
           </ResizablePanel>
           {/* 8px 间隙里的一条可拖拽细线：既是分隔提示，也是拖拽热区。 */}
@@ -140,4 +144,33 @@ function JobWorkbenchLoaded({
       </div>
     </div>
   );
+}
+
+/** 进入岗位工作台时的一次性起草指令：发完由父级清掉，切对话不会重复发。 */
+function AutoPromptSender({
+  chat,
+  prompt,
+  onSent,
+}: {
+  chat: ModuleChat;
+  prompt: string | null;
+  onSent: () => void;
+}) {
+  const send = chat.send;
+  /*
+   * 推迟到本轮 effect 之后发：StrictMode 会在挂载 effect 跑完后模拟一次卸载，
+   * 那里 useChat 的清理会 stop() 掉刚发出的请求。直接在 effect 里发，起草指令
+   * 一定被中止（界面表现为「进了工作台但对话没动静」）。
+   * 清理函数同时消掉 StrictMode 重放带来的第二次发送。
+   */
+  useEffect(() => {
+    if (prompt === null) return;
+    const timer = window.setTimeout(() => {
+      send(prompt, []);
+      onSent();
+    }, 0);
+    return () => window.clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 只在进入时发一次。
+  }, [prompt]);
+  return null;
 }

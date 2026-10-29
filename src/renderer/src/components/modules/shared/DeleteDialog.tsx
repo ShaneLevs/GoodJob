@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import {
   AlertDialog,
@@ -31,6 +31,11 @@ export function DeleteDialog({
   onOverlayChange,
 }: DeleteDialogProps) {
   const [saving, setSaving] = useState(false);
+
+  // 关闭时清掉 loading：组件常驻，否则下一次打开会沿用上一次的 disabled 状态。
+  useEffect(() => {
+    if (!open) setSaving(false);
+  }, [open]);
 
   const remove = (): void => {
     setSaving(true);

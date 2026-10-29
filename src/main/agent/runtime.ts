@@ -84,7 +84,8 @@ function imageAttachmentsForModel(messages: WireMessage[]): Set<string> {
 }
 
 export class AgentRuntime {
-  private readonly running = new Map<ConversationKey, AbortController>();
+  /** 正在跑的 run：key → runId + controller。中止要按 runId 对账，见 abort()。 */
+  private readonly running = new Map<ConversationKey, { runId: string; controller: AbortController }>();
   /** 用户最近一次在场的时刻（发消息 / 点停止都刷新）：browser_submit 离场门的依据。 */
   private lastActivityAt = Date.now();
 
@@ -99,7 +100,7 @@ export class AgentRuntime {
       emit({ key, runId, type: "done" });
     };
 
-    // 一个模块一条会话，同时只跑一个 run：UI 的停止按钮本来就只有流式期间可点，
+    // 同一条对话同时只跑一个 run：UI 的停止按钮本来就只有流式期间可点，
     // 这里挡的是极端竞态（上一次流还没结束就发下一条）。
     if (this.running.has(key)) {
       fail("上一条还在处理中，请先停止或等它完成。");
@@ -117,7 +118,7 @@ export class AgentRuntime {
     }
 
     const controller = new AbortController();
-    this.running.set(key, controller);
+    this.running.set(key, { runId, controller });
 
     const startedAt = Date.now();
     const chunkTypes = new Map<string, number>();
@@ -300,9 +301,16 @@ export class AgentRuntime {
     }
   }
 
-  abort(key: ConversationKey): void {
+  /**
+   * 中止一条对话的 run。带 runId 时只停那一轮：渲染层取消上一个请求的 IPC
+   * 可能晚于新请求到达，按 key 直接中止会把刚发起的新一轮一起杀掉。
+   */
+  abort(key: ConversationKey, runId?: string): void {
     this.lastActivityAt = Date.now();
-    this.running.get(key)?.abort();
+    const active = this.running.get(key);
+    if (active === undefined) return;
+    if (runId !== undefined && active.runId !== runId) return;
+    active.controller.abort();
   }
 
   /** 思考等级归一：渲染层没传或传了非法值就按默认（medium）。 */
@@ -312,7 +320,7 @@ export class AgentRuntime {
 
   abortAll(): void {
     this.lastActivityAt = Date.now();
-    for (const controller of this.running.values()) controller.abort();
+    for (const { controller } of this.running.values()) controller.abort();
     this.running.clear();
   }
 

@@ -52,13 +52,11 @@ export function createIpcChatTransport(
         else buffer.push(event.chunk as UIMessageChunk);
       });
 
-      abortSignal?.addEventListener(
-        "abort",
-        () => {
-          window.goodjob.chat.abort(key);
-        },
-        { once: true },
-      );
+      // 只取消本轮：AbortSignal 与流的 cancel 都会走到这里，按 key 停的话
+      // 这两次取消中只要有一次晚于下一轮请求，就会把下一轮误杀。
+      const cancelRun = (): void => window.goodjob.chat.abort(key, runId);
+
+      abortSignal?.addEventListener("abort", cancelRun, { once: true });
 
       // main 在 send 返回前就可能开始推 chunk，所以订阅必须先于 invoke；
       // invoke 之后再把缓冲灌进刚创建的流。
@@ -83,7 +81,7 @@ export function createIpcChatTransport(
         },
         cancel() {
           unsubscribe();
-          window.goodjob.chat.abort(key);
+          cancelRun();
         },
       });
     },

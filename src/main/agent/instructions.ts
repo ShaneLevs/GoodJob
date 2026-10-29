@@ -1,4 +1,10 @@
-import { interviewKeyTarget, jobKeyTarget, type ConversationKey } from "@shared/types";
+import {
+  conversationScope,
+  interviewKeyTarget,
+  jobKeyTarget,
+  type ConversationKey,
+  type ConversationScope,
+} from "@shared/types";
 
 import type { AgentDeps } from "./deps";
 import { RESUME_FORMAT } from "./prompts/resume-format";
@@ -8,13 +14,15 @@ import { skillIndexSection } from "./skills";
 const PLAYBOOKS_INSTRUCTION_LIMIT = 4_000;
 
 export function buildInstructions(deps: AgentDeps, key: ConversationKey, summary: string | null, memoryText: string): string {
-  const interviewKey = interviewKeyTarget(key);
+  // 场景决定指令 / 工具 / 上传目录；key 里的 `#threadId` 只用来区分对话。
+  const scope = conversationScope(key);
+  const interviewKey = interviewKeyTarget(scope);
   const sections: string[] =
     interviewKey !== null
       ? // 面试会话：persona + 每次 send 重算的实时轮次进度（runtime 侧硬约束的一半，
         // 另一半在 stores/domain/interviews 的写入口校验里）。
         [interviewInstructions(deps, interviewKey)]
-      : [moduleInstructions(key)];
+      : [moduleInstructions(scope)];
 
   // 技能库索引：只列当前会话适用的技能（简历 / 岗位工作台才有），正文按需 skill_read。
   const skillIndex = skillIndexSection(key);
@@ -22,7 +30,7 @@ export function buildInstructions(deps: AgentDeps, key: ConversationKey, summary
 
   // 投递会话追加平台适配模板（用户手编的 browser-playbooks.md，P4）：
   // 没启用浏览器自动化就不注入，省上下文。
-  if (key === "applications" && deps.browser.isEnabled()) {
+  if (scope === "applications" && deps.browser.isEnabled()) {
     sections.push(playbooksSection(deps));
   }
 
@@ -168,11 +176,11 @@ export function digestSnapshot(deps: AgentDeps): string {
   ].join("\n");
 }
 
-/** 指令按会话 key 分发：三个领域模块 + 简历 + 岗位二级工作台。 */
-export function moduleInstructions(key: ConversationKey): string {
-  const jobKey = jobKeyTarget(key);
+/** 指令按会话场景分发：三个领域模块 + 简历 + 岗位二级工作台。 */
+export function moduleInstructions(scope: ConversationScope): string {
+  const jobKey = jobKeyTarget(scope);
   if (jobKey !== null) return JOB_WORKBENCH_INSTRUCTIONS;
-  switch (key) {
+  switch (scope) {
     case "companies":
       return COMPANIES_INSTRUCTIONS;
     case "jobs":

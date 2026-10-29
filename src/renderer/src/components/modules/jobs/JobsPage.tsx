@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import type { UIMessage } from "ai";
 import {
   CircleAlert,
   LoaderCircle,
@@ -9,8 +8,8 @@ import {
 
 import type { Company, Job, ScorecardTarget, ScriptDoc, TaskState } from "@shared/types";
 
-import { useBrowserTakeover, useConversationInitial, useModuleChat } from "@/components/chat/use-module-chat";
 import { ChatPanel } from "@/components/chat/ChatPanel";
+import { ConversationPane } from "@/components/chat/conversation-pane";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
@@ -33,7 +32,7 @@ import { JobEditDialog } from "./JobEditDialog";
 import { JobRowMenu } from "./JobRowMenu";
 import { ModelGateDialog } from "../shared/ModelGateDialog";
 import { DeleteDialog } from "../shared/DeleteDialog";
-import { ModuleLoadingCard, type ModulePageProps } from "../shared/module-page";
+import type { ModulePageProps } from "../shared/module-page";
 import { useDomainChange } from "../shared/use-domain-change";
 import { ScorecardDialog } from "../shared/ScorecardDialog";
 import { ScriptDialog, ScriptStatusBadge } from "./ScriptDialog";
@@ -48,13 +47,23 @@ type JobField = "title" | "company" | "salaryBand" | "match" | "script" | "updat
 /** 无定制稿时「生成简历」进二级页后自动发给岗位 Agent 的起草指令。 */
 const TAILORED_DRAFT_PROMPT =
   "请基于主简历（resume_read）和这个岗位的 JD（job_info），生成一份定制简历初稿：针对 JD 取舍改写，用 job_tailored_write 写入。写完简述你做了哪些取舍。";
+/** 已有定制稿时「生成简历」只把优化提示词填进输入框，等用户确认后再发。 */
+const TAILORED_OPTIMIZE_PROMPT =
+  "请先读一遍这个岗位的定制简历（job_tailored_read）和主简历，对照 JD 找出最该优化的 2–3 处；然后直接改写并用 job_tailored_write 整体覆写，写完说明这次改了什么。";
 /** 无话术时「生成初稿」进二级页后自动发给岗位 Agent 的起草指令。 */
 const SCRIPT_DRAFT_PROMPT =
   "请为这个岗位生成面试话术初稿（job_info 看 JD，resume_read 看主简历）：按「自我介绍 / 项目深挖 / 反问环节」组织，用 job_script_write 写入。";
 
 export interface JobsPageProps extends ModulePageProps {
-  /** 生成简历 / 生成话术：进入该岗位的二级工作台（可带自动起草指令）。 */
-  onOpenJob: (jobId: string, autoPrompt: string | null) => void;
+  /**
+   * 生成简历 / 生成话术：进入该岗位的二级工作台。
+   * autoPrompt 会立刻发送；prefillPrompt 只填进输入框，不自动发送。
+   */
+  onOpenJob: (
+    jobId: string,
+    autoPrompt: string | null,
+    prefillPrompt?: string | null,
+  ) => void;
   /** 发起模拟面试成功 → 跳到面试模块并选中这场面试。 */
   onOpenInterview: (interviewId: string) => void;
 }
@@ -65,14 +74,7 @@ export interface JobsPageProps extends ModulePageProps {
  * 生成简历（二级页）、简历评估（后台任务，行内 评估中→分数）、
  * 话术管理（定稿 sidecar）、模拟面试（选轮次发起，进面试模块）、编辑 / 删除。
  */
-export function JobsPage(props: JobsPageProps) {
-  const initial = useConversationInitial("jobs");
-  if (initial === null) return <ModuleLoadingCard />;
-  return <JobsPageLoaded initialMessages={initial} {...props} />;
-}
-
-function JobsPageLoaded({
-  initialMessages,
+export function JobsPage({
   models,
   onSelectModel,
   onOpenModelSettings,
@@ -80,11 +82,7 @@ function JobsPageLoaded({
   onOpenBrowser,
   onOpenJob,
   onOpenInterview,
-}: JobsPageProps & { initialMessages: UIMessage[] }) {
-  const chat = useModuleChat("jobs", initialMessages);
-  // 浏览器面板工具条「让 Agent 接管」：在本会话发一条起手指令（P4）。
-  useBrowserTakeover(chat.send);
-
+}: JobsPageProps) {
   const [jobs, setJobs] = useState<Job[] | null>(null);
   const [companies, setCompanies] = useState<Company[]>([]);
   const [tailoredKeys, setTailoredKeys] = useState<Set<string>>(new Set());
@@ -103,6 +101,18 @@ function JobsPageLoaded({
 
   const modelReady = models?.activeModel?.ready === true;
 
+  /** 定制稿与话术：行菜单的简历状态、表格的话术状态都看这一份。 */
+  const reloadResumeState = useCallback((): void => {
+    void window.goodjob.resume
+      .listTailored()
+      .then((docs) => setTailoredKeys(new Set(docs.map((doc) => doc.name))))
+      .catch(() => setTailoredKeys(new Set()));
+    void window.goodjob.resume.scripts
+      .list()
+      .then((docs) => setScripts(docs))
+      .catch(() => setScripts([]));
+  }, []);
+
   const reload = useCallback((): void => {
     setError(null);
     void window.goodjob.jobs
@@ -115,19 +125,21 @@ function JobsPageLoaded({
       .list()
       .then(setCompanies)
       .catch(() => setCompanies([]));
-    void window.goodjob.resume
-      .listTailored()
-      .then((docs) => setTailoredKeys(new Set(docs.map((doc) => doc.name))))
-      .catch(() => setTailoredKeys(new Set()));
-    void window.goodjob.resume.scripts
-      .list()
-      .then((docs) => setScripts(docs))
-      .catch(() => setScripts([]));
-  }, []);
+    reloadResumeState();
+  }, [reloadResumeState]);
 
   useEffect(() => reload(), [reload]);
   // Agent 在同一页右边建档：写完就刷新表格 / 公司名 / 定制稿标记，不用切模块。
   useDomainChange(["jobs", "companies"], reload);
+  // Agent 在岗位工作台里写定制稿 / 话术：文件变化直接推过来，表格标记实时更新。
+  useEffect(
+    () =>
+      window.goodjob.resume.onFileChanged((event) => {
+        if (event.kind === "main") return;
+        reloadResumeState();
+      }),
+    [reloadResumeState],
+  );
 
   // 任务注册表：挂载取一次，事件增量更新；评估完成时匹配度已写回岗位，重拉岗位表。
   useEffect(() => {
@@ -203,9 +215,9 @@ function JobsPageLoaded({
   };
 
   const generateResume = (job: Job): void => {
-    // 已有定制稿：直接进二级页共编（看稿不需要模型）。
+    // 已有定制稿：进二级页共编，只把优化提示词填进输入框（不自动发，避免重复起一轮）。
     if (tailoredKeys.has(job.id)) {
-      onOpenJob(job.id, null);
+      onOpenJob(job.id, null, TAILORED_OPTIMIZE_PROMPT);
       return;
     }
     // 没有定制稿：进二级页并让岗位 Agent 起草初稿——这一步要模型，先过门。
@@ -232,23 +244,28 @@ function JobsPageLoaded({
     <ResizablePanelGroup orientation="horizontal">
       <ResizablePanel minSize={CHAT_MIN_WIDTH} defaultSize="42%">
         <div className="h-full overflow-hidden rounded-2xl bg-card shadow-sm">
-          <ChatPanel
-            messages={chat.messages}
-            status={chat.status}
-            errorText={chat.errorText}
-            models={models}
-            emptyTitle="整理你的岗位库"
-            emptyDescription="粘贴 JD 让 Agent 归档岗位；评估匹配度去右边岗位表点「简历评估」。"
-            placeholder="例如：帮我记录一个岗位，JD 如下：…"
-            onSelectModel={onSelectModel}
-            onOpenModelSettings={onOpenModelSettings}
-            onOverlayChange={onOverlayChange}
-            onOpenBrowser={onOpenBrowser}
-            onSend={chat.send}
-            onStop={chat.stop}
-            onApprovalResponse={chat.respondApproval}
-            conversationKey="jobs"
-          />
+          <ConversationPane scope="jobs" takeover onOverlayChange={onOverlayChange}>
+            {(chat, conversation) => (
+              <ChatPanel
+                messages={chat.messages}
+                status={chat.status}
+                errorText={chat.errorText}
+                models={models}
+                emptyTitle="整理你的岗位库"
+                emptyDescription="粘贴 JD 让 Agent 归档岗位；评估匹配度去右边岗位表点「简历评估」。"
+                placeholder="例如：帮我记录一个岗位，JD 如下：…"
+                onSelectModel={onSelectModel}
+                onOpenModelSettings={onOpenModelSettings}
+                onOverlayChange={onOverlayChange}
+                onOpenBrowser={onOpenBrowser}
+                onSend={chat.send}
+                onStop={chat.stop}
+                onApprovalResponse={chat.respondApproval}
+                conversationKey={conversation.activeKey}
+                conversation={conversation}
+              />
+            )}
+          </ConversationPane>
         </div>
       </ResizablePanel>
       {/* 8px 间隙里的一条可拖拽细线：既是分隔提示，也是拖拽热区。 */}

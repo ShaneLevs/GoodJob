@@ -33,15 +33,16 @@ main       app/context.ts（store / service 装配）
 | 7 | 通知整条流程封装为独立工具 | 模型只见 `notify` / `requestConfirmation` 两个工具与 approved / timeout 结果；SMTP/IMAP 凭据 safeStorage 加密，不进渲染层、不进日志 |
 | 8 | 语音后置（P5） | 文本先行；届时用 AI SDK `transcribe`（ASR）+ `generateSpeech`（TTS） |
 | 9 | 门控分级 | 在场：`toolApproval` 界面审批；离场：邮件确认工具。副作用动作必过其一 |
-| 10 | 无会话列表 | 每个模块一条滚动会话（`conversations/<key>.json`）；预算按模型配置的 `contextWindow`（默认 200K）算，用到约 90%（并为 `maxOutputTokens` 预留空间）就把更早消息压缩进摘要，切点对齐到 user 消息；完整历史始终保留，Agent 可用 `conversation_search` / `conversation_read` 回查被压缩的原文。渲染层有上下文用量气泡（可手动压缩） |
+| 10 | 多对话 + 滚动摘要 | 每个场景（模块 / 岗位工作台）可以有多条对话（`conversations/<key>.json`，key = `scope` 或 `scope#threadId`），对话列表从 `threads.json` 索引读；预算按模型配置的 `contextWindow`（默认 200K）算，用到约 90%（并为 `maxOutputTokens` 预留空间）就把更早消息压缩进摘要，切点对齐到 user 消息；完整历史始终保留，Agent 可用 `conversation_search` / `conversation_read` 回查被压缩的原文。渲染层有上下文用量气泡（可手动压缩） |
 
 ## 3. 目录布局（工作区内）
 
 ```
 workspaces/<id>/
   models.json                            供应商配置（Key 为 safeStorage 密文；通知配置 P3 同级）
-  conversations/<key>.json               滚动会话（UIMessage[] + 摘要 + summarizedFrom；
-                                         key = 模块名或 job:<jobId>，文件名整体 encodeURIComponent）
+  conversations/<key>.json               滚动会话（UIMessage[] + 摘要 + summarizedFrom + 标题；
+                                         key = scope 或 scope#threadId，文件名整体 encodeURIComponent）
+  conversations/threads.json             历史对话索引（key / 标题 / 时间 / 条数）
   resumes/<resumeId>/                    一份主简历一个文件夹（简历类任务的文件作用域）
     index.json  resume.md  history/      索引 / 正文（唯一源）/ 覆盖前快照
     tailored/<jobId>.md (+ history/)     岗位定制简历（与岗位 1:1；P1 旧 name 文件兼容读取）
@@ -81,9 +82,10 @@ workspaces/<id>/
 - `agent/runtime.ts` 承载 AgentRuntime：自定义 `ChatEvent` 通道迁移为 AI SDK UIMessage
   part 流（硬约束 8）；渲染层消费 `text` / `tool-*` / `data-*` part，工具执行过程同时就是
   浏览器工具条与 `logs/agent.log` 审计的数据源。
-- 会话类型：`ConversationKey` = `"resume" | "companies" | "jobs" | "applications" | \`job:${jobId}\` | \`interview:${id}\``
-  （复合 key 是通用机制；interview:<id> 自 P3 M1 起）。没有独立「对话」页——
-  产品决策：所有 LLM 交互都发生在具体模块里。UIMessage[] 与元数据持久化到 `conversations/`。
+- 会话类型：`ConversationScope` = `"resume" | "companies" | "jobs" | "applications" | \`job:${jobId}\` | \`interview:${id}\``，
+  `ConversationKey` = scope 或 `scope#threadId`。场景决定指令 / 工具 / 上传目录，线程 id 只区分对话；
+  旧版不带 `#` 的 key 继续作为默认对话。没有独立「对话」页——产品决策：所有 LLM 交互都发生在
+  具体模块里。UIMessage[] 与元数据持久化到 `conversations/`，列表元数据在 `threads.json`。
 - 会话落盘节奏（`renderer/components/chat/use-module-chat.ts`）：空闲时消息一变就写，
   run 进行中按 600ms **节流**写（不是防抖——token 连续到达时防抖会被一直取消，永远不落盘）。
   以前只在 run 结束（ready / error）时 sync，于是「刚发出 / 流到一半」的消息只在内存里，

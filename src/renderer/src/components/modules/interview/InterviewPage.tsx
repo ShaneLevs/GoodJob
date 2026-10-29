@@ -393,9 +393,12 @@ function InterviewChatLoaded({
   }, [chat.status, onChanged]);
 
   // 开场：进行中 + 会话还是空的 + 模型可用 → 自动让面试官开始（发一次后历史非空，不会重复）。
+  // 推迟到本轮 effect 之后发：StrictMode 的模拟卸载会 stop() 掉刚发出的请求，
+  // 直接发的话开场指令必定被中止；清理函数同时消掉重放带来的第二次发送。
   useEffect(() => {
     if (!running || initialMessages.length > 0 || !modelReady) return;
-    chat.send(INTERVIEW_OPENING_PROMPT, []);
+    const timer = window.setTimeout(() => chat.send(INTERVIEW_OPENING_PROMPT, []), 0);
+    return () => window.clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- 只在空会话进入时发一次。
   }, [running, initialMessages, modelReady]);
 

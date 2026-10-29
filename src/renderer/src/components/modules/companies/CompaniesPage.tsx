@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import type { UIMessage } from "ai";
 import {
   BookOpenText,
   MoreHorizontal,
@@ -11,8 +10,8 @@ import {
 
 import type { Company } from "@shared/types";
 
-import { useBrowserTakeover, useConversationInitial, useModuleChat } from "@/components/chat/use-module-chat";
 import { ChatPanel } from "@/components/chat/ChatPanel";
+import { ConversationPane } from "@/components/chat/conversation-pane";
 import { DocumentPreview } from "@/components/document/DocumentPreview";
 import { Button } from "@/components/ui/button";
 import {
@@ -45,7 +44,7 @@ import {
 import { cn } from "@/lib/utils";
 
 import { DeleteDialog } from "../shared/DeleteDialog";
-import { ModuleLoadingCard, type ModulePageProps } from "../shared/module-page";
+import type { ModulePageProps } from "../shared/module-page";
 import { useDomainChange } from "../shared/use-domain-change";
 import { ResumeMarkdownEditor } from "../shared/ResumeMarkdownEditor";
 import { cmpText, cmpTime, SortableHead, useTableSort } from "../shared/table-bits";
@@ -61,24 +60,13 @@ type CompanyField = "name" | "industry" | "city" | "updatedAt";
  * 表格列：名称 / 行业 / 城市 / 更新时间（列头点击排序，内存 asc/desc）。
  * 调研快照单独开一个弹窗（DocumentPreview 预览 + 源码编辑），不塞进表格。
  */
-export function CompaniesPage(props: ModulePageProps) {
-  const initial = useConversationInitial("companies");
-  if (initial === null) return <ModuleLoadingCard />;
-  return <CompaniesPageLoaded initialMessages={initial} {...props} />;
-}
-
-function CompaniesPageLoaded({
-  initialMessages,
+export function CompaniesPage({
   models,
   onSelectModel,
   onOpenModelSettings,
   onOverlayChange,
   onOpenBrowser,
-}: ModulePageProps & { initialMessages: UIMessage[] }) {
-  const chat = useModuleChat("companies", initialMessages);
-  // 浏览器面板工具条「让 Agent 接管」：在本会话发一条起手指令（P4）。
-  useBrowserTakeover(chat.send);
-
+}: ModulePageProps) {
   const [companies, setCompanies] = useState<Company[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   /** 编辑中的公司；draft 为空 id 表示新建。 */
@@ -127,23 +115,28 @@ function CompaniesPageLoaded({
     <ResizablePanelGroup orientation="horizontal">
       <ResizablePanel minSize={CHAT_MIN_WIDTH} defaultSize="45%">
         <div className="h-full overflow-hidden rounded-2xl bg-card shadow-sm">
-          <ChatPanel
-            messages={chat.messages}
-            status={chat.status}
-            errorText={chat.errorText}
-            models={models}
-            emptyTitle="维护你的公司库"
-            emptyDescription="让 Agent 记录公司资料、整理调研结论；右边表格和它操作的是同一份数据。"
-            placeholder="例如：帮我记录一家公司：字节跳动，互联网，北京，官网 bytedance.com"
-            onSelectModel={onSelectModel}
-            onOpenModelSettings={onOpenModelSettings}
-            onOverlayChange={onOverlayChange}
-            onOpenBrowser={onOpenBrowser}
-            onSend={chat.send}
-            onStop={chat.stop}
-            onApprovalResponse={chat.respondApproval}
-            conversationKey="companies"
-          />
+          <ConversationPane scope="companies" takeover onOverlayChange={onOverlayChange}>
+            {(chat, conversation) => (
+              <ChatPanel
+                messages={chat.messages}
+                status={chat.status}
+                errorText={chat.errorText}
+                models={models}
+                emptyTitle="维护你的公司库"
+                emptyDescription="让 Agent 记录公司资料、整理调研结论；右边表格和它操作的是同一份数据。"
+                placeholder="例如：帮我记录一家公司：字节跳动，互联网，北京，官网 bytedance.com"
+                onSelectModel={onSelectModel}
+                onOpenModelSettings={onOpenModelSettings}
+                onOverlayChange={onOverlayChange}
+                onOpenBrowser={onOpenBrowser}
+                onSend={chat.send}
+                onStop={chat.stop}
+                onApprovalResponse={chat.respondApproval}
+                conversationKey={conversation.activeKey}
+                conversation={conversation}
+              />
+            )}
+          </ConversationPane>
         </div>
       </ResizablePanel>
       {/* 8px 间隙里的一条可拖拽细线：既是分隔提示，也是拖拽热区。 */}

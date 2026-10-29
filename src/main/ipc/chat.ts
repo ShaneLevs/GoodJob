@@ -2,8 +2,11 @@ import { dialog, ipcMain } from "electron";
 
 import {
   IPC,
+  conversationScope,
+  isConversationScope,
   type ChatSendPayload,
   type ConversationKey,
+  type ConversationScope,
   type WireMessage,
 } from "@shared/types";
 
@@ -20,7 +23,9 @@ export function registerChatIpc(deps: IpcDeps, sendToUi: SendToUi): void {
     // Fire and forget：chunk 流走 IPC.chatChunk，UI 保持响应。
     void runtime.send(payload, (event) => sendToUi(IPC.chatChunk, event));
   });
-  ipcMain.on(IPC.chatAbort, (_event, key: ConversationKey) => runtime.abort(key));
+  ipcMain.on(IPC.chatAbort, (_event, key: ConversationKey, runId?: string) =>
+    runtime.abort(key, runId),
+  );
   ipcMain.handle(IPC.chatContext, (_event, key: ConversationKey) => runtime.context(key));
   ipcMain.handle(IPC.chatCompact, (_event, key: ConversationKey) => runtime.compact(key));
 
@@ -29,9 +34,24 @@ export function registerChatIpc(deps: IpcDeps, sendToUi: SendToUi): void {
     return {
       key,
       messages: doc.messages,
+      title: doc.title,
       updatedAt: doc.updatedAt,
       workspaceId: workspaces.currentPaths.id,
     };
+  });
+  ipcMain.handle(IPC.conversationsList, (_event, scope: ConversationScope) => {
+    if (!isConversationScope(scope)) return [];
+    return conversations.list(scope);
+  });
+  ipcMain.handle(IPC.conversationsCreate, (_event, scope: ConversationScope) => {
+    if (!isConversationScope(scope)) throw new Error(`未知的会话场景：${String(scope)}`);
+    return conversations.create(scope);
+  });
+  ipcMain.handle(IPC.conversationsRemove, (_event, key: ConversationKey) => {
+    if (!isConversationScope(conversationScope(key))) return;
+    // 先停掉正在跑的 run，避免删除后还有 chunk / 收尾写入把文件补回来。
+    runtime.abort(key);
+    conversations.remove(key);
   });
   // 写入带工作区校验：页面卸载时的收尾写入可能晚于「切换工作区」发生，那时绝不能
   // 把上一个工作区的消息写进新工作区。id 对不上就静默丢弃。

@@ -4,6 +4,7 @@ import path from "node:path";
 import { nativeImage } from "electron";
 
 import {
+  conversationScope,
   interviewKeyTarget,
   isImageUploadName,
   jobKeyTarget,
@@ -38,11 +39,13 @@ export function uploadDirFor(
   key: ConversationKey,
   resumeUploadDir: string | null,
 ): string {
-  const jobId = jobKeyTarget(key);
+  // 上传目录跟着场景走，不跟着具体对话走：同一模块的多个对话共享参考文件。
+  const scope = conversationScope(key);
+  const jobId = jobKeyTarget(scope);
   if (jobId !== null) return path.join(workspace.jobsUpload, safeSegment(jobId));
-  const interviewId = interviewKeyTarget(key);
+  const interviewId = interviewKeyTarget(scope);
   if (interviewId !== null) return path.join(workspace.interviewsUpload, safeSegment(interviewId));
-  switch (key) {
+  switch (scope) {
     case "companies":
       return workspace.companiesUpload;
     case "jobs":

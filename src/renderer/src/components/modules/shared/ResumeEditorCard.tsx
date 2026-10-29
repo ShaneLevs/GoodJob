@@ -79,6 +79,7 @@ export function ResumeEditorCard({
   dirtyRef.current = dirty;
 
   const fileKey = target.kind === "main" ? "main" : target.name;
+  const fileKind = target.kind === "main" ? "main" : "tailored";
   const documentBody = useMemo(() => extractPhotoDirective(draft).markdown, [draft]);
   const imageSources = useMemo(() => extractUploadImagePaths(documentBody), [documentBody]);
 
@@ -103,7 +104,7 @@ export function ResumeEditorCard({
   // —— Agent / 其他来源写入文件：非脏热更新，脏则冲突条 ——
   useEffect(() => {
     return window.goodjob.resume.onFileChanged((event) => {
-      if (event.file !== fileKey) return;
+      if (event.kind !== fileKind || event.file !== fileKey) return;
 
       if (dirtyRef.current) {
         setConflict(event);
@@ -113,7 +114,7 @@ export function ResumeEditorCard({
         if (doc !== null) applyContent(doc.content);
       });
     });
-  }, [applyContent, fileKey, target]);
+  }, [applyContent, fileKey, fileKind, target]);
 
   // —— 正文引用的 upload/ 图片 → 让 main 读成小图 data URL（预览与导出共用）——
   useEffect(() => {

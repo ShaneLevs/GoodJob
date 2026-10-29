@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import type { UIMessage } from "ai";
 import {
   CircleAlert,
   GitCompareArrows,
@@ -18,8 +17,8 @@ import type {
   PipelineConfig,
 } from "@shared/types";
 
-import { useBrowserTakeover, useConversationInitial, useModuleChat } from "@/components/chat/use-module-chat";
 import { ChatPanel } from "@/components/chat/ChatPanel";
+import { ConversationPane } from "@/components/chat/conversation-pane";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -50,7 +49,7 @@ import { AdvanceDialog } from "./AdvanceDialog";
 import { ApplicationEditDialog } from "./ApplicationEditDialog";
 import { OfferCompareDialog } from "./OfferCompareDialog";
 import { PipelineDialog } from "./PipelineDialog";
-import { ModuleLoadingCard, type ModulePageProps } from "../shared/module-page";
+import type { ModulePageProps } from "../shared/module-page";
 import { useDomainChange } from "../shared/use-domain-change";
 import { cmpNumber, cmpText, cmpTime, SortableHead, stageDotClass, useTableSort } from "../shared/table-bits";
 import { formatTime } from "@/lib/format";
@@ -60,24 +59,13 @@ const TABLE_MIN_WIDTH = 560;
 
 type AppField = "job" | "company" | "stage" | "lastAt" | "offer";
 
-export function ApplicationsPage(props: ModulePageProps) {
-  const initial = useConversationInitial("applications");
-  if (initial === null) return <ModuleLoadingCard />;
-  return <ApplicationsPageLoaded initialMessages={initial} {...props} />;
-}
-
-function ApplicationsPageLoaded({
-  initialMessages,
+export function ApplicationsPage({
   models,
   onSelectModel,
   onOpenModelSettings,
   onOverlayChange,
   onOpenBrowser,
-}: ModulePageProps & { initialMessages: UIMessage[] }) {
-  const chat = useModuleChat("applications", initialMessages);
-  // 浏览器面板工具条「让 Agent 接管」：在本会话发一条起手指令（P4）。
-  useBrowserTakeover(chat.send);
-
+}: ModulePageProps) {
   const [applications, setApplications] = useState<Application[] | null>(null);
   const [jobs, setJobs] = useState<Job[]>([]);
   const [companies, setCompanies] = useState<Company[]>([]);
@@ -191,23 +179,28 @@ function ApplicationsPageLoaded({
     <ResizablePanelGroup orientation="horizontal">
       <ResizablePanel minSize={CHAT_MIN_WIDTH} defaultSize="42%">
         <div className="h-full overflow-hidden rounded-2xl bg-card shadow-sm">
-          <ChatPanel
-            messages={chat.messages}
-            status={chat.status}
-            errorText={chat.errorText}
-            models={models}
-            emptyTitle="管理你的投递"
-            emptyDescription="让 Agent 记录投递、推进状态；阶段不够用（比如「四面」）在右边「流水线」里加。"
-            placeholder="例如：把字节的那个岗位标记为简历通过"
-            onSelectModel={onSelectModel}
-            onOpenModelSettings={onOpenModelSettings}
-            onOverlayChange={onOverlayChange}
-            onOpenBrowser={onOpenBrowser}
-            onSend={chat.send}
-            onStop={chat.stop}
-            onApprovalResponse={chat.respondApproval}
-            conversationKey="applications"
-          />
+          <ConversationPane scope="applications" takeover onOverlayChange={onOverlayChange}>
+            {(chat, conversation) => (
+              <ChatPanel
+                messages={chat.messages}
+                status={chat.status}
+                errorText={chat.errorText}
+                models={models}
+                emptyTitle="管理你的投递"
+                emptyDescription="让 Agent 记录投递、推进状态；阶段不够用（比如「四面」）在右边「流水线」里加。"
+                placeholder="例如：把字节的那个岗位标记为简历通过"
+                onSelectModel={onSelectModel}
+                onOpenModelSettings={onOpenModelSettings}
+                onOverlayChange={onOverlayChange}
+                onOpenBrowser={onOpenBrowser}
+                onSend={chat.send}
+                onStop={chat.stop}
+                onApprovalResponse={chat.respondApproval}
+                conversationKey={conversation.activeKey}
+                conversation={conversation}
+              />
+            )}
+          </ConversationPane>
         </div>
       </ResizablePanel>
       {/* 8px 间隙里的一条可拖拽细线：既是分隔提示，也是拖拽热区。 */}

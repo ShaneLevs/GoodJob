@@ -1,4 +1,5 @@
 import {
+  conversationScope,
   interviewKeyTarget,
   jobKeyTarget,
   type ConversationKey,
@@ -21,9 +22,10 @@ const SKILLS: readonly Skill[] = [resumeWritingSkill, resumeReviewSkill, intervi
 
 /** 会话 key → 技能场景。岗位工作台与模拟面试是复合 key，单独判断。 */
 export function scenarioOf(key: ConversationKey): SkillScenario {
-  if (jobKeyTarget(key) !== null) return "job";
-  if (interviewKeyTarget(key) !== null) return "interview";
-  switch (key) {
+  const scope = conversationScope(key);
+  if (jobKeyTarget(scope) !== null) return "job";
+  if (interviewKeyTarget(scope) !== null) return "interview";
+  switch (scope) {
     case "companies":
       return "companies";
     case "jobs":

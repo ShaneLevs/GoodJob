@@ -193,9 +193,11 @@ scripts/        图标管线：make-icons.mjs 用 Electron 渲染 build/icon-dra
   workspaces/               0700
     <workspaceId>/          0700  目录名一律 ID（ws_ 前缀 + 12 位 hex）
       models.json           0600  模型供应商 + 加密 Key
-      conversations/        0700  滚动会话 <key>.json（resume / companies / jobs /
+      conversations/        0700  滚动会话：一条对话一个 <key>.json（scope 或
+                                  scope#threadId；scope = resume / companies / jobs /
                                   applications / job:<jobId> / interview:<id>；
-                                  复合 key 会 encodeURIComponent）
+                                  复合 key 会 encodeURIComponent）+ threads.json
+                                  历史索引（标题 / 时间 / 条数，正文不重复存）
       resumes/              0700  主简历们：一份一个文件夹（resume.md / history /
                                   tailored/<jobId>.md 与 tailored/history / scripts 话术
                                   （含定稿 sidecar 与 history）/ reports 评分报告 /

@@ -16,7 +16,9 @@ import type {
   CompanyPatch,
   ContextUsage,
   ConversationKey,
+  ConversationScope,
   ConversationState,
+  ConversationThreadSummary,
   GoodjobApi,
   IntegrityReport,
   InterviewCreateInput,
@@ -90,7 +92,8 @@ const api: GoodjobApi = {
   chat: {
     send: (payload: ChatSendPayload) =>
       ipcRenderer.invoke(IPC.chatSend, payload) as Promise<void>,
-    abort: (key: ConversationKey) => ipcRenderer.send(IPC.chatAbort, key),
+    abort: (key: ConversationKey, runId?: string) =>
+      ipcRenderer.send(IPC.chatAbort, key, runId),
     context: (key: ConversationKey) =>
       ipcRenderer.invoke(IPC.chatContext, key) as Promise<ContextUsage>,
     compact: (key: ConversationKey) =>
@@ -107,6 +110,12 @@ const api: GoodjobApi = {
       ipcRenderer.invoke(IPC.conversationsGet, key) as Promise<ConversationState>,
     sync: (key: ConversationKey, messages: WireMessage[], workspaceId?: string) =>
       ipcRenderer.invoke(IPC.conversationsSync, key, messages, workspaceId) as Promise<void>,
+    list: (scope: ConversationScope) =>
+      ipcRenderer.invoke(IPC.conversationsList, scope) as Promise<ConversationThreadSummary[]>,
+    create: (scope: ConversationScope) =>
+      ipcRenderer.invoke(IPC.conversationsCreate, scope) as Promise<ConversationThreadSummary>,
+    remove: (key: ConversationKey) =>
+      ipcRenderer.invoke(IPC.conversationsRemove, key) as Promise<void>,
   },
   resume: {
     list: () => ipcRenderer.invoke(IPC.resumeList) as Promise<ResumeListState>,

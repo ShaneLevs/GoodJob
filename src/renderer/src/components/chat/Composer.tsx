@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { ArrowUp, ChevronDown, Plus, Settings2, Square } from "lucide-react";
 
@@ -54,6 +54,9 @@ interface ComposerProps {
   allowUpload: boolean;
   conversationKey?: ConversationKey;
   placeholder: string;
+  /** 预填进输入框的内容（不自动发送）。 */
+  initialDraft?: string | null;
+  onInitialDraftConsumed?: () => void;
   onSend: (text: string, uploads: UploadedFileMeta[], effort: ReasoningEffort) => void;
   onStop: () => void;
   onSelectModel: (selection: ModelSelection) => void;
@@ -93,6 +96,8 @@ export function Composer({
   allowUpload,
   conversationKey,
   placeholder,
+  initialDraft = null,
+  onInitialDraftConsumed,
   onSend,
   onStop,
   onSelectModel,
@@ -108,6 +113,21 @@ export function Composer({
   const [compacting, setCompacting] = useState(false);
   const [compactError, setCompactError] = useState<string | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const onInitialDraftConsumedRef = useRef(onInitialDraftConsumed);
+  onInitialDraftConsumedRef.current = onInitialDraftConsumed;
+
+  // 预填提示词：只进输入框，不自动发送（同一份提示词消费一次后父级清空）。
+  useEffect(() => {
+    if (initialDraft === null) return;
+    setDraft(initialDraft);
+    onInitialDraftConsumedRef.current?.();
+    window.requestAnimationFrame(() => {
+      const input = inputRef.current;
+      if (input === null) return;
+      input.focus();
+      input.setSelectionRange(input.value.length, input.value.length);
+    });
+  }, [initialDraft]);
 
   const active = models?.activeModel ?? null;
   const activeKey = active === null ? null : optionKey(active.providerId, active.modelId);

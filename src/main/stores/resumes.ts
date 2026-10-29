@@ -152,7 +152,11 @@ export class ResumeStore {
       fs.writeFileSync(file, content, { mode: 0o600 });
       fs.chmodSync(file, 0o600);
     }
-    this.emitFileChanged({ resumeId: current.id, file: targetFileLabel(target) });
+    this.emitFileChanged({
+      resumeId: current.id,
+      kind: target.kind === "main" ? "main" : "tailored",
+      file: targetFileLabel(target),
+    });
     return this.read(target);
   }
 
@@ -206,7 +210,7 @@ export class ResumeStore {
         }
       }
     }
-    this.emitFileChanged({ resumeId: current.id, file: safe });
+    this.emitFileChanged({ resumeId: current.id, kind: "tailored", file: safe });
     return { key: safe };
   }
 
@@ -334,6 +338,7 @@ export class ResumeStore {
     const file = path.join(dir, `${key}.md`);
     fs.writeFileSync(file, content, { mode: 0o600 });
     fs.chmodSync(file, 0o600);
+    this.emitFileChanged({ resumeId: current.id, kind: "script", file: key });
     return this.scriptDoc(key, file);
   }
 
@@ -357,6 +362,7 @@ export class ResumeStore {
       finalizedAt: new Date().toISOString(),
       finalSha: sha256(content),
     });
+    this.emitFileChanged({ resumeId: current.id, kind: "script", file: key });
     return this.scriptDoc(key, file);
   }
 
@@ -531,7 +537,7 @@ export class ResumeStore {
 
   /** watcher 事件防抖：编辑器只需要"这个文件变了"这一个事实。 */
   private scheduleEvent(event: ResumeFileEvent): void {
-    const key = `${event.resumeId}/${event.file}`;
+    const key = `${event.resumeId}/${event.kind}/${event.file}`;
     const existing = this.pendingEvents.get(key);
     if (existing !== undefined) clearTimeout(existing);
     this.pendingEvents.set(
@@ -553,17 +559,34 @@ export class ResumeStore {
     if (current === null) return;
     try {
       this.watcher = fs.watch(this.resumeDir(current.id), { recursive: true }, (_type, filename) => {
-        const rel = filename?.toString() ?? "";
-        if (!rel.endsWith(".md")) return;
+        const rel = (filename?.toString() ?? "").replace(/\\/g, "/");
         if (rel === "resume.md") {
-          this.scheduleEvent({ resumeId: current.id, file: "main" });
+          this.scheduleEvent({ resumeId: current.id, kind: "main", file: "main" });
           return;
         }
-        if (rel.startsWith("tailored/") && !rel.slice("tailored/".length).includes("/")) {
-          this.scheduleEvent({
-            resumeId: current.id,
-            file: rel.slice("tailored/".length, -".md".length),
-          });
+        if (rel.startsWith("tailored/")) {
+          const name = rel.slice("tailored/".length);
+          if (name.endsWith(".md") && !name.includes("/")) {
+            this.scheduleEvent({
+              resumeId: current.id,
+              kind: "tailored",
+              file: name.slice(0, -".md".length),
+            });
+          }
+          return;
+        }
+        if (rel.startsWith("scripts/")) {
+          const name = rel.slice("scripts/".length);
+          if (name.includes("/")) return;
+          // .md 是话术正文，.json 是定稿 sidecar：两者都改变列表状态。
+          const base = name.endsWith(".md")
+            ? name.slice(0, -".md".length)
+            : name.endsWith(".json")
+              ? name.slice(0, -".json".length)
+              : null;
+          if (base !== null) {
+            this.scheduleEvent({ resumeId: current.id, kind: "script", file: base });
+          }
         }
       });
       this.watcher.on("error", () => this.stopWatch());

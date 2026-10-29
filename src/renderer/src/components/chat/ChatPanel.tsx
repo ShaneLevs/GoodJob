@@ -24,10 +24,13 @@ import {
 import { Button } from "@/components/ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
 import { formatDuration } from "@/lib/format";
+import { cn } from "@/lib/utils";
 
 import { AssistantMarkdown } from "./AssistantMarkdown";
 import { ApprovalCard, isBrowserWriteTool } from "./ApprovalCard";
 import { Composer } from "./Composer";
+import { ConversationToolbar } from "./conversation-toolbar";
+import type { ConversationControl } from "./conversation-pane";
 import { groupTraceParts, WorkBlock, type ToolPartView } from "./ToolTrace";
 import { UploadAttachment } from "./UploadAttachment";
 
@@ -61,6 +64,14 @@ interface ChatPanelProps {
   onOpenBrowser?: () => void;
   /** 会话 key：用来查上下文用量（用量只在 main 算，界面只展示 / 触发压缩）。 */
   conversationKey?: ConversationKey;
+  /** 历史对话 / 新建对话入口；模拟面试保持单会话，不传。 */
+  conversation?: ConversationControl;
+  /**
+   * 预填进输入框的内容（不自动发送）。消费一次后由父级清空，
+   * 切换历史对话时不会再带进新会话。
+   */
+  initialDraft?: string | null;
+  onInitialDraftConsumed?: () => void;
 }
 
 /** `data-upload` part 的宽松视图（UploadedFileMeta 的线上形态）。 */
@@ -136,6 +147,9 @@ export function ChatPanel({
   onApprovalResponse,
   onOpenBrowser,
   conversationKey,
+  conversation,
+  initialDraft = null,
+  onInitialDraftConsumed,
 }: ChatPanelProps) {
   const busy = status === "submitted" || status === "streaming";
 
@@ -172,7 +186,10 @@ export function ChatPanel({
   const empty = messages.length === 0;
 
   return (
-    <div className="flex h-full min-w-0 flex-1 flex-col bg-card">
+    <div className="relative flex h-full min-w-0 flex-1 flex-col bg-card">
+      {conversation !== undefined && (
+        <ConversationToolbar control={conversation} onOverlayChange={onOverlayChange} />
+      )}
       {/*
         autoScroll 是必须的，不是可选装饰：消息行带 content-visibility:auto，
         markdown / 代码块 / 图片是挂载后才撑高的，打开会话那一刻算出来的
@@ -196,7 +213,12 @@ export function ChatPanel({
         ) : (
           <MessageScroller className="min-h-0 flex-1">
             <MessageScrollerViewport>
-              <MessageScrollerContent className="mx-auto w-full max-w-3xl gap-6 px-5 py-5">
+              <MessageScrollerContent
+                className={cn(
+                  "mx-auto w-full max-w-3xl gap-6 px-5 pb-5",
+                  conversation === undefined ? "pt-5" : "pt-12",
+                )}
+              >
                 {renderNotices(0)}
                 {messages.map((message, index) => {
                   const isLast = index === messages.length - 1;
@@ -345,6 +367,8 @@ export function ChatPanel({
             allowUpload={allowUpload}
             conversationKey={conversationKey}
             placeholder={placeholder}
+            initialDraft={initialDraft}
+            onInitialDraftConsumed={onInitialDraftConsumed}
             onSend={onSend}
             onStop={onStop}
             onSelectModel={onSelectModel}

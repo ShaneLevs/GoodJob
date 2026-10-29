@@ -5,7 +5,9 @@ import type {
   ChatStreamEvent,
   ContextUsage,
   ConversationKey,
+  ConversationScope,
   ConversationState,
+  ConversationThreadSummary,
   UploadedFileMeta,
   WireMessage,
 } from "./chat";
@@ -72,6 +74,9 @@ export const IPC = {
   chatUploadPreview: "chat:upload-preview",
   conversationsGet: "conversations:get",
   conversationsSync: "conversations:sync",
+  conversationsList: "conversations:list",
+  conversationsCreate: "conversations:create",
+  conversationsRemove: "conversations:remove",
   resumeList: "resume:list",
   resumeCreate: "resume:create",
   resumeRename: "resume:rename",
@@ -166,7 +171,8 @@ export interface GoodjobApi {
   chat: {
     /** 发起一次 agent run；chunk 流从 onChunk 订阅（按 key + runId 过滤）。 */
     send: (payload: ChatSendPayload) => Promise<void>;
-    abort: (key: ConversationKey) => void;
+    /** 中止某条对话的 run；带 runId 时只停那一轮（迟到的取消不能杀新请求）。 */
+    abort: (key: ConversationKey, runId?: string) => void;
     onChunk: (listener: (event: ChatStreamEvent) => void) => () => void;
     /** 当前会话的上下文用量（token 估算 + 自动压缩阈值）。 */
     context: (key: ConversationKey) => Promise<ContextUsage>;
@@ -190,6 +196,12 @@ export interface GoodjobApi {
     get: (key: ConversationKey) => Promise<ConversationState>;
     /** workspaceId 来自 get：与 main 的当前工作区不符时这次写入被忽略。 */
     sync: (key: ConversationKey, messages: WireMessage[], workspaceId?: string) => Promise<void>;
+    /** 某个场景（模块 / 岗位 / 面试）下的历史对话，按最近更新排序。 */
+    list: (scope: ConversationScope) => Promise<ConversationThreadSummary[]>;
+    /** 新建一条空对话；返回它的 key 与元数据。 */
+    create: (scope: ConversationScope) => Promise<ConversationThreadSummary>;
+    /** 删除一条对话（连同它的消息与摘要）。正在跑的这一轮会先被中止。 */
+    remove: (key: ConversationKey) => Promise<void>;
   };
   resume: {
     list: () => Promise<ResumeListState>;

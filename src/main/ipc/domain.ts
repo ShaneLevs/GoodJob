@@ -4,7 +4,6 @@ import {
   IPC,
   type ApplicationPatch,
   type CompanyPatch,
-  type ConversationKey,
   type InterviewCreateInput,
   type JobPatch,
   type PipelineDraft,
@@ -54,9 +53,9 @@ export function registerDomainIpc(deps: IpcDeps): void {
     interviews.create(input),
   );
   ipcMain.handle(IPC.interviewsRemove, (_event, id: string) => {
-    // 会话里的 run 可能还在跑：先停再删，连 interview:<id> 会话文件一起清。
+    // 会话里的 run 可能还在跑：先停再删，连 interview:<id> 的所有对话一起清。
     runtime.abort(`interview:${id}`);
     interviews.remove(id);
-    conversations.remove(`interview:${id}` as ConversationKey);
+    conversations.removeScope(`interview:${id}`);
   });
 }

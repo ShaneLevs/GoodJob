@@ -1,12 +1,9 @@
 /**
- * 滚动会话的 key：一个模块一条会话，没有用户可见的"会话列表"。
- * 「对话」通用页已移除（产品决策：独立聊天不在规划内）。
- * 模块 key 在这里登记，main 的工具注册表（toolsFor）按它分发；
- * 复合 key 是通用机制——`job:<jobId>` 是岗位二级工作台的独立会话
- * （避免多岗位上下文互串），`interview:<id>` 是一场模拟面试的独立会话。
- * 落盘文件名对 key 做 encodeURIComponent（`:` 等不安全字符会被编码掉）。
+ * 会话场景：决定这条对话用哪套指令、工具、技能与上传目录。
+ * 模块 key 在这里登记；`job:<jobId>` 是岗位二级工作台，
+ * `interview:<id>` 是一场模拟面试。
  */
-export type ConversationKey =
+export type ConversationScope =
   | "resume"
   | "companies"
   | "jobs"
@@ -14,14 +11,57 @@ export type ConversationKey =
   | `job:${string}`
   | `interview:${string}`;
 
+/**
+ * 会话 key：`<scope>` 是旧版本留下 / 当前默认对话，`<scope>#<threadId>`
+ * 是用户新建的独立对话。落盘文件名对 key 做 encodeURIComponent。
+ * 「对话」通用页已移除（产品决策：独立聊天不在规划内）。
+ */
+export type ConversationKey = ConversationScope | `${ConversationScope}#${string}`;
+
+/** key 与场景之间的分隔符。`:` 仍用于 scope 内部（job / interview）。 */
+const THREAD_SEPARATOR = "#";
+
+/** 从会话 key 取场景（去掉 `#threadId` 后缀）。 */
+export function conversationScope(key: string): ConversationScope {
+  const at = key.indexOf(THREAD_SEPARATOR);
+  return (at < 0 ? key : key.slice(0, at)) as ConversationScope;
+}
+
+/** 从会话 key 取线程 id；旧版单会话 key 返回 null。 */
+export function conversationThreadId(key: string): string | null {
+  const at = key.indexOf(THREAD_SEPARATOR);
+  return at < 0 ? null : key.slice(at + THREAD_SEPARATOR.length);
+}
+
+/** 拼一个带线程 id 的新会话 key。 */
+export function conversationKeyFor(scope: ConversationScope, threadId: string): ConversationKey {
+  return `${scope}${THREAD_SEPARATOR}${threadId}`;
+}
+
+/** IPC 入参校验：只接受登记过的场景，避免渲染层拼出任意落盘路径。 */
+export function isConversationScope(value: unknown): value is ConversationScope {
+  if (typeof value !== "string") return false;
+  if (
+    value === "resume" ||
+    value === "companies" ||
+    value === "jobs" ||
+    value === "applications"
+  ) {
+    return true;
+  }
+  return /^(job|interview):[A-Za-z0-9_-]+$/.test(value);
+}
+
 /** 从复合 key 里取岗位 id；不是 job 会话时返回 null。 */
 export function jobKeyTarget(key: ConversationKey): string | null {
-  return key.startsWith("job:") ? key.slice("job:".length) : null;
+  const scope = conversationScope(key);
+  return scope.startsWith("job:") ? scope.slice("job:".length) : null;
 }
 
 /** 从复合 key 里取面试 id；不是 interview 会话时返回 null。 */
 export function interviewKeyTarget(key: ConversationKey): string | null {
-  return key.startsWith("interview:") ? key.slice("interview:".length) : null;
+  const scope = conversationScope(key);
+  return scope.startsWith("interview:") ? scope.slice("interview:".length) : null;
 }
 
 /**
@@ -55,12 +95,23 @@ export const DEFAULT_REASONING_EFFORT: ReasoningEffort = "medium";
 export interface ConversationState {
   key: ConversationKey;
   messages: WireMessage[];
+  title: string | null;
   updatedAt: string | null;
   /**
    * 这份会话属于哪个工作区。渲染层写回时原样带回来，main 用它挡掉「切工作区
    * 之后旧页面才把收尾消息写进来」的串区写入。
    */
   workspaceId: string;
+}
+
+/** 历史对话列表里的一项（不含消息正文）。 */
+export interface ConversationThreadSummary {
+  key: ConversationKey;
+  /** 第一条用户消息的摘要；还没发消息时为 null。 */
+  title: string | null;
+  createdAt: string | null;
+  updatedAt: string | null;
+  messageCount: number;
 }
 
 /** 渲染层 → main 的一次 agent run：messages 是含新用户消息的完整 UI 历史。 */

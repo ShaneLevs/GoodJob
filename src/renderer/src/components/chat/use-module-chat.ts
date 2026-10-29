@@ -27,14 +27,18 @@ const AGENT_TAKEOVER_PROMPT =
   "请接管内嵌浏览器面板：先 snapshot 看看当前打开的页面，简要告诉我这是什么页面，然后等我下一步指示。";
 
 /** 挂载后监听接管事件，触发时向本会话发送起手指令（组件卸载即注销）。 */
-export function useBrowserTakeover(send: (text: string, uploads: UploadedFileMeta[]) => void): void {
+export function useBrowserTakeover(
+  send: (text: string, uploads: UploadedFileMeta[]) => void,
+  enabled = true,
+): void {
   const sendRef = useRef(send);
   sendRef.current = send;
   useEffect(() => {
+    if (!enabled) return;
     const handler = (): void => sendRef.current(AGENT_TAKEOVER_PROMPT, []);
     window.addEventListener(AGENT_TAKEOVER_EVENT, handler);
     return () => window.removeEventListener(AGENT_TAKEOVER_EVENT, handler);
-  }, []);
+  }, [enabled]);
 }
 
 /**

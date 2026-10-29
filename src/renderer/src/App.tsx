@@ -58,9 +58,13 @@ export function App() {
   const [mountedModules, setMountedModules] = useState<ModuleKey[]>(() => ["resume"]);
   /*
    * 岗位二级工作台（定制简历）：有值时「岗位」模块渲染 JobWorkbenchPage。
-   * autoPrompt 是进入时的一次性起草指令（生成简历 / 生成话术），发完即清。
+   * autoPrompt 是进入时立刻发送的起草指令；prefillPrompt 只填输入框，等用户确认。
    */
-  const [jobWorkbench, setJobWorkbench] = useState<{ jobId: string; autoPrompt: string | null } | null>(null);
+  const [jobWorkbench, setJobWorkbench] = useState<{
+    jobId: string;
+    autoPrompt: string | null;
+    prefillPrompt: string | null;
+  } | null>(null);
   /*
    * 模拟面试的一次性定位：从岗位页发起后跳到面试模块并选中这场面试，选中即清。
    */
@@ -219,7 +223,9 @@ export function App() {
             >
               <JobsPage
                 key={workspaceVersion}
-                onOpenJob={(jobId, autoPrompt) => setJobWorkbench({ jobId, autoPrompt })}
+                onOpenJob={(jobId, autoPrompt, prefillPrompt = null) =>
+                  setJobWorkbench({ jobId, autoPrompt, prefillPrompt })
+                }
                 onOpenInterview={(interviewId) => {
                   setInterviewFocus(interviewId);
                   setActiveModule("interview");
@@ -233,9 +239,15 @@ export function App() {
                   key={`${workspaceVersion}:${jobWorkbench.jobId}`}
                   jobId={jobWorkbench.jobId}
                   autoPrompt={jobWorkbench.autoPrompt}
+                  prefillPrompt={jobWorkbench.prefillPrompt}
                   onAutoPromptSent={() =>
                     setJobWorkbench((prev) =>
                       prev === null ? prev : { ...prev, autoPrompt: null },
+                    )
+                  }
+                  onPrefillConsumed={() =>
+                    setJobWorkbench((prev) =>
+                      prev === null ? prev : { ...prev, prefillPrompt: null },
                     )
                   }
                   onBack={() => setJobWorkbench(null)}
@@ -264,6 +276,15 @@ export function App() {
   useEffect(() => {
     setMountedModules((prev) => (prev.includes(activeModule) ? prev : [...prev, activeModule]));
   }, [activeModule]);
+
+  /*
+   * 渲染列表当场就带上当前模块。mountedModules 的追加发生在 effect（提交之后），
+   * 只靠它会有一帧"旧页已经 invisible、新页还没挂"的空白。切走之后模块仍在
+   * mountedModules 里常驻，会话照旧不卸载。
+   */
+  const renderedModules = mountedModules.includes(activeModule)
+    ? mountedModules
+    : [...mountedModules, activeModule];
 
   // agent:pane-open 通道保留作为兜底；现在 Agent 在后台跑不会再请求弹面板。
   useEffect(() => window.goodjob.browser.onRequestOpen(() => setBrowserOpen(true)), []);
@@ -319,7 +340,7 @@ export function App() {
             )}
 
             <main className="relative min-h-0 min-w-0 flex-1">
-              {mountedModules.map((key) => (
+              {renderedModules.map((key) => (
                 <div
                   key={`${workspaceVersion}:${key}`}
                   // 非活动模块只隐身不卸载：visibility 会保留布局，滚动位置与

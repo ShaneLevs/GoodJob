@@ -14,7 +14,7 @@ import { app } from "electron";
  *   workspaces/               0700
  *     <workspaceId>/          0700  目录名一律用 ID，人类可读的名字只在索引里
  *       models.json           0600  模型供应商 + 模型（含 safeStorage 密文）
- *       conversations/        0700  滚动会话（一个模块一个 <key>.json）
+ *       conversations/        0700  滚动会话（一条对话一个 <key>.json + threads.json 索引）
  *       resumes/              0700  主简历们：一份一个文件夹（resume.md/history/tailored/
  *                                   scripts 话术/reports 评分报告/upload 上传的参考文件）
  *       companies/            0700  公司档案：一个公司一个 <id>.json + upload/ 上传落点

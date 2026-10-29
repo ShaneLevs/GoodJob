@@ -34,7 +34,9 @@ export interface TailoredDoc {
 /** 用户或 Agent 写入简历文件后广播；编辑器据此热更新，或（有未保存修改时）提示冲突。 */
 export interface ResumeFileEvent {
   resumeId: string;
-  /** "main" 或定制稿文件名（不含扩展名）。 */
+  /** 变更的文件类型：主简历 / 岗位定制稿 / 岗位话术（含定稿 sidecar）。 */
+  kind: "main" | "tailored" | "script";
+  /** "main"、定制稿文件名（不含扩展名）或话术的岗位 id。 */
   file: string;
 }
 
