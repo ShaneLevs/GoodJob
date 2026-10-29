@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import { ArrowUp, ChevronDown, Plus, Settings2, Square } from "lucide-react";
+import { ArrowUp, Check, ChevronDown, Plus, Settings2, Square } from "lucide-react";
 
 import { DEFAULT_REASONING_EFFORT, isImageUploadName } from "@shared/types";
 import type {
@@ -19,19 +19,12 @@ import {
   InputGroupTextarea,
 } from "@/components/ui/ai-elements/input-group";
 import { Button } from "@/components/ui/button";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuRadioGroup,
-  DropdownMenuRadioItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Progress } from "@/components/ui/progress";
+import { Slider } from "@/components/ui/slider";
 import { formatContext, formatTokens } from "@/lib/format";
+import { cn } from "@/lib/utils";
 
 import { UploadAttachment } from "./UploadAttachment";
 import { useContextUsage } from "./use-context-usage";
@@ -107,6 +100,12 @@ export function Composer({
 }: ComposerProps) {
   const [draft, setDraft] = useState("");
   const [effort, setEffort] = useState<ReasoningEffort>(DEFAULT_REASONING_EFFORT);
+  const effortIndex = Math.max(
+    0,
+    EFFORT_OPTIONS.findIndex((option) => option.value === effort),
+  );
+  // 模型弹层自己控开合：点「模型设置」要先关掉它再开设置弹窗，不能交给 radix 默认行为。
+  const [modelOpen, setModelOpen] = useState(false);
   const [pendingUploads, setPendingUploads] = useState<UploadedFileMeta[]>([]);
   const [uploadError, setUploadError] = useState<string | null>(null);
   // 压缩在 main 里同步执行：期间只锁发送，输入框继续可编辑。
@@ -323,12 +322,22 @@ export function Composer({
             </HoverCard>
           )}
 
-          {/* 右侧一组：模型 / 思考等级，统一 `ml-auto` 推到最右。 */}
+          {/* 右侧一组：模型选择器统一 `ml-auto` 推到最右。 */}
           <div className="ml-auto flex items-center gap-1">
-            <DropdownMenu onOpenChange={onOverlayChange}>
-              <DropdownMenuTrigger asChild>
+            {/*
+             * 模型 + 思考强度合成一个弹层：思考强度是「这个模型怎么想」的参数，
+             * 和模型同属一次决策，单独占一个按钮只会让底部工具条越来越长。
+             * 弹层里模型列表在上、思考强度拖动条在下，右上角是模型设置的入口。
+             */}
+            <Popover
+              open={modelOpen}
+              onOpenChange={(open) => {
+                setModelOpen(open);
+                onOverlayChange(open);
+              }}
+            >
+              <PopoverTrigger asChild>
                 <InputGroupButton
-                  size="sm"
                   variant="ghost"
                   className="max-w-56 text-xs text-muted-foreground"
                   aria-label={`模型：${modelLabel}`}
@@ -336,80 +345,121 @@ export function Composer({
                   <span className="truncate">{modelLabel}</span>
                   <ChevronDown className="size-3.5 shrink-0 opacity-60" />
                 </InputGroupButton>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-64">
-                {hasOptions ? (
-                  <DropdownMenuRadioGroup
-                    value={activeKey ?? undefined}
-                    onValueChange={(key) => {
-                      const option = groups
-                        .flatMap((group) => group.options)
-                        .find((item) => item.key === key);
-                      if (option !== undefined) onSelectModel(option.selection);
+              </PopoverTrigger>
+              <PopoverContent
+                side="top"
+                align="end"
+                sideOffset={8}
+                className="w-72 gap-0 rounded-2xl p-0"
+              >
+                <div className="flex items-center justify-between gap-2 py-1.5 pr-1.5 pl-3">
+                  <span className="text-xs font-medium text-muted-foreground">模型</span>
+                  {/*
+                   * 图标按钮用原生 title 而不是 Tooltip：弹层打开时 radix 会把焦点交给
+                   * 第一个可聚焦元素（就是这个齿轮），而 Tooltip 在 focus 时也会展开，
+                   * 于是弹层刚出现就会自己弹出一个「模型设置」气泡。
+                   */}
+                  <Button
+                    type="button"
+                    size="icon-xs"
+                    variant="ghost"
+                    className="text-muted-foreground"
+                    aria-label="模型设置"
+                    title="模型设置"
+                    onClick={() => {
+                      setModelOpen(false);
+                      onOpenModelSettings();
                     }}
                   >
-                    {groups.map((group, index) => (
+                    <Settings2 />
+                  </Button>
+                </div>
+
+                {hasOptions ? (
+                  <div className="max-h-64 overflow-y-auto px-1.5 pb-1.5">
+                    {groups.map((group) => (
                       <div key={group.name}>
-                        {index > 0 && <DropdownMenuSeparator />}
-                        <DropdownMenuLabel className="text-xs text-muted-foreground">
+                        <div className="px-2 pt-2 pb-1 text-[11px] font-medium text-muted-foreground">
                           {group.name}
-                        </DropdownMenuLabel>
-                        {group.options.map((option) => (
-                          <DropdownMenuRadioItem key={option.key} value={option.key}>
-                            <span className="truncate">{option.label}</span>
-                            {option.context !== null && (
-                              <span className="ml-auto pl-2 text-[11px] text-muted-foreground">
-                                {option.context}
-                              </span>
-                            )}
-                          </DropdownMenuRadioItem>
-                        ))}
+                        </div>
+                        {group.options.map((option) => {
+                          const selected = option.key === activeKey;
+                          return (
+                            <button
+                              key={option.key}
+                              type="button"
+                              aria-pressed={selected}
+                              className={cn(
+                                "flex w-full items-center gap-2 rounded-xl px-2 py-1.5 text-left text-sm outline-none transition-colors hover:bg-muted focus-visible:bg-muted",
+                                selected && "bg-foreground/[0.06]",
+                              )}
+                              onClick={() => onSelectModel(option.selection)}
+                            >
+                              <span className="truncate">{option.label}</span>
+                              {option.context !== null && (
+                                <span className="ml-auto pl-2 text-[11px] text-muted-foreground tabular-nums">
+                                  {option.context}
+                                </span>
+                              )}
+                              <Check
+                                className={cn(
+                                  "size-3.5 shrink-0",
+                                  selected ? "opacity-100" : "opacity-0",
+                                )}
+                              />
+                            </button>
+                          );
+                        })}
                       </div>
                     ))}
-                  </DropdownMenuRadioGroup>
+                  </div>
                 ) : (
-                  <div className="px-2 py-3 text-xs leading-relaxed text-muted-foreground">
+                  <div className="px-3 pt-1 pb-3 text-xs leading-relaxed text-muted-foreground">
                     还没有可用的模型。
                     <br />
                     先在设置里添加一个供应商，并为它启用至少一个模型。
                   </div>
                 )}
-                <DropdownMenuSeparator />
-                <DropdownMenuItem onSelect={onOpenModelSettings}>
-                  <Settings2 />
-                  模型设置
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
 
-            {/* 思考等级：只对勾了「推理」的模型有意义（普通模型传 reasoning_effort 会被中转 400）。 */}
-            {active?.reasoning === true && (
-              <DropdownMenu onOpenChange={onOverlayChange}>
-                <DropdownMenuTrigger asChild>
-                  <InputGroupButton
-                    size="sm"
-                    variant="ghost"
-                    className="shrink-0 text-xs text-muted-foreground"
-                    aria-label={`思考等级：${effortLabel(effort)}`}
-                  >
-                    <span>思考 {effortLabel(effort)}</span>
-                    <ChevronDown className="size-3.5 shrink-0 opacity-60" />
-                  </InputGroupButton>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="w-44">
-                  <DropdownMenuRadioGroup
-                    value={effort}
-                    onValueChange={(value) => setEffort(value as ReasoningEffort)}
-                  >
-                    {EFFORT_OPTIONS.map((option) => (
-                      <DropdownMenuRadioItem key={option.value} value={option.value}>
-                        {option.label}
-                      </DropdownMenuRadioItem>
-                    ))}
-                  </DropdownMenuRadioGroup>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            )}
+                {/* 思考强度：只对勾了「推理」的模型有意义（普通模型传 reasoning_effort 会被中转 400）。 */}
+                <div className="border-t border-border/60 px-3 pt-2 pb-2.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs font-medium text-muted-foreground">思考强度</span>
+                    {active?.reasoning === true ? (
+                      <span className="text-xs">{effortLabel(effort)}</span>
+                    ) : (
+                      <span className="text-[11px] text-muted-foreground">当前模型不支持</span>
+                    )}
+                  </div>
+                  {active?.reasoning === true && (
+                    <>
+                      <Slider
+                        className="mt-2"
+                        value={[effortIndex]}
+                        min={0}
+                        max={EFFORT_OPTIONS.length - 1}
+                        step={1}
+                        aria-label="思考强度"
+                        onValueChange={(next) => {
+                          const option = EFFORT_OPTIONS[next[0] ?? 0];
+                          if (option !== undefined) setEffort(option.value);
+                        }}
+                      />
+                      <div className="mt-1.5 flex justify-between px-2 text-[11px] text-muted-foreground">
+                        {EFFORT_OPTIONS.map((option) => (
+                          <span
+                            key={option.value}
+                            className={cn(option.value === effort && "text-foreground")}
+                          >
+                            {option.label}
+                          </span>
+                        ))}
+                      </div>
+                    </>
+                  )}
+                </div>
+              </PopoverContent>
+            </Popover>
           </div>
 
           {busy ? (
