@@ -1,6 +1,6 @@
 {
   "name": "goodjob",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "GoodJob — 带内嵌浏览器的求职助手桌面端",
   "author": "GoodJob",
   "private": true,
@@ -27,6 +27,7 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "dompurify": "^3.4.17",
+    "electron-updater": "^6.8.11",
     "imapflow": "^2.9.1",
     "lucide-react": "^1.61.0",
     "mammoth": "^1.13.0",

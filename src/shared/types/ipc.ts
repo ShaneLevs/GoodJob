@@ -47,12 +47,14 @@ import type {
 } from "./resume";
 import type { SkillInfo } from "./skill";
 import type { TaskEvent, TaskState, TaskType } from "./tasks";
+import type { UpdateState } from "./update";
 import type { WorkflowState } from "./workflow";
 import type { AppearanceSettings, AppInfo, WorkspacesState } from "./workspace";
 
 /** IPC channel names — a single source of truth for both sides. */
 export const IPC = {
   appInfo: "app:info",
+  appOpenExternal: "app:open-external",
   browserSetBounds: "browser:set-bounds",
   browserSetVisible: "browser:set-visible",
   browserNavigate: "browser:navigate",
@@ -142,12 +144,21 @@ export const IPC = {
   workspaceGet: "workspace:get",
   workspaceSwitch: "workspace:switch",
   workspaceChanged: "workspace:changed",
+  // 自动更新（GitHub Releases）：状态由 main 单向推送。
+  updateGet: "update:get",
+  updateCheck: "update:check",
+  updateDownload: "update:download",
+  updateInstall: "update:install",
+  updateSetAutoCheck: "update:set-auto-check",
+  updateState: "update:state",
 } as const;
 
 /** Shape exposed on `window.goodjob` by the preload script. */
 export interface GoodjobApi {
   app: {
     info: () => Promise<AppInfo>;
+    /** 只允许 https 外部链接（关于页的仓库 / Release 入口）。 */
+    openExternal: (url: string) => Promise<void>;
   };
   browser: {
     setBounds: (rect: Rect | null) => void;
@@ -351,5 +362,18 @@ export interface GoodjobApi {
     switchTo: (id: string) => Promise<WorkspacesState>;
     /** 切换成功后 main 会广播，渲染层据此重读 models。 */
     onChanged: (listener: (state: WorkspacesState) => void) => () => void;
+  };
+  /**
+   * 自动更新：检查 / 下载 / 安装 GitHub Releases 上的新版本。
+   * 下载随检查自动开始；状态从 onState 推送，getState 用来首次补齐。
+   */
+  update: {
+    getState: () => Promise<UpdateState>;
+    check: () => Promise<UpdateState>;
+    download: () => Promise<UpdateState>;
+    /** 退出应用、安装已下载的更新并重启。只在 phase 为 downloaded 时生效。 */
+    install: () => void;
+    setAutoCheck: (enabled: boolean) => Promise<UpdateState>;
+    onState: (listener: (state: UpdateState) => void) => () => void;
   };
 }

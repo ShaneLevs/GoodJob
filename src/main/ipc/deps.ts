@@ -7,6 +7,7 @@ import type { BrowserAgentSettingsStore } from "../browser/automation/settings-s
 import type { BrowserPanel } from "../browser/panel";
 import type { NotifyService } from "../services/notify";
 import type { TaskManager } from "../services/tasks";
+import type { UpdateService } from "../services/updater";
 import type { ConversationsStore } from "../stores/conversations";
 import type { ApplicationsStore } from "../stores/domain/applications";
 import type { CompaniesStore } from "../stores/domain/companies";
@@ -44,5 +45,6 @@ export interface IpcDeps {
   /** 浏览器自动化（P4）：审计日志 / 中止 / 重放 + 设置读写。 */
   browser: BrowserAgentService;
   browserSettings: BrowserAgentSettingsStore;
+  updates: UpdateService;
   appInfo: () => { platform: string; version: string; dataDir: string; workspaceDir: string };
 }

@@ -96,6 +96,9 @@ if (!app.requestSingleInstanceLock()) {
 
     createWindow();
 
+    // 自动检查更新：按偏好延迟启动（打包产物才生效），不阻塞首屏。
+    appContext.updates.start();
+
     app.on("activate", () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow();
     });

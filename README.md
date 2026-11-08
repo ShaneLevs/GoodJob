@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-0.1.0-blue" alt="version" />
+  <img src="https://img.shields.io/badge/version-0.1.1-blue" alt="version" />
   <img src="https://img.shields.io/badge/platform-macOS-black?logo=apple&logoColor=white" alt="platform" />
   <img src="https://img.shields.io/badge/private-仓库暂未公开-orange" alt="visibility" />
   <br />
@@ -106,7 +106,7 @@ pnpm dev          # electron-vite dev,端口 1420
 ```bash
 pnpm typecheck    # node + web 两份 tsconfig
 pnpm build        # 产物写入 out/,必须无警告
-pnpm dist:mac     # electron-builder 打 dmg / zip(当前为未签名本地构建)
+pnpm dist:mac     # electron-builder 打 dmg / zip(本机无证书时为未签名构建)
 ./dev.sh          # 带残留进程清理的 dev 入口
 
 # 隔离测试实例(不碰真实 ~/.goodjob,macOS 可双击)
@@ -114,6 +114,32 @@ pnpm dist:mac     # electron-builder 打 dmg / zip(当前为未签名本地构�
 ```
 
 首次启动会自动创建「默认工作区」;在设置里配好任意一个模型供应商即可开始。
+
+## 发布与自动更新
+
+自动更新走 GitHub Releases + `electron-updater`，发版由 GitHub Actions 完成：
+
+```bash
+git tag v0.2.0
+git push origin v0.2.0
+```
+
+`.github/workflows/release.yml` 会跑类型检查、编译，macOS 打出 x64 / arm64
+的 dmg + zip，Windows 打出 x64 安装包，最后一起上传到对应 tag 的 GitHub
+Release（含 `latest-mac.yml` / `latest.yml`）。也可以在 Actions 里手动触发，
+输入版本号即可。
+
+应用启动 15 秒后自动检查，之后每 6 小时再查一次；「设置 → 关于」可以查看当前
+版本、手动检查、看下载进度并重启安装。注意两点：
+
+- **仓库需要公开**（或给更新源配置鉴权），否则匿名检查会收到 404；「关于」页
+  会显示这个错误，并保留 Release 手动下载入口。
+- **macOS 自动安装要求 Developer ID 签名**。在仓库 Secrets 里配置
+  `CSC_LINK` / `CSC_KEY_PASSWORD`（公证另配 `APPLE_ID` /
+  `APPLE_APP_SPECIFIC_PASSWORD` / `APPLE_TEAM_ID`）；没配时仍会产出未签名
+  安装包，更新可以检查到，但只能手动下载安装。
+
+自动检查开关是机器级偏好，存在 `~/.goodjob/preferences.json` 的 `updates` 字段。
 
 ## 目录结构
 

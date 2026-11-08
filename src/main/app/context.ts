@@ -11,6 +11,7 @@ import { BrowserAgentSettingsStore } from "../browser/automation/settings-store"
 import type { BrowserPanel } from "../browser/panel";
 import { NotifyService } from "../services/notify";
 import { TaskManager } from "../services/tasks";
+import { UpdateService } from "../services/updater";
 import { ConversationsStore } from "../stores/conversations";
 import { ApplicationsStore } from "../stores/domain/applications";
 import { CompaniesStore } from "../stores/domain/companies";
@@ -45,6 +46,7 @@ export interface AppContext {
   browserSettings: BrowserAgentSettingsStore;
   runtime: AgentRuntime;
   workflow: WorkflowService;
+  updates: UpdateService;
 }
 
 export interface AppContextOptions {
@@ -62,6 +64,15 @@ export function createAppContext({
   // 工作区必须先建：一个工作区就是一个文件夹，其余 store 的数据都挂在它下面。
   const workspaces = new WorkspacesStore();
   const preferences = new PreferencesStore();
+  // 自动更新：状态由 electron-updater 驱动，主窗未就绪时丢掉推送、由 getState 补齐。
+  const updates = new UpdateService({
+    preferences,
+    send: (state) => {
+      const win = getWindow();
+      if (win === null || win.isDestroyed()) return;
+      win.webContents.send(IPC.updateState, state);
+    },
+  });
   // 设置（基础设置 / Agent 设置）全在根目录，所有工作区共用一份，构造后不再换文件。
   const models = new ModelsStore(workspaces.root);
   const conversations = new ConversationsStore(workspaces.currentPaths);
@@ -207,5 +218,6 @@ export function createAppContext({
     browserSettings,
     runtime,
     workflow,
+    updates,
   };
 }

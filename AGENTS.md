@@ -132,7 +132,7 @@ scripts/        图标管线（make-icons / render-svg）、dist-mac.sh、p*-smo
 ```
 ~/.goodjob/                 0700
   workspaces.json           0600  索引：items[]（id / name / createdAt）+ currentId
-  preferences.json          0600  基础设置：界面主题、字号、简历主题
+  preferences.json          0600  基础设置：界面主题、字号、简历主题、自动检查更新
   models.json               0600  Agent 设置：模型供应商 + safeStorage 加密 Key
   notifications.json        0600  Agent 设置：SMTP / IMAP + 日报 / 周报调度（密码密文）
   agent-browser.json        0600  Agent 设置：开关（默认开）+ 自动通过（默认关）+

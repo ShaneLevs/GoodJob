@@ -53,6 +53,7 @@ import type {
   TaskEvent,
   TaskState,
   TaskType,
+  UpdateState,
   UploadedFileMeta,
   WireMessage,
   WorkflowState,
@@ -72,6 +73,8 @@ function subscribe<T>(channel: string, listener: (payload: T) => void): () => vo
 const api: GoodjobApi = {
   app: {
     info: () => ipcRenderer.invoke(IPC.appInfo) as Promise<AppInfo>,
+    openExternal: (url: string) =>
+      ipcRenderer.invoke(IPC.appOpenExternal, url) as Promise<void>,
   },
   browser: {
     setBounds: (rect: Rect | null) => ipcRenderer.send(IPC.browserSetBounds, rect),
@@ -254,6 +257,16 @@ const api: GoodjobApi = {
       ipcRenderer.invoke(IPC.workspaceSwitch, id) as Promise<WorkspacesState>,
     onChanged: (listener: (state: WorkspacesState) => void) =>
       subscribe(IPC.workspaceChanged, listener),
+  },
+  update: {
+    getState: () => ipcRenderer.invoke(IPC.updateGet) as Promise<UpdateState>,
+    check: () => ipcRenderer.invoke(IPC.updateCheck) as Promise<UpdateState>,
+    download: () => ipcRenderer.invoke(IPC.updateDownload) as Promise<UpdateState>,
+    install: () => ipcRenderer.send(IPC.updateInstall),
+    setAutoCheck: (enabled: boolean) =>
+      ipcRenderer.invoke(IPC.updateSetAutoCheck, enabled) as Promise<UpdateState>,
+    onState: (listener: (state: UpdateState) => void) =>
+      subscribe(IPC.updateState, listener),
   },
 };
 

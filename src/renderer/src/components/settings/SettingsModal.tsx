@@ -1,13 +1,19 @@
 import { useEffect, useState } from "react";
 
-import { ArrowLeft, Bell, FileText, Globe, Palette, Plug, Sparkles } from "lucide-react";
+import { ArrowLeft, Bell, FileText, Globe, Info, Palette, Plug, Sparkles } from "lucide-react";
 
-import type { AppearanceSettings, MarkdownSettings, ModelsConfig } from "@shared/types";
+import type {
+  AppearanceSettings,
+  MarkdownSettings,
+  ModelsConfig,
+  UpdateState,
+} from "@shared/types";
 
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 
+import { AboutSettings } from "./AboutSettings";
 import { AppearanceSettings as AppearanceSettingsPane } from "./AppearanceSettings";
 import { BrowserAgentSettings } from "./BrowserAgentSettings";
 import { MarkdownSettings as ResumeThemeSettingsPane } from "./MarkdownSettings";
@@ -15,7 +21,14 @@ import { ModelsSettings } from "./ModelsSettings";
 import { NotifySettings } from "./NotifySettings";
 import { SkillSettings } from "./SkillSettings";
 
-export type SettingsSection = "appearance" | "resumeTheme" | "models" | "skills" | "browser" | "notify";
+export type SettingsSection =
+  | "appearance"
+  | "resumeTheme"
+  | "models"
+  | "skills"
+  | "browser"
+  | "notify"
+  | "about";
 
 /**
  * 设置分两组，全局通用（所有工作区共用一份配置）：
@@ -31,6 +44,7 @@ const NAV_GROUPS: {
     items: [
       { key: "appearance", label: "外观", icon: <Palette /> },
       { key: "resumeTheme", label: "简历主题", icon: <FileText /> },
+      { key: "about", label: "关于", icon: <Info /> },
     ],
   },
   {
@@ -73,11 +87,24 @@ export function SettingsModal({
   onMarkdownChange,
 }: SettingsModalProps) {
   const [section, setSection] = useState<SettingsSection>(initialSection);
+  const [update, setUpdate] = useState<UpdateState | null>(null);
 
   // 每次打开都回到调用方指定的分区：入口不同，落点也不同。
   useEffect(() => {
     if (open) setSection(initialSection);
   }, [open, initialSection]);
+
+  // 导航上的小圆点：后台查到新版本时，即使没打开「关于」也能看见。
+  useEffect(() => {
+    void window.goodjob.update.getState().then(setUpdate);
+    return window.goodjob.update.onState(setUpdate);
+  }, []);
+
+  const updateWaiting =
+    update !== null &&
+    (update.phase === "available" ||
+      update.phase === "downloading" ||
+      update.phase === "downloaded");
 
   return (
     <Dialog
@@ -115,6 +142,12 @@ export function SettingsModal({
                   >
                     {item.icon}
                     {item.label}
+                    {item.key === "about" && updateWaiting && (
+                      <span
+                        className="ml-auto size-1.5 rounded-full bg-primary"
+                        aria-label="有新版本"
+                      />
+                    )}
                   </Button>
                 ))}
               </div>
@@ -126,6 +159,8 @@ export function SettingsModal({
               <AppearanceSettingsPane appearance={appearance} onChange={onAppearanceChange} />
             ) : section === "resumeTheme" ? (
               <ResumeThemeSettingsPane settings={markdown} onChange={onMarkdownChange} />
+            ) : section === "about" ? (
+              <AboutSettings />
             ) : section === "notify" ? (
               <NotifySettings />
             ) : section === "browser" ? (

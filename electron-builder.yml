@@ -13,10 +13,25 @@ mac:
     - dmg
     - zip
   category: public.app-category.productivity
-  # Unsigned local builds: swap for a Developer ID identity before shipping.
-  identity: null
+  # 本机没有证书时 electron-builder 自动跳过签名；GitHub Actions 用
+  # CSC_LINK / CSC_KEY_PASSWORD 注入 Developer ID。macOS 自动更新要求签名。
   hardenedRuntime: true
   gatekeeperAssess: false
+win:
+  icon: build/icon.png
+  target:
+    - nsis
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  artifactName: ${productName}-${version}-${arch}-setup.${ext}
+# 自动更新元数据（latest-mac.yml / latest.yml）由 electron-builder 生成；
+# CI 把安装包和元数据一起放进 GitHub Release。
+publish:
+  provider: github
+  owner: ShaneLevs
+  repo: GoodJob
+  releaseType: release
 dmg:
   artifactName: ${productName}-${version}-${arch}.${ext}
 # agent-browser（P4 浏览器自动化）：只带当前平台的原生二进制（≈9–16MB），

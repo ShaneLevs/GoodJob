@@ -5,6 +5,7 @@ import {
   type AppearanceSettings,
   type MarkdownSettings,
   type ThemeMode,
+  type UpdatePreferences,
 } from "@shared/types";
 
 import { createRootPaths, writeJsonFile, type RootPaths } from "../workspace/paths";
@@ -18,10 +19,12 @@ interface PreferencesDoc {
   version: number;
   appearance: AppearanceSettings;
   markdown: MarkdownSettings;
+  updates: UpdatePreferences;
 }
 
 const DEFAULTS: AppearanceSettings = { themeMode: "system", fontSize: 13 };
 const MARKDOWN_DEFAULTS: MarkdownSettings = { themeId: DEFAULT_MARKDOWN_THEME_ID };
+const UPDATE_DEFAULTS: UpdatePreferences = { autoCheck: true };
 
 /**
  * 机器级偏好（`~/.goodjob/preferences.json`，0600）。
@@ -45,6 +48,10 @@ export class PreferencesStore {
     return this.doc.markdown;
   }
 
+  get updates(): UpdatePreferences {
+    return this.doc.updates;
+  }
+
   saveAppearance(patch: Partial<AppearanceSettings>): AppearanceSettings {
     this.doc = {
       ...this.doc,
@@ -63,6 +70,15 @@ export class PreferencesStore {
     return this.doc.markdown;
   }
 
+  saveUpdates(patch: Partial<UpdatePreferences>): UpdatePreferences {
+    this.doc = {
+      ...this.doc,
+      updates: normalizeUpdates({ ...this.doc.updates, ...patch }),
+    };
+    writeJsonFile(this.root.preferences, this.doc);
+    return this.doc.updates;
+  }
+
   private read(): PreferencesDoc {
     try {
       const parsed: unknown = JSON.parse(fs.readFileSync(this.root.preferences, "utf8"));
@@ -73,6 +89,9 @@ export class PreferencesStore {
       const markdown = typeof record.markdown === "object" && record.markdown !== null
         ? (record.markdown as Record<string, unknown>)
         : {};
+      const updates = typeof record.updates === "object" && record.updates !== null
+        ? (record.updates as Record<string, unknown>)
+        : {};
       return {
         version: VERSION,
         appearance: normalizeAppearance({
@@ -82,12 +101,16 @@ export class PreferencesStore {
         markdown: normalizeMarkdown({
           themeId: typeof markdown.themeId === "string" ? markdown.themeId : undefined,
         }),
+        updates: normalizeUpdates({
+          autoCheck: typeof updates.autoCheck === "boolean" ? updates.autoCheck : undefined,
+        }),
       };
     } catch {
       return {
         version: VERSION,
         appearance: { ...DEFAULTS },
         markdown: { ...MARKDOWN_DEFAULTS },
+        updates: { ...UPDATE_DEFAULTS },
       };
     }
   }
@@ -113,5 +136,12 @@ function normalizeMarkdown(input: Partial<MarkdownSettings>): MarkdownSettings {
   const themeId = input.themeId?.trim();
   return {
     themeId: themeId !== undefined && themeId !== "" ? themeId : MARKDOWN_DEFAULTS.themeId,
+  };
+}
+
+function normalizeUpdates(input: Partial<UpdatePreferences>): UpdatePreferences {
+  return {
+    autoCheck:
+      typeof input.autoCheck === "boolean" ? input.autoCheck : UPDATE_DEFAULTS.autoCheck,
   };
 }

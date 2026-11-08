@@ -15,5 +15,6 @@ export * from "./notify";
 export * from "./resume";
 export * from "./skill";
 export * from "./tasks";
+export * from "./update";
 export * from "./workflow";
 export * from "./workspace";

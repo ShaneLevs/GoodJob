@@ -10,7 +10,7 @@ import { app } from "electron";
  * ```
  * ~/.goodjob/                 0700
  *   workspaces.json           0600  工作区索引：id / name / createdAt / currentId
- *   preferences.json          0600  基础设置：界面主题、字号、简历主题
+ *   preferences.json          0600  基础设置：界面主题、字号、简历主题、自动检查更新
  *   models.json               0600  Agent 设置：模型供应商 + 模型（含 safeStorage 密文）
  *   notifications.json        0600  Agent 设置：通知 SMTP / IMAP 账户 + 日报 / 周报调度
  *   agent-browser.json        0600  Agent 设置：浏览器自动化开关 + 提交限速参数
@@ -44,7 +44,7 @@ export interface RootPaths {
   root: string;
   workspaces: string;
   index: string;
-  /** 基础设置（外观 / 简历主题），不跟工作区走。 */
+  /** 基础设置（外观 / 简历主题 / 自动检查更新），不跟工作区走。 */
   preferences: string;
   /** Agent 设置：模型供应商 + 模型（含 safeStorage 密文）。 */
   models: string;

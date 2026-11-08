@@ -33,25 +33,42 @@ function binaryName(platform = process.platform, arch = process.arch) {
   return `agent-browser-${osKey}-${effectiveArch}${ext}`;
 }
 
-const name = binaryName();
-const source = path.join(root, "node_modules", "agent-browser", "bin", name);
-const stagedDir = path.join(root, "resources", "agent-browser");
-const staged = path.join(stagedDir, name);
-
-if (!fs.existsSync(source)) {
-  console.error(`[stage-agent-browser] 找不到当前平台的二进制：${source}`);
-  console.error("先 pnpm install（agent-browser 是 devDependency，锁精确版本）。");
-  process.exit(1);
+/** `--arch arm64` / `--arch x64,arm64`：CI 在一台机器上为两个架构打包时用。 */
+function requestedArches() {
+  const index = process.argv.indexOf("--arch");
+  if (index < 0) return [process.arch];
+  const value = process.argv[index + 1] ?? "";
+  return value
+    .split(",")
+    .map((arch) => arch.trim())
+    .filter((arch) => arch !== "");
 }
 
+const stagedDir = path.join(root, "resources", "agent-browser");
 fs.mkdirSync(stagedDir, { recursive: true });
-fs.copyFileSync(source, staged);
-if (process.platform !== "win32") fs.chmodSync(staged, 0o755);
 
-// staged 二进制要能真的跑起来：--version 校验 + 记录版本，安装后冒烟以它为准。
-const version = execFileSync(staged, ["--version"], { encoding: "utf8" }).trim();
+for (const arch of requestedArches()) {
+  const name = binaryName(process.platform, arch);
+  const source = path.join(root, "node_modules", "agent-browser", "bin", name);
+  const staged = path.join(stagedDir, name);
 
-console.log(`[stage-agent-browser] ${name}`);
-console.log(`  ${source}`);
-console.log(`  → ${staged}`);
-console.log(`  ${version}`);
+  if (!fs.existsSync(source)) {
+    console.error(`[stage-agent-browser] 找不到 ${name}：${source}`);
+    console.error("先 pnpm install（agent-browser 是 devDependency，锁精确版本）。");
+    process.exit(1);
+  }
+
+  fs.copyFileSync(source, staged);
+  if (process.platform !== "win32") fs.chmodSync(staged, 0o755);
+
+  // 只有本机架构能直接执行；跨架构打包时只拷贝，安装后冒烟以目标机为准。
+  const version =
+    arch === process.arch
+      ? execFileSync(staged, ["--version"], { encoding: "utf8" }).trim()
+      : "（跨架构，跳过运行校验）";
+
+  console.log(`[stage-agent-browser] ${name}`);
+  console.log(`  ${source}`);
+  console.log(`  → ${staged}`);
+  console.log(`  ${version}`);
+}
