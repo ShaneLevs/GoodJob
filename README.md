@@ -136,8 +136,8 @@ Release（含 `latest-mac.yml` / `latest.yml`）。也可以在 Actions 里手�
   会显示这个错误，并保留 Release 手动下载入口。
 - **macOS 自动安装要求 Developer ID 签名**。在仓库 Secrets 里配置
   `CSC_LINK` / `CSC_KEY_PASSWORD`（公证另配 `APPLE_ID` /
-  `APPLE_APP_SPECIFIC_PASSWORD` / `APPLE_TEAM_ID`）；没配时仍会产出未签名
-  安装包，更新可以检查到，但只能手动下载安装。
+  `APPLE_APP_SPECIFIC_PASSWORD` / `APPLE_TEAM_ID`）；CI 会检测 `CSC_LINK`，
+  有证书才签名，没配时产出未签名安装包，更新可以检查到，但只能手动下载安装。
 
 自动检查开关是机器级偏好，存在 `~/.goodjob/preferences.json` 的 `updates` 字段。
 
