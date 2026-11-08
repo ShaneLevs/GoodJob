@@ -13,6 +13,7 @@ import type {
 
 import type { NotifyStore } from "../stores/notify";
 import type { ResolvedMailAccount } from "../stores/notify";
+import { renderNotificationEmail, type NotificationKind } from "./email-template";
 
 /**
  * NotifyService（P3 M3，ARCHITECTURE §6）：
@@ -48,8 +49,13 @@ export type ConfirmationOutcome = "approved" | "timeout";
 export interface NotifyMailer {
   sendMail(options: {
     to: string;
+    from?: string;
+    /** 回信地址：确认门靠它把回复收回被监控的邮箱。 */
+    replyTo?: string;
     subject: string;
     text: string;
+    /** 可选 HTML 版本；纯文本始终保留给不渲染 HTML 的客户端。 */
+    html?: string;
     messageId?: string;
   }): Promise<{ messageId: string }>;
 }
@@ -137,17 +143,31 @@ export class NotifyService {
   // ———————————————————— 模型工具的两个入口 ————————————————————
 
   /**
-   * notify 工具：把一段摘要发到用户自己的邮箱（收件人优先 IMAP 账户，回退 SMTP 账户）。
+   * notify 工具：把一段摘要发到用户配置的接收邮箱（未填时回退到已配置账户）。
    * 会话里调用时走 toolApproval 界面审批（在场审批）；日报 / 周报是用户排期过的
    * 固定动作，后台运行不再二次审批。
    */
-  async sendNotification(summary: string, signal?: AbortSignal): Promise<string> {
+  async sendNotification(
+    summary: string,
+    signal?: AbortSignal,
+    kind: NotificationKind = "notice",
+  ): Promise<string> {
     if (signal?.aborted) throw new Error("已取消。");
     const smtp = this.mustSmtp();
     const to = this.recipient();
     const mailer = await this.mailerFor(smtp);
-    const subject = `GoodJob 通知 · ${localDate(this.now())}`;
-    const info = await mailer.sendMail({ to, subject, text: summary });
+    const rendered = renderNotificationEmail({
+      markdown: summary,
+      kind,
+      date: localDate(this.now()),
+    });
+    const info = await mailer.sendMail({
+      to,
+      from: this.senderHeader(),
+      subject: rendered.subject,
+      text: rendered.text,
+      html: rendered.html,
+    });
     return `已发送到 ${to}（Message-ID ${info.messageId}）。`;
   }
 
@@ -182,7 +202,15 @@ export class NotifyService {
     ].join("\n");
 
     const mailer = await this.mailerFor(smtp);
-    await mailer.sendMail({ to, subject: subjectWithToken, text, messageId });
+    await mailer.sendMail({
+      to,
+      from: this.senderHeader(),
+      // 显示地址可以和发信账户不同；回信必须回到 IMAP 监控的那个邮箱。
+      replyTo: smtp.user === "" ? undefined : smtp.user,
+      subject: subjectWithToken,
+      text,
+      messageId,
+    });
     const sentMessageId = messageId;
 
     return await new Promise<ConfirmationOutcome>((resolve, reject) => {
@@ -272,6 +300,8 @@ export class NotifyService {
       const reminderId = `<gj-confirm-${gate.token.toLowerCase()}-r2@goodjob.local>`;
       await mailer.sendMail({
         to: gate.to,
+        from: this.senderHeader(),
+        replyTo: smtp.user === "" ? undefined : smtp.user,
         subject: `【提醒】${gate.subject}`,
         text: [gate.body.trim(), "", "——", "刚才的确认还没有收到回复：直接回复本邮件（内容随意）即代表同意。", `确认码：${gate.token}`].join("\n"),
         messageId: reminderId,
@@ -458,13 +488,31 @@ export class NotifyService {
     return smtp;
   }
 
-  /** 收件人 = 用户自己的邮箱：优先 IMAP 账户（回信就在那儿），回退 SMTP 账户。 */
+  /**
+   * 收件人 = 设置里的接收邮箱（用户自己日常收信、回信的地址）。
+   * 没填时回退到已配置账户：优先 IMAP（回信落在那里），再退 SMTP。
+   */
   private recipient(): string {
+    const configured = this.store.configuredRecipient();
+    if (configured !== "") return configured;
     const imap = this.store.resolveImap();
     if (imap !== null && imap.user !== "") return imap.user;
     const smtp = this.store.resolveSmtp();
     if (smtp !== null && smtp.user !== "") return smtp.user;
     throw new Error("还没有配置邮箱账户，不知道该发给谁。请到设置 → 通知里填写。");
+  }
+
+  /**
+   * 发件人：留空时不给，由 SMTP 服务器用认证账户补。
+   * 只填了显示名（没有 @）时拼成 `"名字" <发信账户>`；完整地址原样使用。
+   */
+  private senderHeader(): string | undefined {
+    const from = this.store.configuredFrom().trim();
+    if (from === "") return undefined;
+    if (from.includes("@")) return from;
+    const user = this.store.resolveSmtp()?.user ?? "";
+    if (user === "") return undefined;
+    return `"${from.replace(/["\\]/g, "")}" <${user}>`;
   }
 
   /** transporter 按配置缓存：配置没变就复用，省去每封邮件一次握手。 */

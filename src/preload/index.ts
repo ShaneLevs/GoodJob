@@ -55,6 +55,7 @@ import type {
   TaskType,
   UploadedFileMeta,
   WireMessage,
+  WorkflowState,
   WorkspacesState,
 } from "@shared/types";
 import { IPC } from "@shared/types";
@@ -188,6 +189,12 @@ const api: GoodjobApi = {
       ipcRenderer.invoke(IPC.tasksRun, type, target) as Promise<TaskState>,
     rerun: (taskId: string) => ipcRenderer.invoke(IPC.tasksRerun, taskId) as Promise<TaskState>,
     onEvent: (listener: (event: TaskEvent) => void) => subscribe(IPC.taskEvent, listener),
+  },
+  workflow: {
+    get: (key: ConversationKey) =>
+      ipcRenderer.invoke(IPC.workflowGet, key) as Promise<WorkflowState | null>,
+    onEvent: (listener: (state: WorkflowState) => void) =>
+      subscribe(IPC.workflowEvent, listener),
   },
   pdf: {
     export: (payload: PdfExportPayload) =>

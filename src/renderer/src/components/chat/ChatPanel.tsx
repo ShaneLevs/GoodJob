@@ -51,8 +51,8 @@ interface ChatPanelProps {
   emptyDescription?: string;
   placeholder?: string;
   /**
-   * 是否显示「+」上传：默认显示（文件落这个会话所属模块的 upload/，Agent 用
-   * upload_list / upload_read 读）。模拟面试不发这些工具，那边传 false。
+   * 是否显示「+」上传：默认显示，所有会话都支持（文件落这个会话所属模块的
+   * upload/，GoodJob 落工作区 uploads/，Agent 用 upload_list / upload_read 读）。
    */
   allowUpload?: boolean;
   /**

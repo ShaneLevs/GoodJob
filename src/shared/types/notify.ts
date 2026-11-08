@@ -1,9 +1,9 @@
 /*
  * —— 通知（P3 M3）——
  *
- * notifications.json 跟随工作区：不同工作区可以配不同邮箱。SMTP / IMAP 密码是
- * safeStorage 密文，只在 main 侧解密——渲染层只看得到「有没有已存密码」，
- * 密码本身不进渲染层、不进日志。
+ * notifications.json 全局一份：所有工作区共用同一个发信邮箱与接收邮箱。
+ * SMTP / IMAP 密码是 safeStorage 密文，只在 main 侧解密——渲染层只看得到
+ * 「有没有已存密码」，密码本身不进渲染层、不进日志。
  */
 
 /** SMTP / IMAP 账户的连接字段（不含密码）。 */
@@ -35,7 +35,9 @@ export interface DigestSchedule {
 
 /** 通知设置（notifications.json 的公开投影）。 */
 export interface NotificationSettings {
-  /** 发件人显示地址；为空时用 SMTP 账户。 */
+  /** 接收邮箱：通知 / 报告 / 确认邮件发到这里，用户在这里回信。 */
+  recipient: string;
+  /** 发件人：显示名或完整地址；为空时用 SMTP 账户。 */
   fromAddress: string;
   smtp: PublicNotifyMailAccount;
   imap: PublicNotifyMailAccount;
@@ -49,6 +51,7 @@ export interface NotificationSettings {
 
 /** 保存通知设置：只传要改的部分。 */
 export interface NotificationDraft {
+  recipient?: string;
   fromAddress?: string;
   smtp?: NotifyMailAccountDraft;
   imap?: NotifyMailAccountDraft;

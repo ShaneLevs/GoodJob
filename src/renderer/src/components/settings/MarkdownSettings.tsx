@@ -39,24 +39,22 @@ const SAMPLE = `# 张三
 export function MarkdownSettings({ settings, onChange }: MarkdownSettingsProps) {
   return (
     <div className="min-h-0 flex-1 overflow-y-auto p-6">
-      <h1 className="text-lg font-semibold tracking-tight">Markdown</h1>
+      <h1 className="text-lg font-semibold tracking-tight">简历主题</h1>
       <p className="mt-1 text-sm text-muted-foreground">
-        设置简历、话术、调研快照等文档预览与 PDF 导出的排版主题。
+        简历、话术、调研快照等文档的预览与 PDF 导出排版。
       </p>
 
       <div className="mt-6 divide-y rounded-xl border">
         <div className="flex items-center justify-between gap-6 p-4">
           <div className="min-w-0">
-            <Label className="text-sm font-medium">预览主题</Label>
-            <p className="mt-1 text-xs text-muted-foreground">
-              预览与 PDF 导出共用同一套主题。
-            </p>
+            <Label className="text-sm font-medium">主题</Label>
+            <p className="mt-1 text-xs text-muted-foreground">预览与 PDF 导出共用同一套主题。</p>
           </div>
           <Select
             value={getDocumentTemplate(settings.themeId).id}
             onValueChange={(themeId) => onChange({ themeId })}
           >
-            <SelectTrigger className="w-44" aria-label="Markdown 预览主题">
+            <SelectTrigger className="w-44" aria-label="简历主题">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>

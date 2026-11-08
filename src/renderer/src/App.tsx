@@ -27,6 +27,7 @@ import { CompaniesPage } from "@/components/modules/companies/CompaniesPage";
 import { InterviewPage } from "@/components/modules/interview/InterviewPage";
 import { JobWorkbenchPage } from "@/components/modules/jobs/JobWorkbenchPage";
 import { JobsPage } from "@/components/modules/jobs/JobsPage";
+import { OrchestratorPage } from "@/components/modules/orchestrator/OrchestratorPage";
 import { ResumePage } from "@/components/modules/resume/ResumePage";
 import type { ModuleKey } from "@/config/modules";
 import { resolveDark } from "@/lib/theme";
@@ -49,13 +50,13 @@ export function App() {
   const [settingsSection, setSettingsSection] = useState<SettingsSection>("appearance");
 
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [activeModule, setActiveModule] = useState<ModuleKey>("resume");
+  const [activeModule, setActiveModule] = useState<ModuleKey>("orchestrator");
   /*
    * 模块页常驻（懒挂载一次，之后只切可见性）：会话状态住在页面里的 useChat 实例上，
    * 卸载一次就等于把这个会话的流打断、消息丢在内存里——切模块不该有这种副作用。
    * 所以只有第一次进入才挂载，之后一直留着，切模块只改 visible / invisible。
    */
-  const [mountedModules, setMountedModules] = useState<ModuleKey[]>(() => ["resume"]);
+  const [mountedModules, setMountedModules] = useState<ModuleKey[]>(() => ["orchestrator"]);
   /*
    * 岗位二级工作台（定制简历）：有值时「岗位」模块渲染 JobWorkbenchPage。
    * autoPrompt 是进入时立刻发送的起草指令；prefillPrompt 只填输入框，等用户确认。
@@ -157,9 +158,6 @@ export function App() {
 
   const dark = resolveDark(appearance.themeMode, systemDark);
 
-  const workspaceName =
-    workspaces?.items.find((item) => item.id === workspaces.currentId)?.name ?? "工作区";
-
   /*
    * 顶栏一条 48px：左边让出 macOS 交通灯（实测窗口 x 16–75 / y 19–30.5，中心 y≈24.5，
    * 正好落在 48px 的中线上），右边放我们自己的操作按钮 —— 展开/收起、以及后续新功能。
@@ -207,6 +205,8 @@ export function App() {
   const workspaceVersion = workspaces?.currentId ?? "loading";
   const renderModule = (key: ModuleKey) => {
     switch (key) {
+      case "orchestrator":
+        return <OrchestratorPage key={workspaceVersion} {...moduleProps} />;
       case "resume":
         return <ResumePage key={workspaceVersion} {...moduleProps} />;
       case "companies":
@@ -377,7 +377,6 @@ export function App() {
           models={models}
           appearance={appearance}
           markdown={markdown}
-          workspaceName={workspaceName}
           initialSection={settingsSection}
           onClose={() => setSettingsOpen(false)}
           onSaved={setModels}

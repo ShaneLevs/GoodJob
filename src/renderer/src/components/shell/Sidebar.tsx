@@ -2,7 +2,6 @@ import { Check, ChevronsUpDown, Settings } from "lucide-react";
 
 import type { WorkspaceInfo } from "@shared/types";
 
-import beeUrl from "@/assets/bee.svg";
 import { MODULES, type ModuleKey } from "@/config/modules";
 import { Button } from "@/components/ui/button";
 import {
@@ -33,15 +32,10 @@ export function Sidebar({
 }: SidebarProps) {
   return (
     <aside className="flex h-full w-full select-none flex-col px-3 pb-2 pt-1">
-      {/* 左栏平铺在窗口底色上：没有卡片、没有描边，收起/展开交给顶栏。 */}
-      <div className="flex h-11 shrink-0 items-center gap-2 px-2">
-        <img src={beeUrl} alt="" draggable={false} className="size-6 shrink-0" />
-        <span className="text-[19px] leading-none font-semibold tracking-tight">GoodJob</span>
-      </div>
-
-      {/* 模块菜单：结构与 shadcn sidebar 的 menu-button 一致（h-8 / rounded-xl /
-      	data-active 加底色和 medium），底色按项目约定用 foreground 透明度——
-      	--sidebar-accent 在 shell 底色上不可见。 */}
+      {/* 模块菜单：品牌位（GoodJob）就是第一项，用 Logo + 字标呈现，
+      	点它回到 Agent 首页——一列只出现一次 GoodJob。结构与 shadcn sidebar
+      	的 menu-button 一致（rounded-xl / data-active 加底色和 medium），底色按
+      	项目约定用 foreground 透明度——--sidebar-accent 在 shell 底色上不可见。 */}
       <nav className="flex flex-col gap-0.5">
         {MODULES.map((item) => {
           const active = item.key === activeModule;
@@ -52,12 +46,17 @@ export function Sidebar({
               aria-current={active ? "page" : undefined}
               data-active={active || undefined}
               className={cn(
-                "flex h-8 w-full items-center gap-2 rounded-xl px-2.5 text-left text-sm whitespace-nowrap transition-colors outline-none",
+                "flex w-full items-center gap-2 rounded-xl text-left whitespace-nowrap transition-colors outline-none",
                 "[&_svg]:size-4 [&_svg]:shrink-0 [&>span]:truncate",
+                item.brand
+                  ? "h-10 px-2 text-[17px] leading-none font-semibold tracking-tight text-foreground"
+                  : "h-8 px-2.5 text-sm",
                 "focus-visible:ring-[3px] focus-visible:ring-ring/30",
                 active
-                  ? "bg-foreground/[0.07] font-medium text-foreground"
-                  : "text-muted-foreground hover:bg-foreground/[0.045] hover:text-foreground active:bg-foreground/[0.045]",
+                  ? cn("bg-foreground/[0.07] text-foreground", item.brand ? "font-semibold" : "font-medium")
+                  : item.brand
+                    ? "hover:bg-foreground/[0.045] active:bg-foreground/[0.045]"
+                    : "text-muted-foreground hover:bg-foreground/[0.045] hover:text-foreground active:bg-foreground/[0.045]",
               )}
               onClick={() => onSelectModule(item.key)}
             >

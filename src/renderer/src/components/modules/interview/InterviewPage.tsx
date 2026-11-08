@@ -466,7 +466,6 @@ function InterviewChatLoaded({
         onStop={chat.stop}
         onApprovalResponse={chat.respondApproval}
         conversationKey={`interview:${interview.id}`}
-        allowUpload={false}
       />
     </div>
   );

@@ -35,11 +35,19 @@ main       app/context.ts（store / service 装配）
 | 9 | 门控分级 | 在场：`toolApproval` 界面审批；离场：邮件确认工具。副作用动作必过其一 |
 | 10 | 多对话 + 滚动摘要 | 每个场景（模块 / 岗位工作台）可以有多条对话（`conversations/<key>.json`，key = `scope` 或 `scope#threadId`），对话列表从 `threads.json` 索引读；预算按模型配置的 `contextWindow`（默认 200K）算，用到约 90%（并为 `maxOutputTokens` 预留空间）就把更早消息压缩进摘要，切点对齐到 user 消息；完整历史始终保留，Agent 可用 `conversation_search` / `conversation_read` 回查被压缩的原文。渲染层有上下文用量气泡（可手动压缩） |
 
-## 3. 目录布局（工作区内）
+## 3. 目录布局
+
+设置（基础设置 / Agent 设置）全在配置目录根下，所有工作区共用一份；`workspaces/<id>/` 里只有数据。
 
 ```
+~/.goodjob/
+  preferences.json                       基础设置：外观主题 / 字号 / 简历主题
+  models.json                            Agent 设置：供应商配置（Key 为 safeStorage 密文）
+  notifications.json                     Agent 设置：SMTP / IMAP 账户 + 日报 / 周报调度
+  agent-browser.json                     Agent 设置：浏览器自动化开关 + 限速 + 提交记账
+  browser-playbooks.md                   Agent 设置：投递平台适配指令模板（用户可编）
+
 workspaces/<id>/
-  models.json                            供应商配置（Key 为 safeStorage 密文；通知配置 P3 同级）
   conversations/<key>.json               滚动会话（UIMessage[] + 摘要 + summarizedFrom + 标题；
                                          key = scope 或 scope#threadId，文件名整体 encodeURIComponent）
   conversations/threads.json             历史对话索引（key / 标题 / 时间 / 条数）
@@ -58,8 +66,8 @@ workspaces/<id>/
   interviews/<id>.json                   模拟面试（P3 M1）：config { rounds, mode } + 结构化
                                          逐轮记录 + 总评；问答消息本体在 conversations/ 的
                                          interview:<id> 会话里
-  notifications.json                     通知配置（P3 M3）：SMTP / IMAP 账户 + 日报 / 周报
-                                         调度；密码 safeStorage 密文（通知配置跟随工作区）
+  workflows/<key>.json                   GoodJob 工作流快照：任务 / 依赖 / 逐任务状态 / 交付摘要；
+                                         单 agent 任务不落盘（key 做 encodeURIComponent）
   memory.md  cache/  logs/
 ```
 
@@ -75,10 +83,18 @@ workspaces/<id>/
   之后把集合名推给渲染层（`domain:changed`），模块页据此重拉——Agent 在右边对话里建的
   岗位 / 公司不必等切模块才出现。
 - 新目录 / 文件一律先登记 `src/main/workspace/paths.ts` 的 `WorkspacePaths`，再由 `ensureWorkspaceDirs()`
-  创建——不绕过工作区往根目录写东西。通知配置跟随工作区（不同工作区可对不同邮箱）。
+  创建——不绕过工作区往根目录写数据。设置类配置反过来：登记到 `RootPaths`，所有工作区共用。
 
 ## 4. AgentRuntime
 
+- **GoodJob（orchestrator）**：`ConversationScope` 新增 `orchestrator`，是左栏第一个菜单
+  （品牌位：`🐝 GoodJob` 那一行，点它回到 Agent 首页）。
+  GoodJob 只做分析 / 拆分 / 派发：`subagent_run` 处理单角色任务（不建工作流），
+  `workflow_run` 处理多角色或有依赖的任务。子 agent 复用各模块的 `buildInstructions` /
+  `toolsFor`，但不给浏览器 / 通知 / 会话工具（AI SDK 的 subagent 不支持 `toolApproval`，
+  放进去会绕过审批门）；上传只给只读的 `upload_list` / `upload_read`，固定读 GoodJob
+  会话的 `<workspace>/uploads/`。工作流状态存 `<workspace>/workflows/`，经
+  `workflow:event` 实时推给右侧栏；单 agent 任务不产生流程图。
 - `agent/runtime.ts` 承载 AgentRuntime：自定义 `ChatEvent` 通道迁移为 AI SDK UIMessage
   part 流（硬约束 8）；渲染层消费 `text` / `tool-*` / `data-*` part，工具执行过程同时就是
   浏览器工具条与 `logs/agent.log` 审计的数据源。
@@ -138,8 +154,8 @@ Agent 写入以整文件覆盖为主，避免局部补丁错位。
   时扩展）；`notify` 挂 `toolApproval` 界面审批（P1 预留位兑现），确认门工具本身即门。
 - 日报 / 周报 = 调度器到点发起一次 Agent 运行（`AgentRuntime.runDigest`：generateText +
   notify 工具，汇总 P2 实体快照，无内容时如实说）；到点即记账、当日不重试，补发走
-  设置页「立即生成」。配置存 `<workspace>/notifications.json`（0600，密码 safeStorage
-  密文），设置窗「通知」节维护并带逐项「测试连接」（SMTP verify / IMAP verifyOnly）。
+  设置页「立即生成」。配置存 `~/.goodjob/notifications.json`（0600，密码 safeStorage
+  密文），设置窗「Agent 设置 → 通知」维护并带逐项「测试连接」（SMTP verify / IMAP verifyOnly）。
 
 ## 7. 代码落点
 
@@ -175,13 +191,14 @@ Agent 写入以整文件覆盖为主，避免局部补丁错位。
 > 而是把文件原样落盘到**当前会话所属模块的 upload/ 目录**（`chat:upload` IPC 带会话 key，
 > main 侧系统选择框 + `src/main/workspace/uploads.ts` 的 `uploadDirFor` 选目录：简历落
 > `resumes/<id>/upload/`，公司 / 岗位 / 投递落各自集合下的 `upload/`，`job:<id>` 与
-> `interview:<id>` 再下一层），消息只附 `data-upload` part 展示文件名 / 图片缩略图，
-> 内容由 Agent 用 `upload_list` / `upload_read` 两个通用工具按需抽取（unpdf / mammoth
-> 在工具里跑）；图片（png / jpg / jpeg）例外——勾了「视觉输入」的模型会在
-> `convertToModelMessages` 的 `convertDataPart` 里拿到缩到 1024px 的图片 file part，
-> 没勾时仍只落盘。模拟面试会话不发这对工具（角色限定），所以那里的输入框不显示
-> 「+」。run 结束由渲染层把耗时写进助手消息 `metadata.durationMs` 并在消息脚展示，
-> 另补复制按钮、shimmer 思考动效，输入框去掉快捷键提示。
+> `interview:<id>` 再下一层，GoodJob 落工作区级 `uploads/`），消息只附 `data-upload` part
+> 展示文件名 / 图片缩略图，内容由 Agent 用 `upload_list` / `upload_read` 两个通用工具
+> 按需抽取（unpdf / mammoth 在工具里跑）；图片（png / jpg / jpeg）例外——勾了「视觉输入」
+> 的模型会在 `convertToModelMessages` 的 `convertDataPart` 里拿到缩到 1024px 的图片
+> file part，没勾时仍只落盘。所有会话（含 GoodJob 与模拟面试）都显示「+」并拿到这对
+> 工具；子 agent 拿到只读的同名工具，固定读 GoodJob 的 `uploads/`。run 结束由渲染层
+> 把耗时写进助手消息 `metadata.durationMs` 并在消息脚展示，另补复制按钮、shimmer
+> 思考动效，输入框去掉快捷键提示。
 1. AgentRuntime：ToolLoopAgent、UIMessage 流迁移、会话持久化与会话列表
 2. file 工具（作用域限定 + 写前快照）与 `file:changed` 事件
 3. 左栏模块菜单 + 中间卡模块路由；简历页（Chat 与 Markdown 编辑器并排）
@@ -227,7 +244,7 @@ abort / close+pid 兜底）、`actions.ts`（受控动作枚举 + argv 组装，
 ≥90s+0–30s 抖动限速，可调），注册进 companies / jobs / applications 三个会话；设置页
 「浏览器」节管开关与限速；浏览器面板工具条有「让 Agent 接管」与红色「中止 Agent」。
 场景：公司调研、链接抓 JD、自动搜索（只读）与 M4 填表投递（平台适配模板
-`<workspace>/browser-playbooks.md`，用户可编辑）。偏差与未做项见 `docs/plan/P4-browser-agent.md`
+`~/.goodjob/browser-playbooks.md`，用户可编辑）。偏差与未做项见 `docs/plan/P4-browser-agent.md`
 头部实施记录。
 
 **P5 增强**：语音面试（transcribe + generateSpeech）。（简历 PDF 导出已自 P5-B 提前并入 P2。）

@@ -2,10 +2,10 @@ import fs from "node:fs";
 
 import type { BrowserAgentSettings, BrowserAgentSettingsDraft } from "@shared/types";
 
-import { ensureDir, writeJsonFile, type WorkspacePaths } from "../../workspace/paths";
+import { ensureDir, writeJsonFile, type RootPaths } from "../../workspace/paths";
 
 /**
- * 浏览器自动化设置（P4）：`<workspace>/agent-browser.json`（0600），跟随工作区。
+ * 浏览器自动化设置（P4）：`~/.goodjob/agent-browser.json`（0600），全局一份，不跟工作区走。
  * 这里只有开关与限速参数，没有凭据；单站提交的每日记账也存这里——重启应用
  * 不重置「单站每日 ≤N 单」的口径（按本地日历日重置）。
  *
@@ -45,17 +45,11 @@ export interface RateCheck {
 }
 
 export class BrowserAgentSettingsStore {
-  private workspace: WorkspacePaths;
+  private readonly root: RootPaths;
   private doc: StoredSettings;
 
-  constructor(workspace: WorkspacePaths) {
-    this.workspace = workspace;
-    this.doc = this.read();
-  }
-
-  /** 切到另一个工作区：换文件重读（调用方负责先停掉运行中的浏览器任务）。 */
-  useWorkspace(workspace: WorkspacePaths): void {
-    this.workspace = workspace;
+  constructor(root: RootPaths) {
+    this.root = root;
     this.doc = this.read();
   }
 
@@ -67,7 +61,7 @@ export class BrowserAgentSettingsStore {
         dailyLimitPerSite: this.doc.submit.dailyLimitPerSite,
         minIntervalSeconds: this.doc.submit.minIntervalSeconds,
       },
-      playbooksPath: this.workspace.browserPlaybooks,
+      playbooksPath: this.root.browserPlaybooks,
     };
   }
 
@@ -142,12 +136,12 @@ export class BrowserAgentSettingsStore {
   /** 首次调用时落一份默认模板，之后原样返回内容（用户可能已改过）。 */
   ensurePlaybooks(): string {
     try {
-      const existing = fs.readFileSync(this.workspace.browserPlaybooks, "utf8");
+      const existing = fs.readFileSync(this.root.browserPlaybooks, "utf8");
       if (existing.trim() !== "") return existing;
     } catch {
       // 还没有文件，落默认模板。
     }
-    fs.writeFileSync(this.workspace.browserPlaybooks, DEFAULT_PLAYBOOKS, { mode: 0o600 });
+    fs.writeFileSync(this.root.browserPlaybooks, DEFAULT_PLAYBOOKS, { mode: 0o600 });
     return DEFAULT_PLAYBOOKS;
   }
 
@@ -176,7 +170,7 @@ export class BrowserAgentSettingsStore {
       usage: {},
     };
     try {
-      const raw = JSON.parse(fs.readFileSync(this.workspace.agentBrowser, "utf8")) as Partial<StoredSettings>;
+      const raw = JSON.parse(fs.readFileSync(this.root.agentBrowser, "utf8")) as Partial<StoredSettings>;
       return {
         version: VERSION,
         // 首次启用是默认开的：没写过这个字段不等于「用户关掉了」。
@@ -202,8 +196,8 @@ export class BrowserAgentSettingsStore {
   }
 
   private persist(): void {
-    ensureDir(this.workspace.dir);
-    writeJsonFile(this.workspace.agentBrowser, this.doc);
+    ensureDir(this.root.root);
+    writeJsonFile(this.root.agentBrowser, this.doc);
   }
 }
 

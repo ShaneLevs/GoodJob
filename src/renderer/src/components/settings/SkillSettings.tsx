@@ -76,7 +76,7 @@ export function SkillSettings() {
 
       <p className="mt-4 flex items-center gap-1.5 text-xs text-muted-foreground">
         <Sparkles className="size-3.5" />
-        技能由应用版本提供，切换工作区不会改变。
+        技能由应用版本提供，不是可配置项。
       </p>
     </div>
   );

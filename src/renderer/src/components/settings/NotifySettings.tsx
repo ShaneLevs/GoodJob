@@ -9,7 +9,6 @@ import type {
   NotificationSettings,
   NotifyTestKind,
   NotifyTestResult,
-  PublicNotifyMailAccount,
 } from "@shared/types";
 
 import { Badge } from "@/components/ui/badge";
@@ -28,17 +27,33 @@ import { cn } from "@/lib/utils";
 
 import { useAutoSave } from "./use-autosave";
 
+/** 一个服务器端点（SMTP / IMAP 各一条）；账户与密码由发信邮箱共用。 */
+interface ServerDraft {
+  host: string;
+  port: string;
+  secure: boolean;
+}
+
+/** 发信邮箱：账户与密码只填一次，SMTP 发信 / IMAP 收信共用。 */
+interface MailboxDraft {
+  user: string;
+  password?: string | null;
+  hasPassword: boolean;
+}
+
 /** 表单快照：一次改动把整份表单排进自动保存队列（旧快照自动作废）。 */
 interface NotifySnapshot {
+  recipient: string;
   fromAddress: string;
-  smtp: AccountDraft;
-  imap: AccountDraft;
+  mailbox: MailboxDraft;
+  smtp: ServerDraft;
+  imap: ServerDraft;
   daily: DigestSchedule;
   weekly: DigestSchedule;
 }
 
 /**
- * 通知设置（P3 M3）：SMTP / IMAP 表单 + 逐项「测试连接」+ 日报 / 周报调度。
+ * 通知设置（P3 M3）：发信邮箱（SMTP / IMAP 共用账户）+ 接收邮箱 + 日报 / 周报调度。
  * 密码与模型 API Key 同一纪律：不回显（只显示有没有已存），留空即保持原值。
  *
  * 没有「保存」按钮：改动停手 400ms 自动落盘（`useAutoSave`），右上角只读状态。
@@ -124,10 +139,10 @@ export function NotifySettings() {
     );
   }
 
-  const { smtp, imap, daily, weekly } = form;
+  const { mailbox, smtp, imap, daily, weekly } = form;
 
   const test = async (kind: NotifyTestKind): Promise<void> => {
-    const account = toAccountDraft(kind === "smtp" ? smtp : imap);
+    const account = toAccountDraft(kind === "smtp" ? smtp : imap, mailbox);
     setTesting(kind);
     setTestResults((prev) => ({ ...prev, [kind]: undefined }));
     try {
@@ -172,50 +187,160 @@ export function NotifySettings() {
       <div className="min-h-0 flex-1 overflow-y-auto border-t p-6">
         <div className="flex flex-col gap-6">
           <p className="text-xs leading-relaxed text-muted-foreground">
-            邮箱用来给<strong className="font-medium text-foreground">你自己</strong>发通知
-            （日报 / 周报、操作确认），不替你对外发求职邮件。密码经钥匙串加密后存在当前
-            工作区，渲染层拿不到明文；留空表示保持已存密码。
+            这里配两个邮箱：<strong className="font-medium text-foreground">发信邮箱</strong>
+            （通知从它发出，你的确认回信也回到它）和
+            <strong className="font-medium text-foreground">接收邮箱</strong>
+            （你自己收信、回信的那个）。邮件只发给你，不替你对外发求职邮件。
+            密码经钥匙串加密后只存在本机，渲染层拿不到明文；留空表示保持已存密码。
           </p>
+
+
+          <section className="flex flex-col gap-1.5">
+            <Label htmlFor="notify-recipient" className="text-xs text-muted-foreground">
+              接收邮箱
+            </Label>
+            <Input
+              id="notify-recipient"
+              type="email"
+              spellCheck={false}
+              value={form.recipient}
+              placeholder="you@example.com"
+              onChange={(event) =>
+                update((prev) => ({ ...prev, recipient: event.target.value }))
+              }
+            />
+            <p className="text-xs leading-relaxed text-muted-foreground">
+              通知、日报 / 周报、确认邮件都发到这里。确认时直接回复那封邮件即可，回信会到达下面的发信邮箱，由 IMAP 收取。留空时发到已配置的账户。
+            </p>
+          </section>
 
           <section className="flex flex-col gap-1.5">
             <Label htmlFor="notify-from" className="text-xs text-muted-foreground">
-              发件人地址（可选，为空时用 SMTP 账户）
+              发件人（可选，留空时用发信账户）
             </Label>
             <Input
               id="notify-from"
-              type="email"
+              type="text"
               spellCheck={false}
               value={form.fromAddress}
-              placeholder="me@example.com"
+              placeholder="GoodJob"
               onChange={(event) =>
                 update((prev) => ({ ...prev, fromAddress: event.target.value }))
               }
             />
+            <p className="text-xs leading-relaxed text-muted-foreground">
+              填显示名（如 GoodJob）或完整邮箱地址。纯显示名会自动拼上发信账户，收件人看到的是「GoodJob &lt;你的邮箱&gt;」。
+            </p>
           </section>
 
-          <AccountSection
-            title="SMTP（发信）"
-            hint="日报 / 周报与确认邮件都从这里发出。常见端口：465（TLS）、587（STARTTLS）。"
-            hostPlaceholder="smtp.example.com"
-            draft={smtp}
-            canStorePassword={settings.canStorePassword}
-            testResult={testResults.smtp}
-            testing={testing === "smtp"}
-            onChange={(apply) => update((prev) => ({ ...prev, smtp: apply(prev.smtp) }))}
-            onTest={() => void test("smtp")}
-          />
+          <section className="flex flex-col gap-4 rounded-xl border p-4">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <Label className="text-sm font-medium">发信邮箱</Label>
+                <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                  通知、报告与确认邮件从这里发出；你的确认回信也回到这个邮箱。账户与密码只填一次，SMTP 与 IMAP 共用。
+                </p>
+              </div>
+              {!settings.canStorePassword && (
+                <Badge variant="secondary" className="shrink-0 text-[10px]">
+                  钥匙串不可用，无法保存密码
+                </Badge>
+              )}
+            </div>
 
-          <AccountSection
-            title="IMAP（收信）"
-            hint="回信监控走 IMAP（确认门的「回信即同意」靠它）。确认邮件发到这个账户并在这里等回复；各家 IDLE 行为不一，建议先点「测试连接」。"
-            hostPlaceholder="imap.example.com"
-            draft={imap}
-            canStorePassword={settings.canStorePassword}
-            testResult={testResults.imap}
-            testing={testing === "imap"}
-            onChange={(apply) => update((prev) => ({ ...prev, imap: apply(prev.imap) }))}
-            onTest={() => void test("imap")}
-          />
+            <div className="grid grid-cols-2 gap-3">
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="notify-account" className="text-xs text-muted-foreground">
+                  账户
+                </Label>
+                <Input
+                  id="notify-account"
+                  type="email"
+                  spellCheck={false}
+                  value={mailbox.user}
+                  placeholder="me@example.com"
+                  onChange={(event) =>
+                    update((prev) => ({
+                      ...prev,
+                      mailbox: { ...prev.mailbox, user: event.target.value },
+                    }))
+                  }
+                />
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="notify-password" className="text-xs text-muted-foreground">
+                  密码 / 授权码
+                </Label>
+                <div className="flex items-center gap-2">
+                  <Input
+                    id="notify-password"
+                    type="password"
+                    autoComplete="off"
+                    spellCheck={false}
+                    disabled={!settings.canStorePassword}
+                    value={mailbox.password ?? ""}
+                    placeholder={
+                      mailbox.password === null
+                        ? "已清除，自动保存后删除"
+                        : mailbox.password !== undefined
+                          ? "输入新密码"
+                          : mailbox.hasPassword
+                            ? "已保存，留空则不修改"
+                            : "密码或服务商授权码"
+                    }
+                    onChange={(event) =>
+                      update((prev) => ({
+                        ...prev,
+                        mailbox: {
+                          ...prev.mailbox,
+                          password: event.target.value === "" ? undefined : event.target.value,
+                        },
+                      }))
+                    }
+                  />
+                  {mailbox.hasPassword && mailbox.password === undefined && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() =>
+                        update((prev) => ({
+                          ...prev,
+                          mailbox: { ...prev.mailbox, password: null },
+                        }))
+                      }
+                    >
+                      清除
+                    </Button>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-4 border-t pt-4">
+              <ServerFields
+                kind="smtp"
+                label="SMTP"
+                hint="发信：465 用直连 TLS，587 用 STARTTLS。"
+                hostPlaceholder="smtp.example.com"
+                draft={smtp}
+                testResult={testResults.smtp}
+                testing={testing === "smtp"}
+                onChange={(apply) => update((prev) => ({ ...prev, smtp: apply(prev.smtp) }))}
+                onTest={() => void test("smtp")}
+              />
+              <ServerFields
+                kind="imap"
+                label="IMAP"
+                hint="收你的确认回信：993 用直连 TLS。各家 IDLE 行为不一，建议先点「测试连接」。"
+                hostPlaceholder="imap.example.com"
+                draft={imap}
+                testResult={testResults.imap}
+                testing={testing === "imap"}
+                onChange={(apply) => update((prev) => ({ ...prev, imap: apply(prev.imap) }))}
+                onTest={() => void test("imap")}
+              />
+            </div>
+          </section>
 
           <section className="flex flex-col gap-3 rounded-xl border p-4">
             <div className="flex items-center justify-between gap-4">
@@ -350,54 +475,50 @@ const WEEKDAYS: { value: number; label: string }[] = [
   { value: 0, label: "每周日" },
 ];
 
-/** 表单里的一个邮件账户：密码不回显，`undefined` = 保持已存，`null` = 清除。 */
-interface AccountDraft {
-  host: string;
-  port: string;
-  secure: boolean;
-  user: string;
-  password?: string | null;
-  hasPassword: boolean;
-}
-
-function toDraft(account: PublicNotifyMailAccount): AccountDraft {
+/** 服务器字段 → 表单快照（密码在邮箱层，回到「保持已存」状态）。 */
+function toServerDraft(account: { host: string; port: number; secure: boolean }): ServerDraft {
   return {
     host: account.host,
     port: String(account.port),
     secure: account.secure,
-    user: account.user,
-    password: undefined,
-    hasPassword: account.hasPassword,
   };
 }
 
-/** 主进程回传的配置 → 表单快照（密码回到「保持已存」状态，刚存的不会再回显）。 */
+/** 主进程回传的配置 → 表单快照（密码不回显，刚存的也不会再显示）。 */
 function fromSettings(settings: NotificationSettings): NotifySnapshot {
   return {
+    recipient: settings.recipient,
     fromAddress: settings.fromAddress,
-    smtp: toDraft(settings.smtp),
-    imap: toDraft(settings.imap),
+    // 账户与密码共用：优先 SMTP，旧配置只填了 IMAP 时也能读出来。
+    mailbox: {
+      user: settings.smtp.user || settings.imap.user,
+      password: undefined,
+      hasPassword: settings.smtp.hasPassword || settings.imap.hasPassword,
+    },
+    smtp: toServerDraft(settings.smtp),
+    imap: toServerDraft(settings.imap),
     daily: settings.digest.daily,
     weekly: settings.digest.weekly,
   };
 }
 
-function toAccountDraft(draft: AccountDraft) {
-  const port = Number(draft.port);
+function toAccountDraft(server: ServerDraft, mailbox: MailboxDraft) {
+  const port = Number(server.port);
   return {
-    host: draft.host.trim(),
+    host: server.host.trim(),
     port: Number.isInteger(port) && port > 0 ? port : 0,
-    secure: draft.secure,
-    user: draft.user.trim(),
-    password: draft.password,
+    secure: server.secure,
+    user: mailbox.user.trim(),
+    password: mailbox.password,
   };
 }
 
 function toDraftRequest(snapshot: NotifySnapshot): NotificationDraft {
   return {
+    recipient: snapshot.recipient,
     fromAddress: snapshot.fromAddress,
-    smtp: toAccountDraft(snapshot.smtp),
-    imap: toAccountDraft(snapshot.imap),
+    smtp: toAccountDraft(snapshot.smtp, snapshot.mailbox),
+    imap: toAccountDraft(snapshot.imap, snapshot.mailbox),
     digest: {
       daily: dailyDigestPatch(snapshot.daily),
       weekly: weeklyDigestPatch(snapshot.weekly),
@@ -424,14 +545,16 @@ function isPortDraftValid(raw: string): boolean {
 
 /** 快照的稳定指纹：用来判断「保存期间用户有没有继续改」。 */
 function fingerprint(snapshot: NotifySnapshot): string {
-  const account = (draft: AccountDraft): string =>
-    [draft.host, draft.port, draft.secure ? "1" : "0", draft.user, draft.password ?? "k", draft.hasPassword ? "1" : "0"].join(
-      "\u0000",
-    );
+  const server = (draft: ServerDraft): string =>
+    [draft.host, draft.port, draft.secure ? "1" : "0"].join("\u0000");
   return JSON.stringify([
+    snapshot.recipient,
     snapshot.fromAddress,
-    account(snapshot.smtp),
-    account(snapshot.imap),
+    snapshot.mailbox.user,
+    snapshot.mailbox.password ?? "k",
+    snapshot.mailbox.hasPassword ? "1" : "0",
+    server(snapshot.smtp),
+    server(snapshot.imap),
     snapshot.daily.enabled,
     snapshot.daily.time,
     snapshot.weekly.enabled,
@@ -440,42 +563,47 @@ function fingerprint(snapshot: NotifySnapshot): string {
   ]);
 }
 
-function AccountSection({
-  title,
+function ServerFields({
+  kind,
+  label,
   hint,
   hostPlaceholder,
   draft,
-  canStorePassword,
   testResult,
   testing,
   onChange,
   onTest,
 }: {
-  title: string;
+  kind: NotifyTestKind;
+  label: string;
   hint: string;
-  /** 服务器输入框的示例域名：发信卡给 smtp、收信卡给 imap，避免误导。 */
+  /** 服务器输入框的示例域名：SMTP 给 smtp、IMAP 给 imap，避免误导。 */
   hostPlaceholder: string;
-  draft: AccountDraft;
-  canStorePassword: boolean;
+  draft: ServerDraft;
   testResult?: NotifyTestResult;
   testing: boolean;
-  onChange: (apply: (draft: AccountDraft) => AccountDraft) => void;
+  onChange: (apply: (draft: ServerDraft) => ServerDraft) => void;
   onTest: () => void;
 }) {
   return (
-    <section className="flex flex-col gap-3 rounded-xl border p-4">
+    <div className="flex flex-col gap-2">
       <div className="flex items-center justify-between gap-2">
-        <Label className="text-sm font-medium">{title}</Label>
+        <div className="min-w-0">
+          <Label className="text-sm font-medium">{label} 服务器</Label>
+          <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{hint}</p>
+        </div>
         <Button variant="outline" size="sm" disabled={testing} onClick={onTest}>
           {testing ? <LoaderCircle className="animate-spin" /> : null}
           测试连接
         </Button>
       </div>
-      <p className="text-xs leading-relaxed text-muted-foreground">{hint}</p>
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-[1fr_7rem] gap-3">
         <div className="flex flex-col gap-1.5">
-          <Label className="text-xs text-muted-foreground">服务器</Label>
+          <Label htmlFor={`notify-${kind}-host`} className="text-xs text-muted-foreground">
+            服务器
+          </Label>
           <Input
+            id={`notify-${kind}-host`}
             spellCheck={false}
             value={draft.host}
             placeholder={hostPlaceholder}
@@ -483,79 +611,29 @@ function AccountSection({
           />
         </div>
         <div className="flex flex-col gap-1.5">
-          <Label className="text-xs text-muted-foreground">端口</Label>
+          <Label htmlFor={`notify-${kind}-port`} className="text-xs text-muted-foreground">
+            端口
+          </Label>
           <Input
+            id={`notify-${kind}-port`}
             inputMode="numeric"
             value={draft.port}
             onChange={(event) => onChange((prev) => ({ ...prev, port: event.target.value }))}
           />
         </div>
-        <div className="flex flex-col gap-1.5">
-          <Label className="text-xs text-muted-foreground">账户</Label>
-          <Input
-            type="email"
-            spellCheck={false}
-            value={draft.user}
-            placeholder="me@example.com"
-            onChange={(event) => onChange((prev) => ({ ...prev, user: event.target.value }))}
-          />
-        </div>
-        <div className="flex flex-col gap-1.5">
-          <Label className="text-xs text-muted-foreground">密码 / 授权码</Label>
-          <div className="flex items-center gap-2">
-            <Input
-              type="password"
-              autoComplete="off"
-              spellCheck={false}
-              disabled={!canStorePassword}
-              value={draft.password ?? ""}
-              placeholder={
-                draft.password === null
-                  ? "已清除，自动保存后删除"
-                  : draft.password !== undefined
-                    ? "输入新密码"
-                    : draft.hasPassword
-                      ? "已保存，留空则不修改"
-                      : "密码或服务商授权码"
-              }
-              onChange={(event) =>
-                onChange((prev) => ({
-                  ...prev,
-                  password: event.target.value === "" ? undefined : event.target.value,
-                }))
-              }
-            />
-            {draft.hasPassword && draft.password === undefined && (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => onChange((prev) => ({ ...prev, password: null }))}
-              >
-                清除
-              </Button>
-            )}
-          </div>
-        </div>
       </div>
-      <div className="flex items-center justify-between gap-3">
-        <label className="flex items-center gap-2 text-xs text-muted-foreground">
-          <Switch
-            size="sm"
-            checked={draft.secure}
-            onCheckedChange={(checked) => onChange((prev) => ({ ...prev, secure: checked }))}
-          />
-          直连 TLS（465/993 勾选，587 等 STARTTLS 取消勾选）
-        </label>
-        {!canStorePassword && (
-          <Badge variant="secondary" className="text-[10px]">
-            钥匙串不可用，无法保存密码
-          </Badge>
-        )}
-      </div>
+      <label className="flex items-center gap-2 text-xs text-muted-foreground">
+        <Switch
+          size="sm"
+          checked={draft.secure}
+          onCheckedChange={(checked) => onChange((prev) => ({ ...prev, secure: checked }))}
+        />
+        直连 TLS（465 / 993 勾选；587 等 STARTTLS 取消勾选）
+      </label>
       {testResult !== undefined && (
         <NoticeBar tone={testResult.ok ? "ok" : "error"} message={testResult.message} />
       )}
-    </section>
+    </div>
   );
 }
 

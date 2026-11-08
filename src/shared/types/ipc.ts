@@ -47,6 +47,7 @@ import type {
 } from "./resume";
 import type { SkillInfo } from "./skill";
 import type { TaskEvent, TaskState, TaskType } from "./tasks";
+import type { WorkflowState } from "./workflow";
 import type { AppearanceSettings, AppInfo, WorkspacesState } from "./workspace";
 
 /** IPC channel names — a single source of truth for both sides. */
@@ -112,6 +113,9 @@ export const IPC = {
   tasksRun: "tasks:run",
   tasksRerun: "tasks:rerun",
   taskEvent: "task:event",
+  // GoodJob 工作流：当前对话的最近一次工作流快照 + 执行过程增量。
+  workflowGet: "workflow:get",
+  workflowEvent: "workflow:event",
   agentPaneOpen: "agent:pane-open",
   agentStepEvent: "agent:step",
   agentAbort: "agent:abort",
@@ -270,6 +274,14 @@ export interface GoodjobApi {
     /** 重跑一个已结束的任务（新 id，同 type + target）。 */
     rerun: (taskId: string) => Promise<TaskState>;
     onEvent: (listener: (event: TaskEvent) => void) => () => void;
+  };
+  /**
+   * GoodJob 工作流：按 GoodJob 对话 key 取最近一次工作流，并订阅执行过程。
+   * 单 agent 任务不产生工作流，这里保持 null。
+   */
+  workflow: {
+    get: (key: ConversationKey) => Promise<WorkflowState | null>;
+    onEvent: (listener: (state: WorkflowState) => void) => () => void;
   };
   /** 简历 / 定制稿导出 PDF：main 起隐藏窗口走渲染层导出路由排版。取消返回 null。 */
   pdf: {

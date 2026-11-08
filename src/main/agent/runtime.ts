@@ -169,7 +169,9 @@ export class AgentRuntime {
       const agent = new ToolLoopAgent({
         model: createLanguageModel(target),
         instructions,
-        tools: this.toolsFor(key),
+        // GoodJob 的 workflow_run / subagent_run 可能跑很久且没有父流 chunk：
+        // 把看门狗的重置入口交给工具，子 agent 期间持续续命。
+        tools: this.toolsFor(key, armIdleWatchdog),
         // 输出上限来自模型配置（默认 64K）：不传则供应商按自己的默认值截断。
         maxOutputTokens: target.maxOutputTokens,
         // 思考等级只发给真正的推理模型：openai-compatible 会把所有非
@@ -322,6 +324,8 @@ export class AgentRuntime {
     this.lastActivityAt = Date.now();
     for (const { controller } of this.running.values()) controller.abort();
     this.running.clear();
+    // 子 agent 跑在 tool execute 里，不在这张 running 表里，单独收掉。
+    this.deps.workflow.abortAll();
   }
 
   /**
@@ -345,13 +349,25 @@ export class AgentRuntime {
     }
 
     let sent = false;
+    let notifyCalls = 0;
+    let sendError: string | null = null;
+    let sendResult: string | null = null;
     const notifyTool = tool({
       description: "把汇总好的求职进展正文发到用户自己的邮箱。",
       inputSchema: z.object({ summary: z.string() }),
       execute: async ({ summary }, { abortSignal }) => {
-        const result = await this.deps.notify.sendNotification(summary, abortSignal);
-        sent = true;
-        return result;
+        notifyCalls += 1;
+        try {
+          const result = await this.deps.notify.sendNotification(summary, abortSignal, kind);
+          sent = true;
+          sendResult = result;
+          return result;
+        } catch (cause) {
+          // 模型会拿到这条 tool-error；这里同时记住原因，跑完直接报给用户，
+          // 不能让它伪装成「没调用 notify」。
+          sendError = cause instanceof Error ? cause.message : String(cause);
+          throw cause;
+        }
       },
     });
 
@@ -363,17 +379,26 @@ export class AgentRuntime {
     });
 
     if (!sent) {
-      return {
-        ok: false,
-        message: `模型没有调用 notify 发送${label}（回复：${result.text.trim().slice(0, 160) || "（空）"}）`,
-      };
+      const message =
+        sendError !== null
+          ? `发送${label}失败：${sendError}`
+          : `模型没有调用 notify 发送${label}（回复：${result.text.trim().slice(0, 160) || "（空）"}）`;
+      // 自动调度没有 UI 回执，失败至少要在进程日志里留一条。
+      console.error(`[digest] ${message}（调用 notify ${notifyCalls} 次）`);
+      return { ok: false, message };
     }
-    return { ok: true, message: result.text.trim() };
+    // 只调工具的回合通常没有正文，用发信回执兜底，别让手动按钮只显示空白。
+    return { ok: true, message: result.text.trim() || sendResult || `已发送${label}。` };
   }
 
   /** 当前会话的工具集；也公开给冒烟测试检查工具白名单。 */
-  toolsFor(key: ConversationKey): ToolSet {
-    return buildTools(this.deps, key, () => this.lastActivityAt);
+  toolsFor(key: ConversationKey, touch?: () => void): ToolSet {
+    return buildTools(this.deps, key, () => this.lastActivityAt, touch);
+  }
+
+  /** 当前 GoodJob 对话最近一次工作流；渲染层挂载 / 切对话时拉一次。 */
+  workflowGet(key: ConversationKey) {
+    return this.deps.workflow.get(key);
   }
 
   /** 当前会话的完整指令；也公开给冒烟测试检查 persona / 轮次进度。 */

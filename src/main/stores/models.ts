@@ -15,7 +15,7 @@ import type {
 } from "@shared/types";
 import { DEFAULT_CONTEXT_WINDOW, DEFAULT_MAX_OUTPUT_TOKENS } from "@shared/types";
 
-import { writeJsonFile, type WorkspacePaths } from "../workspace/paths";
+import { writeJsonFile, type RootPaths } from "../workspace/paths";
 
 const VERSION = 1;
 
@@ -80,27 +80,16 @@ export interface ResolvedProvider {
 }
 
 /**
- * Persists model providers in `<workspace>/models.json` (0600). 一个文件装下
- * 该工作区的全部供应商、模型和默认选择；切换工作区只是换一个文件重读。
+ * Persists model providers in `~/.goodjob/models.json` (0600). 一个文件装下全部供应商、
+ * 模型和默认选择 —— 设置是全局的，切换工作区不换这一套。
  */
 export class ModelsStore {
-  private workspace: WorkspacePaths;
+  private readonly root: RootPaths;
   private doc: StoredModels;
 
-  constructor(workspace: WorkspacePaths) {
-    this.workspace = workspace;
+  constructor(root: RootPaths) {
+    this.root = root;
     this.doc = this.read();
-  }
-
-  /** 切到另一个工作区：换文件、重读，调用方（IPC）负责广播给渲染层。 */
-  useWorkspace(workspace: WorkspacePaths): void {
-    this.workspace = workspace;
-    this.doc = this.read();
-  }
-
-  /** 当前工作区目录 —— 该工作区的配置和数据都在这里。 */
-  get dataDir(): string {
-    return this.workspace.dir;
   }
 
   get canStoreKey(): boolean {
@@ -151,7 +140,7 @@ export class ModelsStore {
       defaultModel,
       providers,
     };
-    writeJsonFile(this.workspace.models, this.doc);
+    writeJsonFile(this.root.models, this.doc);
     return this.toPublic();
   }
 
@@ -177,7 +166,7 @@ export class ModelsStore {
           ? null
           : { providerId: selection.providerId, modelId: selection.modelId },
     };
-    writeJsonFile(this.workspace.models, this.doc);
+    writeJsonFile(this.root.models, this.doc);
     return this.toPublic();
   }
 
@@ -300,7 +289,7 @@ export class ModelsStore {
 
   private read(): StoredModels {
     try {
-      const raw = fs.readFileSync(this.workspace.models, "utf8");
+      const raw = fs.readFileSync(this.root.models, "utf8");
       const parsed: unknown = JSON.parse(raw);
       const record = isRecord(parsed) ? parsed : {};
 

@@ -43,21 +43,28 @@ function objectInputSchema<T>(schema: z.ZodType<T>) {
   );
 }
 
-export function uploadTools(deps: AgentDeps, key: ConversationKey): ToolSet {
+/**
+ * 只读的上传文件工具：列目录 + 读正文。调用方给定目录与描述里的落点，
+ * 模块会话与 GoodJob 派发的子 agent 共用这一套。
+ */
+export function uploadToolsAt(dir: string, where: string): ToolSet {
   return {
     upload_list: tool({
-      description:
-        "列出用户上传到当前模块 upload/ 目录里的参考文件（旧简历、JD 文档、公司资料等）。",
+      description: `列出用户上传到${where}的参考文件（旧简历、JD 文档、公司资料等）。`,
       inputSchema: z.object({}),
-      execute: () => listUploadFiles(deps.uploadDir(key)),
+      execute: () => listUploadFiles(dir),
     }),
     upload_read: tool({
       description:
-        "读取一份上传文件的文本：PDF / DOCX 自动抽成纯文本，Markdown / 文本文件返回原文。fileName 用 upload_list 里的名字。图片没有可抽取的文字：支持视觉的模型会直接看到用户消息里随附的图片，不要用本工具读图片。",
+        "读取一份上传文件的文本：PDF / DOCX 自动抽成纯文本，Markdown / 文本文件返回原文。fileName 用 upload_list 里的名字。图片没有可抽取的文字，会返回说明而不是正文。",
       inputSchema: z.object({ fileName: z.string() }),
-      execute: ({ fileName }) => readUploadFile(deps.uploadDir(key), fileName),
+      execute: ({ fileName }) => readUploadFile(dir, fileName),
     }),
   };
+}
+
+export function uploadTools(deps: AgentDeps, key: ConversationKey): ToolSet {
+  return uploadToolsAt(deps.uploadDir(key), "当前模块 upload/ 目录");
 }
 
 export function browserTools(deps: AgentDeps, key: ConversationKey, lastActivityAt: () => number): ToolSet {

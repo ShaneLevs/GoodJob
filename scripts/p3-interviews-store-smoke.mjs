@@ -28,9 +28,13 @@ const { ApplicationsStore } = await jiti.import("../src/main/stores/domain/appli
 const { PipelineStore } = await jiti.import("../src/main/stores/domain/pipeline.ts");
 const { ResumeStore } = await jiti.import("../src/main/stores/resumes.ts");
 const { ConversationsStore } = await jiti.import("../src/main/stores/conversations.ts");
-const { ensureWorkspaceDirs, workspacePaths } = await jiti.import("../src/main/workspace/paths.ts");
+const { ensureWorkspaceDirs, rootPaths, workspacePaths } = await jiti.import(
+  "../src/main/workspace/paths.ts",
+);
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "goodjob-interviews-smoke-"));
+const root = rootPaths(tmp);
+fs.mkdirSync(root.workspaces, { recursive: true });
 const paths = workspacePaths(tmp, "ws_smoke0000");
 ensureWorkspaceDirs(paths);
 
@@ -159,7 +163,7 @@ const { TaskManager } = await jiti.import("../src/main/services/tasks.ts");
 const pipeline = new PipelineStore(paths);
 const applications = new ApplicationsStore(paths, jobs, pipeline);
 const memory = new MemoryStore(paths);
-const models = new ModelsStore(paths);
+const models = new ModelsStore(root);
 const taskManager = new TaskManager({ models, jobs, resumes, emit: () => {} });
 const runtime = new AgentRuntime({
   models,

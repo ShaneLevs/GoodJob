@@ -211,9 +211,9 @@ export interface InterviewCreateInput {
 /*
  * —— 通知（P3 M3）——
  *
- * notifications.json 跟随工作区：不同工作区可以配不同邮箱。SMTP / IMAP 密码是
- * safeStorage 密文，只在 main 侧解密——渲染层只看得到「有没有已存密码」，
- * 密码本身不进渲染层、不进日志。
+ * notifications.json 全局一份：所有工作区共用同一个发信邮箱与接收邮箱。
+ * SMTP / IMAP 密码是 safeStorage 密文，只在 main 侧解密——渲染层只看得到
+ * 「有没有已存密码」，密码本身不进渲染层、不进日志。
  */
 
 /**

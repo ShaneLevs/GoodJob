@@ -4,6 +4,7 @@
  * `interview:<id>` 是一场模拟面试。
  */
 export type ConversationScope =
+  | "orchestrator"
   | "resume"
   | "companies"
   | "jobs"
@@ -42,6 +43,7 @@ export function conversationKeyFor(scope: ConversationScope, threadId: string): 
 export function isConversationScope(value: unknown): value is ConversationScope {
   if (typeof value !== "string") return false;
   if (
+    value === "orchestrator" ||
     value === "resume" ||
     value === "companies" ||
     value === "jobs" ||

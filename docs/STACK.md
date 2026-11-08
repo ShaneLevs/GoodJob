@@ -48,7 +48,7 @@ renderer shadcn/ui + Tailwind 界面，不接触 node / 凭据
   （即使 `package.json` 是 `"type": "module"`）。
 - 内嵌浏览器使用独立分区 `persist:browser`，与 UI 会话的 cookie/storage 完全隔离。
 - AI 调用固定在 main：API Key 经 `safeStorage`（macOS 走钥匙串）加密后存
-  当前工作区的 `models.json`（目录 0700、文件 0600），渲染层拿不到明文。
+  配置目录的 `models.json`（目录 0700、文件 0600），渲染层拿不到明文。
 
 ## WebContentsView 的硬约束（务必记住）
 
@@ -64,14 +64,16 @@ renderer shadcn/ui + Tailwind 界面，不接触 node / 凭据
 
 ## 数据与凭据
 
-- 一切运行时数据在 `~/.goodjob/`，不写 Application Support。根目录只放索引与机器级偏好，
-  其余都跟着工作区走：
-  `workspaces.json`（工作区索引）、`preferences.json`（主题/字号/Markdown 预览主题）、
-  `workspaces/<workspaceId>/`（`models.json`、`conversations/`、`cache/`、`logs/`）。
+- 一切运行时数据在 `~/.goodjob/`，不写 Application Support。根目录放索引与**全局通用的
+  设置**，数据跟着工作区走：
+  `workspaces.json`（工作区索引）、`preferences.json`（基础设置：
+  主题/字号/简历主题；`models.json`、`notifications.json`、`agent-browser.json`、
+  `browser-playbooks.md`：Agent 设置）、`workspaces/<workspaceId>/`（`conversations/`、
+  `resumes/`、`cache/`、`logs/` 等数据）。切换工作区只换数据，不换设置。
   目录名一律是 `ws_` 前缀的 ID，人类可读的名字只存在索引里，所以改名不用动磁盘。
 - 启动时 `process.umask(0o077)`；目录 `0700`，JSON 文件 `0600`。新增持久化路径先登记到
   `src/main/workspace/paths.ts` 的 `WorkspacePaths`，再由 `ensureWorkspaceDirs()` 建目录。
-- `models.json` 属于工作区，切换工作区等于换一整套模型配置。它支持多供应商 / 多模型 /
+- `models.json` 是全局设置，所有工作区共用一套模型配置。它支持多供应商 / 多模型 /
   默认模型选择，字段对齐 AI SDK 适配器的 `baseURL` / `apiKey` 配置；`protocol` 决定用哪个适配器
   （`openai-chat` / `openai-responses` / `anthropic-messages` / `google-generative-ai`）：
 
@@ -144,7 +146,7 @@ pnpm dist:mac   # electron-builder 打 dmg/zip（当前为未签名本地构建�
 - 窗口用 `titleBarStyle: "hiddenInset"`（`trafficLightPosition: { x: 16, y: 18 }`），
   顶栏 `pl-[92px]` 让出交通灯。
 - 主题与字号来自机器级 `preferences.json`，由 `ThemeApplier` 写 `.dark` 类与 `--font-base`；
-  Markdown 预览主题也存在这里，由设置页「Markdown」分区写入，`DocumentPreview` 与 PDF
+  简历主题也存在这里，由设置页「基础设置 → 简历主题」写入，`DocumentPreview` 与 PDF
   导出共用；token 全部在 `src/renderer/src/globals.css`。
 
 ## 已知坑

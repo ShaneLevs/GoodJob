@@ -17,7 +17,7 @@ import type { IpcDeps, SendToUi } from "./deps";
 const UPLOAD_PREVIEW_WIDTH = 320;
 
 export function registerChatIpc(deps: IpcDeps, sendToUi: SendToUi): void {
-  const { getWindow, runtime, conversations, resumes, workspaces } = deps;
+  const { getWindow, runtime, workflow, conversations, resumes, workspaces } = deps;
 
   ipcMain.handle(IPC.chatSend, async (_event, payload: ChatSendPayload) => {
     // Fire and forget：chunk 流走 IPC.chatChunk，UI 保持响应。
@@ -28,6 +28,9 @@ export function registerChatIpc(deps: IpcDeps, sendToUi: SendToUi): void {
   );
   ipcMain.handle(IPC.chatContext, (_event, key: ConversationKey) => runtime.context(key));
   ipcMain.handle(IPC.chatCompact, (_event, key: ConversationKey) => runtime.compact(key));
+
+  // GoodJob 工作流：渲染层按当前对话 key 拉最近一次快照；执行中的增量走 workflow:event。
+  ipcMain.handle(IPC.workflowGet, (_event, key: ConversationKey) => workflow.get(key));
 
   ipcMain.handle(IPC.conversationsGet, (_event, key: ConversationKey) => {
     const doc = conversations.get(key);

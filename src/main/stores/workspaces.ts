@@ -44,7 +44,7 @@ export class WorkspacesStore {
     return current ?? this.doc.items[0] ?? this.createWorkspace(DEFAULT_NAME);
   }
 
-  /** 当前工作区的目录布局（models.json / conversations / cache / logs）。 */
+  /** 当前工作区的目录布局（conversations / resumes / cache / logs）。 */
   get currentPaths(): WorkspacePaths {
     return workspacePaths(this.root.root, this.current.id);
   }
@@ -74,8 +74,10 @@ export class WorkspacesStore {
     if (usable.length === 0) {
       const created = this.createWorkspace(DEFAULT_NAME);
       this.doc = { version: VERSION, currentId: created.id, items: [created] };
-      ensureWorkspaceDirs(workspacePaths(this.root.root, created.id));
-      this.migrateLegacyRoot(workspacePaths(this.root.root, created.id));
+      const paths = workspacePaths(this.root.root, created.id);
+      ensureWorkspaceDirs(paths);
+      this.migrateLegacyRoot(paths);
+      this.migrateGlobalSettings(paths);
       this.persist();
       return;
     }
@@ -88,16 +90,13 @@ export class WorkspacesStore {
     for (const item of usable) {
       ensureWorkspaceDirs(workspacePaths(this.root.root, item.id));
     }
+    // 设置改存根目录后：把当前工作区里的旧副本搬到根目录（见 migrateGlobalSettings）。
+    this.migrateGlobalSettings(this.currentPaths);
     this.persist();
   }
 
-  /** 旧版本把 models.json / conversations 直接放在 ~/.goodjob 下，迁移进默认工作区。 */
+  /** 旧版本把 conversations / cache / logs 直接放在 ~/.goodjob 下，迁移进默认工作区。 */
   private migrateLegacyRoot(target: WorkspacePaths): void {
-    const legacyModels = path.join(this.root.root, "models.json");
-    if (fs.existsSync(legacyModels) && !fs.existsSync(target.models)) {
-      fs.renameSync(legacyModels, target.models);
-    }
-
     for (const name of ["conversations", "cache", "logs"] as const) {
       const legacyDir = path.join(this.root.root, name);
       if (!fs.existsSync(legacyDir)) continue;
@@ -109,6 +108,24 @@ export class WorkspacesStore {
       }
       // 只删空目录，防止误删用户仍主动放在那里的东西。
       if (fs.readdirSync(legacyDir).length === 0) fs.rmdirSync(legacyDir);
+    }
+  }
+
+  /**
+   * 设置全部改为机器级：模型 / 通知 / 浏览器曾经存在 `<workspace>/` 里，
+   * 升级后把它们搬到根目录（根目录没有、工作区里有才搬，不覆盖已有设置）。
+   */
+  private migrateGlobalSettings(from: WorkspacePaths): void {
+    const pairs: { legacy: string; target: string }[] = [
+      { legacy: "models.json", target: this.root.models },
+      { legacy: "notifications.json", target: this.root.notifications },
+      { legacy: "agent-browser.json", target: this.root.agentBrowser },
+      { legacy: "browser-playbooks.md", target: this.root.browserPlaybooks },
+    ];
+    for (const { legacy, target } of pairs) {
+      const source = path.join(from.dir, legacy);
+      if (!fs.existsSync(source) || fs.existsSync(target)) continue;
+      fs.renameSync(source, target);
     }
   }
 

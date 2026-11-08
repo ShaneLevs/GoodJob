@@ -13,6 +13,7 @@ import type { PipelineStore } from "../stores/domain/pipeline";
 import type { MemoryStore } from "../stores/memory";
 import type { ModelsStore } from "../stores/models";
 import type { ResumeStore } from "../stores/resumes";
+import type { WorkflowService } from "./workflow";
 
 export interface AgentDeps {
   models: ModelsStore;
@@ -35,4 +36,6 @@ export interface AgentDeps {
   logsDir: () => string;
   /** 会话对应的上传目录（按 key 落到各自模块的 upload/，见 workspace/uploads.ts）。 */
   uploadDir: (key: ConversationKey) => string;
+  /** GoodJob agent 的子任务调度与工作流状态（单 agent 派发也走它）。 */
+  workflow: WorkflowService;
 }

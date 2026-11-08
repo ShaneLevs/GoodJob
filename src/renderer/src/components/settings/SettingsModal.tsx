@@ -10,20 +10,38 @@ import { cn } from "@/lib/utils";
 
 import { AppearanceSettings as AppearanceSettingsPane } from "./AppearanceSettings";
 import { BrowserAgentSettings } from "./BrowserAgentSettings";
-import { MarkdownSettings as MarkdownSettingsPane } from "./MarkdownSettings";
+import { MarkdownSettings as ResumeThemeSettingsPane } from "./MarkdownSettings";
 import { ModelsSettings } from "./ModelsSettings";
 import { NotifySettings } from "./NotifySettings";
 import { SkillSettings } from "./SkillSettings";
 
-export type SettingsSection = "appearance" | "markdown" | "models" | "skills" | "notify" | "browser";
+export type SettingsSection = "appearance" | "resumeTheme" | "models" | "skills" | "browser" | "notify";
 
-const NAV: { key: SettingsSection; label: string; icon: React.ReactNode }[] = [
-  { key: "appearance", label: "外观", icon: <Palette /> },
-  { key: "markdown", label: "Markdown", icon: <FileText /> },
-  { key: "models", label: "模型设置", icon: <Plug /> },
-  { key: "skills", label: "Skill 管理", icon: <Sparkles /> },
-  { key: "notify", label: "通知", icon: <Bell /> },
-  { key: "browser", label: "浏览器", icon: <Globe /> },
+/**
+ * 设置分两组，全局通用（所有工作区共用一份配置）：
+ * - 基础设置：只关乎这台机器上的界面本身。
+ * - Agent 设置：决定 Agent 用什么模型、能做什么。
+ */
+const NAV_GROUPS: {
+  label: string;
+  items: { key: SettingsSection; label: string; icon: React.ReactNode }[];
+}[] = [
+  {
+    label: "基础设置",
+    items: [
+      { key: "appearance", label: "外观", icon: <Palette /> },
+      { key: "resumeTheme", label: "简历主题", icon: <FileText /> },
+    ],
+  },
+  {
+    label: "Agent 设置",
+    items: [
+      { key: "models", label: "模型设置", icon: <Plug /> },
+      { key: "skills", label: "Skill 管理", icon: <Sparkles /> },
+      { key: "browser", label: "浏览器", icon: <Globe /> },
+      { key: "notify", label: "通知", icon: <Bell /> },
+    ],
+  },
 ];
 
 interface SettingsModalProps {
@@ -31,8 +49,6 @@ interface SettingsModalProps {
   models: ModelsConfig | null;
   appearance: AppearanceSettings;
   markdown: MarkdownSettings;
-  /** 左下角显示当前工作区，和主界面一致。 */
-  workspaceName: string;
   /** 打开时落在哪一页：从对话区的模型菜单跳进来时直接看模型。 */
   initialSection?: SettingsSection;
   onClose: () => void;
@@ -50,7 +66,6 @@ export function SettingsModal({
   models,
   appearance,
   markdown,
-  workspaceName,
   initialSection = "appearance",
   onClose,
   onSaved,
@@ -79,43 +94,38 @@ export function SettingsModal({
         <DialogTitle className="sr-only">设置</DialogTitle>
 
         <div className="flex h-[min(86vh,720px)] min-h-[440px]">
-          <nav className="flex w-52 shrink-0 flex-col border-r bg-muted/40 p-2">
+          <nav className="flex w-52 shrink-0 flex-col gap-3 overflow-y-auto border-r bg-muted/40 p-2">
             <Button variant="ghost" className="justify-start gap-2" onClick={onClose}>
               <ArrowLeft />
               返回工作区
             </Button>
 
-            <p className="px-2 pt-4 pb-1 text-xs text-muted-foreground">基础设置</p>
-            <div className="flex flex-col gap-0.5">
-              {NAV.map((item) => (
-                <Button
-                  key={item.key}
-                  variant="ghost"
-                  className={cn(
-                    "justify-start gap-2 font-normal text-muted-foreground",
-                    section === item.key && "bg-accent font-medium text-accent-foreground",
-                  )}
-                  onClick={() => setSection(item.key)}
-                >
-                  {item.icon}
-                  {item.label}
-                </Button>
-              ))}
-            </div>
-
-            <div className="mt-auto flex min-w-0 items-center gap-2 px-2 pt-2 pb-1">
-              <span className="grid size-6 shrink-0 place-items-center rounded-full bg-secondary text-[11px] font-semibold">
-                {workspaceName.trim().slice(0, 1) || "G"}
-              </span>
-              <span className="truncate text-xs text-muted-foreground">{workspaceName}</span>
-            </div>
+            {NAV_GROUPS.map((group) => (
+              <div key={group.label} className="flex flex-col gap-0.5">
+                <p className="px-2 pb-1 text-xs text-muted-foreground">{group.label}</p>
+                {group.items.map((item) => (
+                  <Button
+                    key={item.key}
+                    variant="ghost"
+                    className={cn(
+                      "justify-start gap-2 font-normal text-muted-foreground",
+                      section === item.key && "bg-accent font-medium text-accent-foreground",
+                    )}
+                    onClick={() => setSection(item.key)}
+                  >
+                    {item.icon}
+                    {item.label}
+                  </Button>
+                ))}
+              </div>
+            ))}
           </nav>
 
           <div className="flex min-w-0 flex-1 flex-col">
             {section === "appearance" ? (
               <AppearanceSettingsPane appearance={appearance} onChange={onAppearanceChange} />
-            ) : section === "markdown" ? (
-              <MarkdownSettingsPane settings={markdown} onChange={onMarkdownChange} />
+            ) : section === "resumeTheme" ? (
+              <ResumeThemeSettingsPane settings={markdown} onChange={onMarkdownChange} />
             ) : section === "notify" ? (
               <NotifySettings />
             ) : section === "browser" ? (

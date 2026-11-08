@@ -167,6 +167,8 @@
   --color-ring: var(--ring);
   /* 状态色（非破坏性提示，如编辑器冲突条）挂在 --status-warn 上。 */
   --color-warning: var(--status-warn);
+  /* 完成态（工作流节点 / 状态汇总）；与 --status-on 同一份绿。 */
+  --color-success: var(--status-on);
   --color-shell: var(--shell);
   --color-sidebar: var(--sidebar);
   --color-sidebar-foreground: var(--sidebar-foreground);

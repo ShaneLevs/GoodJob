@@ -10,13 +10,13 @@ import type {
   NotifyMailAccountDraft,
 } from "@shared/types";
 
-import { writeJsonFile, type WorkspacePaths } from "../workspace/paths";
+import { writeJsonFile, type RootPaths } from "../workspace/paths";
 
 const VERSION = 1;
 
 /**
- * 通知配置（P3 M3）：`<workspace>/notifications.json`（0600），跟随工作区——
- * 不同工作区可以配不同邮箱。密码与 models.json 的 API Key 同一纪律：
+ * 通知配置（P3 M3）：`~/.goodjob/notifications.json`（0600），全局一份——所有工作区
+ * 共用同一个通知邮箱。密码与 models.json 的 API Key 同一纪律：
  * safeStorage 加密后落盘，明文只在 main 内存里存在，不进渲染层、不进日志。
  *
  * 这里只管配置的存取；发送 / 回信监控 / 调度在 services/notify.ts。
@@ -41,6 +41,8 @@ interface StoredDigest {
 
 interface StoredNotifications {
   version: number;
+  /** 接收邮箱：通知 / 报告 / 确认邮件的收件地址（用户自己的邮箱）。 */
+  recipient: string;
   fromAddress: string;
   smtp: StoredMailAccount;
   imap: StoredMailAccount;
@@ -62,17 +64,11 @@ const DEFAULT_WEEKLY: DigestSchedule = { enabled: false, time: "09:00", weekday:
 const TIME_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/;
 
 export class NotifyStore {
-  private workspace: WorkspacePaths;
+  private readonly root: RootPaths;
   private doc: StoredNotifications;
 
-  constructor(workspace: WorkspacePaths) {
-    this.workspace = workspace;
-    this.doc = this.read();
-  }
-
-  /** 切到另一个工作区：换文件重读，调用方（IPC）负责停掉服务里的长连接。 */
-  useWorkspace(workspace: WorkspacePaths): void {
-    this.workspace = workspace;
+  constructor(root: RootPaths) {
+    this.root = root;
     this.doc = this.read();
   }
 
@@ -82,6 +78,7 @@ export class NotifyStore {
 
   toPublic(): NotificationSettings {
     return {
+      recipient: this.doc.recipient,
       fromAddress: this.doc.fromAddress,
       smtp: toPublicAccount(this.doc.smtp),
       imap: toPublicAccount(this.doc.imap),
@@ -94,6 +91,9 @@ export class NotifyStore {
   }
 
   save(draft: NotificationDraft): NotificationSettings {
+    if (draft.recipient !== undefined) {
+      this.doc.recipient = draft.recipient.trim();
+    }
     if (draft.fromAddress !== undefined) {
       this.doc.fromAddress = draft.fromAddress.trim();
     }
@@ -111,7 +111,7 @@ export class NotifyStore {
     if (draft.digest?.weekly !== undefined) {
       this.doc.digest.weekly = mergeSchedule(this.doc.digest.weekly, draft.digest.weekly);
     }
-    writeJsonFile(this.workspace.notifications, this.doc);
+    writeJsonFile(this.root.notifications, this.doc);
     return this.toPublic();
   }
 
@@ -123,6 +123,16 @@ export class NotifyStore {
   /** 已解密的 IMAP 配置；没配 host 时返回 null。 */
   resolveImap(): ResolvedMailAccount | null {
     return resolveAccount(this.doc.imap);
+  }
+
+  /** 用户填的接收邮箱；没填时为空串。 */
+  configuredRecipient(): string {
+    return this.doc.recipient;
+  }
+
+  /** 用户填的发件人（显示名或完整地址）；没填时为空串（发送时用 SMTP 账户）。 */
+  configuredFrom(): string {
+    return this.doc.fromAddress;
   }
 
   /** 「测试连接」用：表单账户 + 已存密码（password 省略时）合成一份待测配置。 */
@@ -147,7 +157,7 @@ export class NotifyStore {
 
   markDigestRun(kind: DigestKind, date: string): void {
     this.doc.digest.lastDigest[kind] = date;
-    writeJsonFile(this.workspace.notifications, this.doc);
+    writeJsonFile(this.root.notifications, this.doc);
   }
 
   digestLastRun(kind: DigestKind): string | null {
@@ -178,7 +188,7 @@ export class NotifyStore {
 
   private read(): StoredNotifications {
     try {
-      const raw: unknown = JSON.parse(fs.readFileSync(this.workspace.notifications, "utf8"));
+      const raw: unknown = JSON.parse(fs.readFileSync(this.root.notifications, "utf8"));
       return revive(raw);
     } catch {
       return freshDoc();
@@ -189,6 +199,7 @@ export class NotifyStore {
 function freshDoc(): StoredNotifications {
   return {
     version: VERSION,
+    recipient: "",
     fromAddress: "",
     smtp: emptyAccount(465),
     imap: emptyAccount(993),
@@ -237,6 +248,7 @@ function revive(raw: unknown): StoredNotifications {
   const doc = freshDoc();
   if (typeof raw !== "object" || raw === null) return doc;
   const record = raw as Record<string, unknown>;
+  if (typeof record.recipient === "string") doc.recipient = record.recipient.trim();
   if (typeof record.fromAddress === "string") doc.fromAddress = record.fromAddress.trim();
   const smtp = readAccount(record.smtp, 465);
   if (smtp !== null) doc.smtp = smtp;

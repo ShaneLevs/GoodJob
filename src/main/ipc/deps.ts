@@ -1,6 +1,7 @@
 import type { BrowserWindow } from "electron";
 
 import type { AgentRuntime } from "../agent/runtime";
+import type { WorkflowService } from "../agent/workflow";
 import type { BrowserAgentService } from "../browser/automation/runner";
 import type { BrowserAgentSettingsStore } from "../browser/automation/settings-store";
 import type { BrowserPanel } from "../browser/panel";
@@ -25,6 +26,7 @@ export interface IpcDeps {
   getWindow: () => BrowserWindow | null;
   getPanel: () => BrowserPanel | null;
   runtime: AgentRuntime;
+  workflow: WorkflowService;
   conversations: ConversationsStore;
   resumes: ResumeStore;
   memory: MemoryStore;

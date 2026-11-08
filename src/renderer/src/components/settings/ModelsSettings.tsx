@@ -511,7 +511,7 @@ function ProviderForm({
         </div>
         <p className={cn("text-xs", canStoreKey ? "text-muted-foreground" : "text-amber-600")}>
           {canStoreKey
-            ? "钥匙串加密后存在当前工作区，渲染层拿不到明文。使用本地模型时可以留空。"
+            ? "钥匙串加密后只存在本机，渲染层拿不到明文。使用本地模型时可以留空。"
             : "当前系统无法保存 API Key，使用本地模型时可以直接留空。"}
         </p>
       </div>

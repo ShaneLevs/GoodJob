@@ -1,8 +1,10 @@
 import { BrowserWindow } from "electron";
 
-import { IPC } from "@shared/types";
+import { IPC, type ConversationKey } from "@shared/types";
 
+import type { AgentDeps } from "../agent/deps";
 import { AgentRuntime } from "../agent/runtime";
+import { WorkflowService } from "../agent/workflow";
 import { AgentBrowserCli, resolveAgentBrowserBinary } from "../browser/automation/cli";
 import { BrowserAgentService } from "../browser/automation/runner";
 import { BrowserAgentSettingsStore } from "../browser/automation/settings-store";
@@ -42,6 +44,7 @@ export interface AppContext {
   browser: BrowserAgentService;
   browserSettings: BrowserAgentSettingsStore;
   runtime: AgentRuntime;
+  workflow: WorkflowService;
 }
 
 export interface AppContextOptions {
@@ -59,7 +62,8 @@ export function createAppContext({
   // 工作区必须先建：一个工作区就是一个文件夹，其余 store 的数据都挂在它下面。
   const workspaces = new WorkspacesStore();
   const preferences = new PreferencesStore();
-  const models = new ModelsStore(workspaces.currentPaths);
+  // 设置（基础设置 / Agent 设置）全在根目录，所有工作区共用一份，构造后不再换文件。
+  const models = new ModelsStore(workspaces.root);
   const conversations = new ConversationsStore(workspaces.currentPaths);
   const memory = new MemoryStore(workspaces.currentPaths);
 
@@ -87,8 +91,8 @@ export function createAppContext({
   // 模拟面试（P3）：依赖岗位（jobId 校验）与简历（定制稿存在性校验）。
   const interviews = new InterviewsStore(workspaces.currentPaths, jobs, resumes);
 
-  // 通知（P3 M3）：配置跟着工作区走；调度到点经 AgentRuntime.runDigest 发日报 / 周报。
-  const notifyStore = new NotifyStore(workspaces.currentPaths);
+  // 通知（P3 M3）：设置是全局的（不跟工作区走）；调度到点经 AgentRuntime.runDigest 发日报 / 周报。
+  const notifyStore = new NotifyStore(workspaces.root);
   const notify = new NotifyService({ store: notifyStore });
 
   // 浏览器自动化（P4）：agent-browser CLI 宿主 + 设置（开关 / 限速）+ 任务执行器。
@@ -97,7 +101,7 @@ export function createAppContext({
   void agentCli.probeVersion().then((version) => {
     console.log(`[agent] agent-browser ${version}（cdp 127.0.0.1:${cdpPort}，session goodjob）`);
   });
-  const browserSettings = new BrowserAgentSettingsStore(workspaces.currentPaths);
+  const browserSettings = new BrowserAgentSettingsStore(workspaces.root);
   const browser = new BrowserAgentService({
     cli: agentCli,
     // 面板懒访问：窗口没建 / 已销毁时返回空列表。target.ts 用 agentTabs()
@@ -147,7 +151,13 @@ export function createAppContext({
     },
   });
 
-  const runtime = new AgentRuntime({
+  /*
+   * GoodJob 工作流与 AgentRuntime 互相引用：workflow 需要 AgentDeps 调子 agent，
+   * AgentDeps 又要把 workflow 交给 GoodJob 工具。用 getter 剪断构造顺序——
+   * WorkflowService 构造期间不访问 deps.workflow，运行时它已经指向实例。
+   */
+  let workflow: WorkflowService;
+  const agentDeps: AgentDeps = {
     models,
     conversations,
     resumes,
@@ -162,8 +172,18 @@ export function createAppContext({
     browser,
     browserSettings,
     logsDir: () => workspaces.currentPaths.logs,
-    uploadDir: (key) => uploadDirFor(workspaces.currentPaths, key, resumes.currentUploadDir()),
+    uploadDir: (key: ConversationKey) =>
+      uploadDirFor(workspaces.currentPaths, key, resumes.currentUploadDir()),
+    get workflow() {
+      return workflow;
+    },
+  };
+  workflow = new WorkflowService(agentDeps, workspaces.currentPaths, (state) => {
+    const win = getWindow();
+    if (win === null || win.isDestroyed()) return;
+    win.webContents.send(IPC.workflowEvent, state);
   });
+  const runtime = new AgentRuntime(agentDeps);
 
   // 循环依赖从这里剪断：NotifyService 只认「到点要跑一次汇总」，跑什么由 runtime 决定。
   notify.setDigestRunner((kind) => runtime.runDigest(kind).then(() => undefined));
@@ -186,5 +206,6 @@ export function createAppContext({
     browser,
     browserSettings,
     runtime,
+    workflow,
   };
 }

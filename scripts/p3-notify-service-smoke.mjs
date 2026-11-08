@@ -26,9 +26,14 @@ const jiti = createJiti(here, {
 
 const { NotifyStore } = await jiti.import("../src/main/stores/notify.ts");
 const { NotifyService, isDigestDue } = await jiti.import("../src/main/services/notify.ts");
-const { ensureWorkspaceDirs, workspacePaths } = await jiti.import("../src/main/workspace/paths.ts");
+const { ensureWorkspaceDirs, rootPaths, workspacePaths } = await jiti.import(
+  "../src/main/workspace/paths.ts",
+);
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "goodjob-notify-smoke-"));
+// 设置是全局的：NotifyStore 拿根目录路径表；工作区只用来验证「切换不影响设置」。
+const root = rootPaths(tmp);
+fs.mkdirSync(root.workspaces, { recursive: true });
 const paths = workspacePaths(tmp, "ws_smoke0000");
 ensureWorkspaceDirs(paths);
 
@@ -38,7 +43,7 @@ const WINDOW = 10 * MINUTE;
 
 // ———————————————— NotifyStore：默认配置 ————————————————
 
-const store = new NotifyStore(paths);
+const store = new NotifyStore(root);
 const initial = store.toPublic();
 assert.equal(initial.canStorePassword, true);
 assert.equal(initial.smtp.port, 465);
@@ -86,6 +91,7 @@ await assert.rejects(
 
 // 只配 SMTP 不配 IMAP：确认门收不了回信，必须拒绝。
 store.save({
+  recipient: "me@personal.example",
   fromAddress: "me@example.com",
   smtp: { host: "smtp.example.com", port: 587, secure: false, user: "me@example.com", password: "s3cret-密码" },
 });
@@ -102,7 +108,7 @@ store.save({
 
 // ———————————————— 配置落盘：0600 / 密文 / 三态密码 ————————————————
 
-const file = paths.notifications;
+const file = root.notifications;
 assert.equal(fs.statSync(file).mode & 0o777, 0o600, "notifications.json 必须 0600");
 const raw = fs.readFileSync(file, "utf8");
 assert.ok(!raw.includes("s3cret-密码"), "明文密码不得落盘");
@@ -110,6 +116,7 @@ assert.ok(!raw.includes("imap-密码"), "明文密码不得落盘");
 assert.ok(raw.includes("passwordEncrypted"), "密码以密文字段保存");
 
 const publicNow = store.toPublic();
+assert.equal(publicNow.recipient, "me@personal.example");
 assert.equal(publicNow.smtp.hasPassword, true);
 assert.equal(publicNow.smtp.port, 587);
 assert.equal(publicNow.smtp.secure, false);
@@ -143,13 +150,46 @@ assert.equal(
 );
 assert.equal(store.resolveTestAccount("imap", { host: "", port: 993, secure: true, user: "" }), null, "没填 host 不可测");
 
-// 工作区切换：换目录重读 = 全新默认配置。
+// 设置是全局的：换工作区（只换数据目录）不影响通知配置，重开 store 才重读同一份文件。
 const paths2 = workspacePaths(tmp, "ws_other00000");
 ensureWorkspaceDirs(paths2);
-store.useWorkspace(paths2);
-assert.equal(store.toPublic().smtp.host, "");
-assert.equal(store.toPublic().smtp.hasPassword, false);
-store.useWorkspace(paths);
+const reopened = new NotifyStore(root);
+assert.equal(reopened.toPublic().smtp.host, store.toPublic().smtp.host);
+assert.equal(reopened.toPublic().smtp.hasPassword, true, "设置不跟工作区走，重读仍是同一份");
+
+// 收件人 = 接收邮箱；发件人显示地址传给了 mailer；正文同时有 HTML 与纯文本。
+const notice = await service.sendNotification("## 今日进展\n\n- 投递 **2** 份\n\n<script>alert(1)</script>");
+const noticeMail = mailer.sent.at(-1);
+assert.equal(noticeMail.to, "me@personal.example", "通知发到接收邮箱");
+assert.equal(noticeMail.from, "me@example.com", "有发件人地址时用它");
+assert.match(notice, /me@personal\.example/);
+assert.match(noticeMail.subject, /^GoodJob 通知 · \d{4}-\d{2}-\d{2}$/);
+assert.match(noticeMail.text, /今日进展/);
+assert.match(noticeMail.html, /你的求职通知|来自 GoodJob 的通知/);
+assert.match(noticeMail.html, /<h2 style=/, "Markdown 标题要渲染成带样式的 HTML");
+assert.ok(noticeMail.html.includes("&lt;script&gt;"), "模型输出里的原始 HTML 必须转义");
+assert.ok(!noticeMail.html.includes("<script>"), "不得输出可执行脚本");
+
+// 日报 / 周报有各自的标题与主题。
+await service.sendNotification("## 日报正文", undefined, "daily");
+assert.match(mailer.sent.at(-1).subject, /^GoodJob 日报 · \d{4}-\d{2}-\d{2}$/);
+assert.match(mailer.sent.at(-1).html, /你的求职日报/);
+await service.sendNotification("## 周报正文", undefined, "weekly");
+assert.match(mailer.sent.at(-1).subject, /^GoodJob 周报 · \d{4}-\d{2}-\d{2}$/);
+assert.match(mailer.sent.at(-1).html, /你的求职周报/);
+
+// 只填显示名时拼上发信账户，避免 From 变成没有 @ 的非法地址。
+store.save({ fromAddress: "GoodJob" });
+await service.sendNotification("显示名");
+assert.equal(mailer.sent.at(-1).from, '"GoodJob" <me@example.com>', "显示名要拼成合法 From");
+store.save({ fromAddress: "me@example.com" });
+
+// 没填接收邮箱时回退到已配置账户（这里 IMAP 优先）。
+store.save({ recipient: "" });
+await service.sendNotification("回退");
+assert.equal(mailer.sent.at(-1).to, "me@example.com", "未填接收邮箱时回退到账户");
+store.save({ recipient: "me@personal.example" });
+mailer.sent.length = 0; // 确认门断言从「本段第一封」起算
 
 // 关掉日报再跑确认门：gate 的 tick 会顺带跑 digestTick，别让它在门测试期间记账。
 store.save({ digest: { daily: { enabled: false } } });
@@ -159,6 +199,8 @@ store.save({ digest: { daily: { enabled: false } } });
 const gateA = service.requestConfirmation("自动投递确认", "准备投递「前端工程师」，回复即同意。");
 await flush();
 assert.equal(mailer.sent.length, 1);
+assert.equal(mailer.sent[0].to, "me@personal.example", "确认邮件也发到接收邮箱");
+assert.equal(mailer.sent[0].replyTo, "me@example.com", "回信地址固定为发信账户");
 assert.match(mailer.sent[0].subject, /自动投递确认/);
 assert.match(mailer.sent[0].subject, /【确认码 [0-9A-F]{12}】/, "Subject 必须带唯一 token");
 assert.match(mailer.sent[0].messageId, /^<gj-confirm-[0-9a-f]{12}@goodjob\.local>$/, "Message-ID 必须带唯一 token");

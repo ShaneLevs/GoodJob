@@ -23,6 +23,7 @@ const MAX_IMAGE_BYTES = 20 * 1024 * 1024;
 
 /**
  * 会话 → 上传目录（每个模块自己的目录，互不串）：
+ *   orchestrator   → uploads/（工作区级，GoodJob 会话用）
  *   resume         → 由 ResumeStore 给的当前简历 upload/（resumes/<当前简历>/upload/）
  *   companies      → companies/upload/
  *   jobs           → jobs/upload/
@@ -46,16 +47,20 @@ export function uploadDirFor(
   const interviewId = interviewKeyTarget(scope);
   if (interviewId !== null) return path.join(workspace.interviewsUpload, safeSegment(interviewId));
   switch (scope) {
+    case "orchestrator":
+      return workspace.orchestratorUpload;
     case "companies":
       return workspace.companiesUpload;
     case "jobs":
       return workspace.jobsUpload;
     case "applications":
       return workspace.applicationsUpload;
-    default:
+    case "resume":
       // 简历会话的路径由 ResumeStore 拼（它才知道哪份是当前简历）。
       if (resumeUploadDir === null) throw new Error("还没有简历，先建一份简历再上传参考文件");
       return resumeUploadDir;
+    default:
+      throw new Error(`未知的会话场景：${scope}`);
   }
 }
 
