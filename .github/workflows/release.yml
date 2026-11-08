@@ -52,6 +52,8 @@ jobs:
     runs-on: macos-latest
     env:
       VERSION: ${{ needs.prepare.outputs.version }}
+      # secrets 不能直接出现在 if 里：先落成 job-level env，再按 env 判断。
+      HAS_CSC: ${{ secrets.CSC_LINK != '' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -86,7 +88,7 @@ jobs:
       # 只有配置了 CSC_LINK 才把证书与公证凭据写进后续步骤的环境变量。
       # 空字符串不能直接传给 electron-builder，否则它会把工作目录当成证书路径。
       - name: Configure macOS signing
-        if: ${{ secrets.CSC_LINK != '' }}
+        if: env.HAS_CSC == 'true'
         shell: bash
         env:
           CSC_LINK_VALUE: ${{ secrets.CSC_LINK }}
@@ -95,19 +97,21 @@ jobs:
           APPLE_APP_SPECIFIC_PASSWORD_VALUE: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID_VALUE: ${{ secrets.APPLE_TEAM_ID }}
         run: |
-          echo "CSC_LINK=$CSC_LINK_VALUE" >> "$GITHUB_ENV"
-          echo "CSC_KEY_PASSWORD=$CSC_KEY_PASSWORD_VALUE" >> "$GITHUB_ENV"
-          if [ -n "$APPLE_ID_VALUE" ]; then
-            echo "APPLE_ID=$APPLE_ID_VALUE" >> "$GITHUB_ENV"
-            echo "APPLE_APP_SPECIFIC_PASSWORD=$APPLE_APP_SPECIFIC_PASSWORD_VALUE" >> "$GITHUB_ENV"
-            echo "APPLE_TEAM_ID=$APPLE_TEAM_ID_VALUE" >> "$GITHUB_ENV"
-          fi
+          {
+            echo "CSC_LINK=$CSC_LINK_VALUE"
+            echo "CSC_KEY_PASSWORD=$CSC_KEY_PASSWORD_VALUE"
+            if [ -n "$APPLE_ID_VALUE" ]; then
+              echo "APPLE_ID=$APPLE_ID_VALUE"
+              echo "APPLE_APP_SPECIFIC_PASSWORD=$APPLE_APP_SPECIFIC_PASSWORD_VALUE"
+              echo "APPLE_TEAM_ID=$APPLE_TEAM_ID_VALUE"
+            fi
+          } >> "$GITHUB_ENV"
 
       - name: Package
         run: pnpm exec electron-builder --mac --x64 --arm64 --publish never
         env:
           # 没有证书时明确跳过签名（macOS 自动更新要求签名，见 README）。
-          CSC_IDENTITY_AUTO_DISCOVERY: ${{ secrets.CSC_LINK == '' && 'false' || 'true' }}
+          CSC_IDENTITY_AUTO_DISCOVERY: ${{ env.HAS_CSC == 'true' && 'true' || 'false' }}
 
       - name: Upload macOS artifacts
         uses: actions/upload-artifact@v4
