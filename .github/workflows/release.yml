@@ -108,10 +108,28 @@ jobs:
           } >> "$GITHUB_ENV"
 
       - name: Package
-        run: pnpm exec electron-builder --mac --x64 --arm64 --publish never
+        shell: bash
+        run: |
+          if [ "$HAS_CSC" = "true" ]; then
+            pnpm exec electron-builder --mac --x64 --arm64 --publish never
+          else
+            # 没有 Developer ID 时至少做 ad-hoc 签名。Apple Silicon 要求 .app 带
+            # 有效签名，完全未签名的包下载后会被 Gatekeeper 判成「已损坏」。
+            pnpm exec electron-builder --mac --x64 --arm64 --publish never \
+              --config.mac.identity=-
+          fi
         env:
-          # 没有证书时明确跳过签名（macOS 自动更新要求签名，见 README）。
+          # 没有证书时不自动发现本机身份；ad-hoc 由上面的 identity=- 显式指定。
           CSC_IDENTITY_AUTO_DISCOVERY: ${{ env.HAS_CSC == 'true' && 'true' || 'false' }}
+
+      - name: Verify macOS signature
+        shell: bash
+        run: |
+          for app in release/mac*/GoodJob.app; do
+            echo "== $app"
+            codesign --verify --deep --strict --verbose=2 "$app"
+            codesign -dv "$app" 2>&1 | grep -E "Identifier=|Signature=|Authority=" || true
+          done
 
       - name: Upload macOS artifacts
         uses: actions/upload-artifact@v4

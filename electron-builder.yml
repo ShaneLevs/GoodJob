@@ -16,7 +16,9 @@ mac:
     - zip
   category: public.app-category.productivity
   # 本机没有证书时 electron-builder 自动跳过签名；GitHub Actions 用
-  # CSC_LINK / CSC_KEY_PASSWORD 注入 Developer ID。macOS 自动更新要求签名。
+  # CSC_LINK / CSC_KEY_PASSWORD 注入 Developer ID，没有证书时改用 ad-hoc 签名
+  # （mac.identity=-），否则 Apple Silicon 上的未签名包会报「已损坏」。
+  # macOS 自动更新要求 Developer ID 签名。
   hardenedRuntime: true
   gatekeeperAssess: false
   # 语音面试要采麦克风：用途说明 + audio-input entitlement（默认模板里没有）。

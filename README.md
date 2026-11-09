@@ -23,19 +23,29 @@
 
 ## 下载安装
 
-当前最新版本：**v0.1.2** · [所有版本与更新日志](https://github.com/ShaneLevs/GoodJob/releases)
+当前最新版本：**v0.1.3** · [所有版本与更新日志](https://github.com/ShaneLevs/GoodJob/releases)
 
 | 平台 | 安装包 |
 | --- | --- |
-| macOS · Apple Silicon（M 系列） | [GoodJob-0.1.2-arm64.dmg](https://github.com/ShaneLevs/GoodJob/releases/download/v0.1.2/GoodJob-0.1.2-arm64.dmg) |
-| macOS · Intel | [GoodJob-0.1.2-x64.dmg](https://github.com/ShaneLevs/GoodJob/releases/download/v0.1.2/GoodJob-0.1.2-x64.dmg) |
-| Windows · x64 | [GoodJob-0.1.2-x64-setup.exe](https://github.com/ShaneLevs/GoodJob/releases/download/v0.1.2/GoodJob-0.1.2-x64-setup.exe) |
+| macOS · Apple Silicon（M 系列） | [GoodJob-0.1.3-arm64.dmg](https://github.com/ShaneLevs/GoodJob/releases/download/v0.1.3/GoodJob-0.1.3-arm64.dmg) |
+| macOS · Intel | [GoodJob-0.1.3-x64.dmg](https://github.com/ShaneLevs/GoodJob/releases/download/v0.1.3/GoodJob-0.1.3-x64.dmg) |
+| Windows · x64 | [GoodJob-0.1.3-x64-setup.exe](https://github.com/ShaneLevs/GoodJob/releases/download/v0.1.3/GoodJob-0.1.3-x64-setup.exe) |
 
-安装包暂未配置 Apple Developer ID 签名。macOS 首次打开如果提示「无法验证开发者」，
-在「系统设置 → 隐私与安全性」里选择「仍要打开」，或执行：
+安装包没有 Apple Developer ID 签名，CI 在没有证书时会补 ad-hoc 签名（v0.1.2 及更早的包
+完全没有签名）。macOS 首次打开可能提示「无法验证开发者」或「已损坏，无法打开」，
+先把它拖进「应用程序」，再执行：
 
 ```bash
 xattr -dr com.apple.quarantine /Applications/GoodJob.app
+open /Applications/GoodJob.app
+```
+
+也可以在「系统设置 → 隐私与安全性」里选择「仍要打开」。系统仍拒绝时，在本机补一个
+ad-hoc 签名再打开：
+
+```bash
+codesign --force --deep --sign - /Applications/GoodJob.app
+open /Applications/GoodJob.app
 ```
 
 Windows 若出现 SmartScreen 提示，点「更多信息 → 仍要运行」。
