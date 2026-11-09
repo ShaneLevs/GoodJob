@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 
-import { ArrowLeft, Bell, FileText, Globe, Info, Palette, Plug, Sparkles } from "lucide-react";
+import { ArrowLeft, AudioLines, Bell, FileText, Globe, Info, Palette, Plug, Sparkles } from "lucide-react";
 
 import type {
   AppearanceSettings,
@@ -20,11 +20,13 @@ import { MarkdownSettings as ResumeThemeSettingsPane } from "./MarkdownSettings"
 import { ModelsSettings } from "./ModelsSettings";
 import { NotifySettings } from "./NotifySettings";
 import { SkillSettings } from "./SkillSettings";
+import { VoiceSettings } from "./VoiceSettings";
 
 export type SettingsSection =
   | "appearance"
   | "resumeTheme"
   | "models"
+  | "voice"
   | "skills"
   | "browser"
   | "notify"
@@ -51,6 +53,7 @@ const NAV_GROUPS: {
     label: "Agent 设置",
     items: [
       { key: "models", label: "模型设置", icon: <Plug /> },
+      { key: "voice", label: "语音模型", icon: <AudioLines /> },
       { key: "skills", label: "Skill 管理", icon: <Sparkles /> },
       { key: "browser", label: "浏览器", icon: <Globe /> },
       { key: "notify", label: "通知", icon: <Bell /> },
@@ -165,6 +168,8 @@ export function SettingsModal({
               <NotifySettings />
             ) : section === "browser" ? (
               <BrowserAgentSettings />
+            ) : section === "voice" ? (
+              <VoiceSettings />
             ) : section === "skills" ? (
               <SkillSettings />
             ) : models === null ? (

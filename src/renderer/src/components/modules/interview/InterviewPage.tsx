@@ -36,9 +36,12 @@ import {
 import { cn } from "@/lib/utils";
 
 import { ModelGateDialog } from "../shared/ModelGateDialog";
-import { ModuleLoadingCard, type ModulePageProps } from "../shared/module-page";
+import { ModuleLoadingCard, useModuleActive, type ModulePageProps } from "../shared/module-page";
 import { useDomainChange } from "../shared/use-domain-change";
 import { formatTime } from "@/lib/format";
+
+import { useVoiceInterview } from "./use-voice-interview";
+import { VoiceInterviewBar } from "./VoiceInterviewBar";
 
 const LIST_MIN_WIDTH = 264;
 const CHAT_MIN_WIDTH = 380;
@@ -67,6 +70,7 @@ export function InterviewPage({
   models,
   onSelectModel,
   onOpenModelSettings,
+  onOpenVoiceSettings,
   onOverlayChange,
   focusId,
   onFocusConsumed,
@@ -210,6 +214,7 @@ export function InterviewPage({
             modelReady={modelReady}
             onSelectModel={onSelectModel}
             onOpenModelSettings={onOpenModelSettings}
+            onOpenVoiceSettings={onOpenVoiceSettings}
             onOverlayChange={onOverlayChange}
             onRequireModel={() => setGateOpen(true)}
             onChanged={reload}
@@ -332,6 +337,7 @@ function InterviewChatCard({
   modelReady,
   onSelectModel,
   onOpenModelSettings,
+  onOpenVoiceSettings,
   onOverlayChange,
   onRequireModel,
   onChanged,
@@ -342,6 +348,7 @@ function InterviewChatCard({
   modelReady: boolean;
   onSelectModel: ModulePageProps["onSelectModel"];
   onOpenModelSettings: () => void;
+  onOpenVoiceSettings: () => void;
   onOverlayChange: (open: boolean) => void;
   onRequireModel: () => void;
   onChanged: () => void;
@@ -359,6 +366,7 @@ function InterviewChatCard({
       modelReady={modelReady}
       onSelectModel={onSelectModel}
       onOpenModelSettings={onOpenModelSettings}
+      onOpenVoiceSettings={onOpenVoiceSettings}
       onOverlayChange={onOverlayChange}
       onRequireModel={onRequireModel}
       onChanged={onChanged}
@@ -374,6 +382,7 @@ function InterviewChatLoaded({
   modelReady,
   onSelectModel,
   onOpenModelSettings,
+  onOpenVoiceSettings,
   onOverlayChange,
   onRequireModel,
   onChanged,
@@ -385,6 +394,16 @@ function InterviewChatLoaded({
   const chat = useModuleChat(`interview:${interview.id}` as const, initialMessages);
   const busy = chat.status === "submitted" || chat.status === "streaming";
   const running = interview.status === "running";
+  const voiceEnabled = interview.config.mode === "voice";
+  const pageActive = useModuleActive();
+  const voice = useVoiceInterview({
+    enabled: voiceEnabled,
+    interviewRunning: running,
+    pageActive,
+    messages: chat.messages,
+    status: chat.status,
+    send: chat.send,
+  });
 
   // run 结束（含出错）后刷新面试记录：轮次落账与总评都发生在 run 里。
   useEffect(() => {
@@ -466,6 +485,11 @@ function InterviewChatLoaded({
         onStop={chat.stop}
         onApprovalResponse={chat.respondApproval}
         conversationKey={`interview:${interview.id}`}
+        aboveComposer={
+          voiceEnabled && running ? (
+            <VoiceInterviewBar voice={voice} onOpenSettings={onOpenVoiceSettings} />
+          ) : undefined
+        }
       />
     </div>
   );

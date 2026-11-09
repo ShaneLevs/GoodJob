@@ -8,7 +8,6 @@ export type ConversationScope =
   | "resume"
   | "companies"
   | "jobs"
-  | "applications"
   | `job:${string}`
   | `interview:${string}`;
 
@@ -46,8 +45,7 @@ export function isConversationScope(value: unknown): value is ConversationScope 
     value === "orchestrator" ||
     value === "resume" ||
     value === "companies" ||
-    value === "jobs" ||
-    value === "applications"
+    value === "jobs"
   ) {
     return true;
   }

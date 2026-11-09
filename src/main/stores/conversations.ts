@@ -54,6 +54,7 @@ export class ConversationsStore {
 
   constructor(workspace: WorkspacePaths) {
     this.workspace = workspace;
+    this.migrateLegacyApplications();
   }
 
   useWorkspace(workspace: WorkspacePaths): void {
@@ -61,6 +62,7 @@ export class ConversationsStore {
     this.cache.clear();
     this.index = null;
     this.deleted.clear();
+    this.migrateLegacyApplications();
   }
 
   get(key: ConversationKey): ConversationDoc {
@@ -177,6 +179,67 @@ export class ConversationsStore {
     this.persistIndex();
   }
 
+  /**
+   * 旧版的「投递」独立模块（scope = applications）已并入岗位模块：
+   * 把它的对话文件改名到 jobs scope，历史消息继续可读。
+   * 默认对话 `applications` 变成 `jobs#legacy-applications`，独立线程
+   * `applications#<threadId>` 变成 `jobs#<threadId>`；撞名时加后缀。
+   */
+  private migrateLegacyApplications(): void {
+    const dir = this.workspace.conversations;
+    let names: string[];
+    try {
+      names = fs.readdirSync(dir);
+    } catch {
+      return;
+    }
+
+    let changed = false;
+    for (const name of names) {
+      if (!name.endsWith(".json") || name === INDEX_FILE) continue;
+      let oldKey: string;
+      try {
+        oldKey = decodeURIComponent(name.slice(0, -".json".length));
+      } catch {
+        continue;
+      }
+      // 旧 scope 已从联合类型里移除，这里按字符串比较做一次性迁移。
+      if ((conversationScope(oldKey) as string) !== "applications") continue;
+
+      const delimiter = oldKey.indexOf("#");
+      const threadId = delimiter < 0 ? "legacy-applications" : oldKey.slice(delimiter + 1);
+      const newKey = this.uniqueJobsKey(threadId);
+      try {
+        const raw: unknown = JSON.parse(fs.readFileSync(path.join(dir, name), "utf8"));
+        if (!isRecord(raw)) continue;
+        writeJsonFile(this.file(newKey as ConversationKey), { ...raw, key: newKey });
+        fs.rmSync(path.join(dir, name), { force: true });
+        changed = true;
+      } catch {
+        // 单条坏文件不拖垮迁移，留在原处。
+      }
+    }
+
+    if (changed) {
+      // 索引里还是旧 key：删掉让它从文件重建（标题与时间都在正文里）。
+      try {
+        fs.rmSync(this.indexPath(), { force: true });
+      } catch {
+        // 删不掉就下次重建索引时以文件为准。
+      }
+      this.index = null;
+    }
+  }
+
+  private uniqueJobsKey(threadId: string): string {
+    const base = threadId === "" ? "legacy-applications" : threadId;
+    let candidate = `jobs#${base}`;
+    for (let n = 2; fs.existsSync(this.file(candidate as ConversationKey)); n += 1) {
+      candidate = `jobs#${base}-${n}`;
+    }
+    return candidate;
+  }
+
   private persist(doc: ConversationDoc): void {
     writeJsonFile(this.file(doc.key), doc);
   }
@@ -276,6 +339,10 @@ function emptyDoc(key: ConversationKey): ConversationDoc {
     createdAt: null,
     updatedAt: null,
   };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function isThreadIndex(value: unknown): value is ThreadIndex {

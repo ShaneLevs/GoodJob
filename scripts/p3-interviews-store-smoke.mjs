@@ -18,13 +18,21 @@ const jiti = createJiti(here, {
     // 类型都走 type-only import（编译期擦除），agent/runtime 是第一个运行时
     // require @shared/types 的模块：给 jiti 补上 tsconfig paths 同款别名。
     "@shared": path.join(here, "..", "src", "shared"),
+    // Node 26 + jiti 不认 Vite 的 `?raw`：技能正文与面试存储无关，映射成空串。
+    "./SKILL.md?raw": path.join(here, "p3-smoke-raw-stub.mjs"),
+    "./references/interview-strategy.md?raw": path.join(here, "p3-smoke-raw-stub.mjs"),
+    "./references/section-checklist.md?raw": path.join(here, "p3-smoke-raw-stub.mjs"),
+    "./references/workflow.md?raw": path.join(here, "p3-smoke-raw-stub.mjs"),
+    "./references/jd-analysis.md?raw": path.join(here, "p3-smoke-raw-stub.mjs"),
+    "./references/matching-diagnosis.md?raw": path.join(here, "p3-smoke-raw-stub.mjs"),
+    "./references/scoring-rubric.md?raw": path.join(here, "p3-smoke-raw-stub.mjs"),
+    "./references/writing-standards.md?raw": path.join(here, "p3-smoke-raw-stub.mjs"),
   },
 });
 
 const { InterviewsStore } = await jiti.import("../src/main/stores/domain/interviews.ts");
 const { CompaniesStore } = await jiti.import("../src/main/stores/domain/companies.ts");
 const { JobsStore } = await jiti.import("../src/main/stores/domain/jobs.ts");
-const { ApplicationsStore } = await jiti.import("../src/main/stores/domain/applications.ts");
 const { PipelineStore } = await jiti.import("../src/main/stores/domain/pipeline.ts");
 const { ResumeStore } = await jiti.import("../src/main/stores/resumes.ts");
 const { ConversationsStore } = await jiti.import("../src/main/stores/conversations.ts");
@@ -39,7 +47,8 @@ const paths = workspacePaths(tmp, "ws_smoke0000");
 ensureWorkspaceDirs(paths);
 
 const companies = new CompaniesStore(paths);
-const jobs = new JobsStore(paths, companies);
+const pipeline = new PipelineStore(paths);
+const jobs = new JobsStore(paths, companies, pipeline);
 const resumes = new ResumeStore(paths, () => {});
 const conversations = new ConversationsStore(paths);
 const interviews = new InterviewsStore(paths, jobs, resumes);
@@ -160,8 +169,6 @@ const { MemoryStore } = await jiti.import("../src/main/stores/memory.ts");
 const { ModelsStore } = await jiti.import("../src/main/stores/models.ts");
 const { TaskManager } = await jiti.import("../src/main/services/tasks.ts");
 
-const pipeline = new PipelineStore(paths);
-const applications = new ApplicationsStore(paths, jobs, pipeline);
 const memory = new MemoryStore(paths);
 const models = new ModelsStore(root);
 const taskManager = new TaskManager({ models, jobs, resumes, emit: () => {} });
@@ -172,10 +179,16 @@ const runtime = new AgentRuntime({
   memory,
   companies,
   jobs,
-  applications,
   pipeline,
   interviews,
   tasks: taskManager,
+  // 下面几项是后来加进 AgentDeps 的服务：面试会话不会碰它们，给最小桩即可。
+  notify: {},
+  browser: {},
+  browserSettings: {},
+  logsDir: () => paths.logs,
+  uploadDir: () => paths.uploads,
+  workflow: {},
 });
 
 // 发起第二场面试（running），验证会话装配。
@@ -187,14 +200,18 @@ const tools = runtime.toolsFor(interviewKey);
 assert.deepEqual(
   Object.keys(tools).sort(),
   [
+    "conversation_read",
+    "conversation_search",
     "interview_round_log",
     "interview_submit_review",
     "job_info",
     "job_script_read",
     "job_tailored_read",
     "resume_read",
+    "upload_list",
+    "upload_read",
   ],
-  "面试会话只允许只读材料工具 + 两个面试记录工具，不给任何简历/岗位/话术写工具，也不给 memory 工具",
+  "面试会话只允许只读材料 / 会话检索 / 上传读取 + 两个面试记录工具，不给任何简历/岗位/话术写工具，也不给 memory 工具",
 );
 
 const roundLogResult = await tools.interview_round_log.execute(

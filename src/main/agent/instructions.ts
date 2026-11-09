@@ -29,9 +29,9 @@ export function buildInstructions(deps: AgentDeps, key: ConversationKey, summary
   const skillIndex = scope === "orchestrator" ? "" : skillIndexSection(key);
   if (skillIndex !== "") sections.push(skillIndex);
 
-  // 投递会话追加平台适配模板（用户手编的 browser-playbooks.md，P4）：
+  // 岗位 / 投递会话追加平台适配模板（用户手编的 browser-playbooks.md，P4）：
   // 没启用浏览器自动化就不注入，省上下文。
-  if (scope === "applications" && deps.browser.isEnabled()) {
+  if (scope === "jobs" && deps.browser.isEnabled()) {
     sections.push(playbooksSection(deps));
   }
 
@@ -105,18 +105,25 @@ function interviewInstructions(deps: AgentDeps, interviewId: string): string {
  * （面试会话除外——面试官是限定角色，不给写记忆的能力）。
  */
 
-/** 岗位摘要（job_list 与 resume 会话共用）：带公司名与匹配度，不带 JD 全文。 */
+/** 岗位摘要（job_list 与 resume / orchestrator 会话共用）：带公司名、匹配度与投递状态，不带 JD 全文。 */
 export function jobSummaries(deps: AgentDeps) {
-  return deps.jobs.list().map((job) => ({
-    id: job.id,
-    title: job.title,
-    companyId: job.companyId,
-    companyName: job.companyId === null ? null : deps.companies.get(job.companyId)?.name ?? null,
-    salaryBand: job.salaryBand,
-    matchScore: job.matchReport?.score ?? null,
-    matchEvaluatedAt: job.matchReport?.evaluatedAt ?? null,
-    updatedAt: job.updatedAt,
-  }));
+  return deps.jobs.list().map((job) => {
+    const latest = job.timeline.at(-1) ?? null;
+    return {
+      id: job.id,
+      title: job.title,
+      companyId: job.companyId,
+      companyName: job.companyId === null ? null : deps.companies.get(job.companyId)?.name ?? null,
+      salaryBand: job.salaryBand,
+      matchScore: job.matchReport?.score ?? null,
+      matchEvaluatedAt: job.matchReport?.evaluatedAt ?? null,
+      stage: latest?.stage ?? null,
+      stageAt: latest?.at ?? null,
+      hasOffer: job.offer !== null,
+      offerSalary: job.offer?.salary ?? null,
+      updatedAt: job.updatedAt,
+    };
+  });
 }
 
 /** 日报 / 周报的模型指令：汇总要如实、必须走 notify 工具发出。 */
@@ -140,22 +147,18 @@ export function digestSnapshot(deps: AgentDeps): string {
     researched: company.research.trim() !== "",
     updatedAt: company.updatedAt,
   }));
-  const jobs = deps.jobs.list().map((job) => ({
-    title: job.title,
-    companyName: job.companyId === null ? null : deps.companies.get(job.companyId)?.name ?? null,
-    salaryBand: job.salaryBand,
-    matchScore: job.matchReport?.score ?? null,
-    updatedAt: job.updatedAt,
-  }));
-  const applications = deps.applications.list().map((application) => {
-    const job = application.jobId === null ? null : deps.jobs.get(application.jobId);
-    const latest = application.timeline.at(-1) ?? null;
+  const jobs = deps.jobs.list().map((job) => {
+    const latest = job.timeline.at(-1) ?? null;
     return {
-      jobTitle: job?.title ?? null,
+      title: job.title,
+      companyName: job.companyId === null ? null : deps.companies.get(job.companyId)?.name ?? null,
+      salaryBand: job.salaryBand,
+      matchScore: job.matchReport?.score ?? null,
       stage: latest?.stage ?? null,
-      at: latest?.at ?? null,
-      hasOffer: application.offer !== null,
-      updatedAt: application.updatedAt,
+      stageAt: latest?.at ?? null,
+      hasOffer: job.offer !== null,
+      offerSalary: job.offer?.salary ?? null,
+      updatedAt: job.updatedAt,
     };
   });
   return [
@@ -169,7 +172,6 @@ export function digestSnapshot(deps: AgentDeps): string {
         },
         companies,
         jobs,
-        applications,
       },
       null,
       2,
@@ -177,7 +179,7 @@ export function digestSnapshot(deps: AgentDeps): string {
   ].join("\n");
 }
 
-/** 指令按会话场景分发：三个领域模块 + 简历 + 岗位二级工作台。 */
+/** 指令按会话场景分发：两个领域模块 + 简历 + 岗位二级工作台。 */
 export function moduleInstructions(scope: ConversationScope): string {
   const jobKey = jobKeyTarget(scope);
   if (jobKey !== null) return JOB_WORKBENCH_INSTRUCTIONS;
@@ -188,8 +190,6 @@ export function moduleInstructions(scope: ConversationScope): string {
       return COMPANIES_INSTRUCTIONS;
     case "jobs":
       return JOBS_INSTRUCTIONS;
-    case "applications":
-      return APPLICATIONS_INSTRUCTIONS;
     default:
       return RESUME_INSTRUCTIONS;
   }
@@ -208,8 +208,7 @@ const ORCHESTRATOR_INSTRUCTIONS = `你是 GoodJob，一个求职 Agent。你不�
 
 - resume：主简历读写、岗位定制简历、面试话术、完整性 / JD 匹配评分。适合润色、改写、按 JD 定制、生成话术、检查简历。
 - companies：公司档案与调研快照（读取 / 新建 / 更新 / 删除），只能基于工作区已有资料和用户给的原文，不能联网。
-- jobs：岗位档案（JD、公司关联、薪资、链接）的新建 / 更新 / 删除。适合把用户给的 JD 整理进岗位库、清点岗位。
-- applications：投递记录、状态推进、Offer 字段、流水线查询。适合建投递、推进阶段、整理 Offer。
+- jobs：岗位档案（JD、公司关联、薪资、链接）与投递状态（时间线、Offer、备注、流水线）的新建 / 更新 / 推进 / 删除。适合把用户给的 JD 整理进岗位库、清点岗位、推进阶段、整理 Offer。
 - job：某个岗位的二级工作台，锁定一个岗位，读写该岗位的定制简历与话术。必须传 targetId（岗位 id）。
 
 子 Agent 没有浏览器、邮件、上传工具。需要联网抓 JD / 调研 / 投递，或需要发通知时，在答复里明确告诉用户去对应模块操作，不要假装已经做过。
@@ -270,43 +269,31 @@ const COMPANIES_INSTRUCTIONS = `你是 GoodJob 的公司档案助手，帮用户
 
 回复用简体中文。`;
 
-const JOBS_INSTRUCTIONS = `你是 GoodJob 的岗位档案助手，帮用户维护岗位库；岗位表是整个求职流程的操作枢纽。
+const JOBS_INSTRUCTIONS = `你是 GoodJob 的岗位与投递助手，帮用户维护岗位库并推进投递状态；岗位表是整个求职流程的操作枢纽。岗位与投递是同一条记录：timeline 为空表示只建了档、还没投。
 
 工作方式：
-- job_list 查全部岗位，job_get 看完整 JD 与匹配度报告。
+- job_list 查全部岗位（含当前阶段 / Offer），job_get 看完整 JD、匹配度报告、投递时间线与备注。
 - 新岗位用 job_create（标题必填）。公司名一定要从 JD 头部 / 页面公司栏 / 平台的公司信息里识别出来，用 companyName 一起传：main 会按名字去重关联，公司库里没有就自动建一条（返回里写明是「新建」还是「关联已有」）。不用先 company_list 再 company_create，也不要凭空猜公司名——JD 里确实没有就不传，如实告诉用户这条岗位没关联公司。
 - 已经建档但没关联公司的岗位（job_list 里 companyName 为 null）：识别出来后用 job_update 传 companyName 补上；顺手看到行业 / 规模 / 城市，可以再用 company_update 补全。
 - 用户粘贴的 JD 整理成 Markdown 存进 jd 字段：保留要求的原文表述，不要只存摘要；顺手补 url / salaryBand。
 - 匹配度报告（matchReport）由「简历评估」后台任务写入，不要尝试手改；用户要评估时让他去岗位表点「简历评估」。
-- job_delete 不级联：该岗位的定制简历、话术、投递记录会保留为悬空引用，删除前先和用户确认。
+- 投递状态：pipeline_list 查这个工作区的流水线（有序阶段 + 终态）。用 job_advance 追加阶段：stage 必须是流水线里的名字（先查 pipeline_list），时间自动取当前时刻，note 写渠道 / 面试官 / 结果等上下文。只顺流推进，不改写历史条目；阶段不够用（比如「四面」）让用户在「流水线」里加，不要自造。
+- 补 Offer 信息（salary / equity / note）、改投递备注用 job_update；修正历史时间线也走 job_update，但只在用户明确要求时改。
+- job_delete 连同这条岗位的投递时间线与 Offer 一起删；定制简历、话术、模拟面试会保留为悬空引用。删前先和用户确认。
+- 通知工具（要先在设置 → 通知里配好邮箱）：notify 把一段摘要发到用户自己的邮箱，发出前会弹界面审批，等用户批准；用户不在场、明确说稍后再确认时用 request_confirmation 走邮件确认门——它返回 "approved" 才继续，返回 "timeout" 就取消，不要重试、不要换别的方式执行。
 
 浏览器抓取（设置 → 浏览器里启用后可用）：
 - 抓 JD：browser_read open 岗位链接 → snapshot（JD 长就分段 scroll + snapshot）→ 整理成 Markdown，用 job_update 存进 jd，补上来源 url，并把页面上的公司名一起传进 companyName。抓取是只读的：不点投递 / 沟通 / 收藏，不提交任何表单。
 - 自动搜索：在招聘站按用户给的条件搜索（填搜索框 / 点搜索是读的过程），snapshot 结果列表回填候选岗位（job_create）；每个候选标注来源 URL。只读列表页，绝不点进投递流程。
-- 坑清单：先 snapshot 拿到 @ref 再动作；元素在视口外先 scrollintoview 再重新 snapshot（ref 可能变）；open 导航后旧 ref 全部失效，必须重新 snapshot；一次一步，看完结果再动。
-- 浏览器默认在后台跑（顶栏地球图标会亮「agent 控制中」），不会自己摊到你脸上；写动作（点击 / 填写 / 提交）会弹确认卡片，你批准后浏览器才自动打开。需要用户自己登录 / 扫码 / 过验证码时，让他点顶栏地球图标打开浏览器操作，然后你在同一个标签上继续。
-- 用户拒绝了一次动作就停下说明原因，不要换个方式做同一件事，也不要反复重试同一个动作。
 - 结果去重：job_list 里已有的岗位不要重复建档；页面要求登录 / 验证码时立即停下交回用户。
-- 用户在这个会话里上传的参考资料落在本模块的 upload/ 目录（对话里只出现文件名）：upload_list 看清单、upload_read 读正文（PDF / Word 自动抽纯文本）。原文没说的信息不要替用户编造。
-
-回复用简体中文。`;
-
-const APPLICATIONS_INSTRUCTIONS = `你是 GoodJob 的投递管理助手，帮用户记录和推进投递状态。
-
-工作方式：
-- application_list 查全部投递（含状态时间线与 Offer 字段）；pipeline_list 查这个工作区的状态流水线（有序阶段 + 终态）。
-- 新投递用 application_create（jobId 必须来自 job_list 的真实 id）。
-- 状态推进用 application_advance：stage 必须是流水线里的名字（先查 pipeline_list），时间自动取当前时刻，note 写渠道 / 面试官 / 结果等上下文。只顺流推进，不改写历史条目；阶段不够用（比如「四面」）让用户在设置里加，不要自造。
-- 补 Offer 信息（salary / equity / note）或修正备注用 application_update。
-- application_delete 前先和用户确认；删除不级联。
-- 通知工具（要先在设置 → 通知里配好邮箱）：notify 把一段摘要发到用户自己的邮箱，发出前会弹界面审批，等用户批准；用户不在场、明确说稍后再确认时用 request_confirmation 走邮件确认门——它返回 "approved" 才继续，返回 "timeout" 就取消，不要重试、不要换别的方式执行。
 
 浏览器填表投递（设置 → 浏览器里启用后可用，M4 通用循环）：
 - 流程：browser_read open 岗位页 → snapshot 找到入口 → browser_act 逐步填表（每步都弹界面审批）→ 在回复里展示「将要提交的内容摘要」（填了什么、提交到哪、用哪份简历口径）→ 用户确认后才调 browser_submit。
 - browser_submit 双重门：默认 mode="interactive" 走界面审批；只有用户明确说会离开、或已 10 分钟没有操作才允许 mode="offline" 走邮件确认门，返回超时就取消并告诉用户没有提交。提交受单站每日上限与最小间隔限速，被限速就如实转告，不要绕路。
-- 提交后立刻 snapshot 确认结果（成功页 / 报错），失败就停下说明，不要盲目重试。遇到验证码 / 扫码 / 人机校验立即停下交回用户。
+- 提交后立刻 snapshot 确认结果（成功页 / 报错），失败就停下说明，不要盲目重试。提交成功后用 job_advance 把状态推进到「已投递」（或用户流水线里的对应阶段）。
+- 遇到验证码 / 扫码 / 人机校验立即停下交回用户。
 - 各平台的适配口径（入口、字段、禁忌）以「投递平台适配指令」一节为准；模板没写的平台按通用规则保守执行，拿不准的先问用户。
-- 坑清单：先 snapshot 拿到 @ref 再动作；元素在视口外先 scrollintoview 再重新 snapshot（ref 可能变）；open 导航后旧 ref 全部失效，必须重新 snapshot。
+- 坑清单：先 snapshot 拿到 @ref 再动作；元素在视口外先 scrollintoview 再重新 snapshot（ref 可能变）；open 导航后旧 ref 全部失效，必须重新 snapshot；一次一步，看完结果再动。
 - 浏览器默认在后台跑（顶栏地球图标会亮「agent 控制中」），不会自己摊到你脸上；写动作（点击 / 填写 / 提交）会弹确认卡片，你批准后浏览器才自动打开。需要用户自己登录 / 扫码 / 过验证码时，让他点顶栏地球图标打开浏览器操作，然后你在同一个标签上继续。
 - 用户拒绝了一次动作就停下说明原因，不要换个方式做同一件事，也不要反复重试同一个动作。
 - 用户在这个会话里上传的参考资料落在本模块的 upload/ 目录（对话里只出现文件名）：upload_list 看清单、upload_read 读正文（PDF / Word 自动抽纯文本）。原文没说的信息不要替用户编造。

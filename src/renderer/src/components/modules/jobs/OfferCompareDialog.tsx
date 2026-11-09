@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 
-import type { Application, Company, Job, PipelineConfig } from "@shared/types";
+import type { Company, Job, PipelineConfig } from "@shared/types";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -20,47 +20,44 @@ import {
   TableRow,
 } from "@/components/ui/table";
 
-/** Offer 对比：勾选的多条含 Offer 投递 → 一行一个维度的对比表。 */
+/** Offer 对比：勾选的多条含 Offer 岗位 → 一行一个维度的对比表。 */
 export function OfferCompareDialog({
   open,
-  apps,
-  jobs,
+  selected,
   companies,
   pipeline,
   onClose,
   onOverlayChange,
 }: {
   open: boolean;
-  apps: Application[];
-  jobs: Job[];
+  selected: Job[];
   companies: Company[];
   pipeline: PipelineConfig | null;
   onClose: () => void;
   onOverlayChange: (open: boolean) => void;
 }) {
-  const rows = useMemo(() => {
-    const jobOf = (app: Application): { job: Job | null; title: string } => {
-      const job = jobs.find((item) => item.id === app.jobId) ?? null;
-      return { job, title: job?.title ?? "岗位已删除" };
-    };
-    return apps.map((app) => {
-      const { job, title } = jobOf(app);
-      const companyName =
-        job === null || job.companyId === null
-          ? "—"
-          : companies.find((item) => item.id === job.companyId)?.name ?? "公司已删除";
-      const stage = app.timeline.at(-1)?.stage ?? "未开始";
-      return {
-        id: app.id,
-        title,
-        companyName,
-        stage: (pipeline?.stages ?? []).some((item) => item.name === stage) ? stage : `${stage}（不在流水线）`,
-        salary: app.offer?.salary ?? "",
-        equity: app.offer?.equity ?? "",
-        note: app.offer?.note ?? "",
-      };
-    });
-  }, [apps, jobs, companies, pipeline]);
+  const rows = useMemo(
+    () =>
+      selected.map((job) => {
+        const companyName =
+          job.companyId === null
+            ? "—"
+            : companies.find((item) => item.id === job.companyId)?.name ?? "公司已删除";
+        const stage = job.timeline.at(-1)?.stage ?? "未投递";
+        return {
+          id: job.id,
+          title: job.title,
+          companyName,
+          stage: (pipeline?.stages ?? []).some((item) => item.name === stage)
+            ? stage
+            : `${stage}（不在流水线）`,
+          salary: job.offer?.salary ?? "",
+          equity: job.offer?.equity ?? "",
+          note: job.offer?.note ?? "",
+        };
+      }),
+    [selected, companies, pipeline],
+  );
 
   const dimensions: { key: keyof (typeof rows)[number]; label: string }[] = [
     { key: "title", label: "岗位" },
@@ -82,7 +79,7 @@ export function OfferCompareDialog({
       <DialogContent className="sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle>Offer 对比</DialogTitle>
-          <DialogDescription>勾选的 {rows.length} 条含 Offer 的投递，一行一个维度。</DialogDescription>
+          <DialogDescription>勾选的 {rows.length} 个含 Offer 的岗位，一行一个维度。</DialogDescription>
         </DialogHeader>
 
         <div className="max-h-[60vh] overflow-auto">

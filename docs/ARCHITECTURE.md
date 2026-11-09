@@ -60,9 +60,8 @@ workspaces/<id>/
                                          后台任务写入，保留历史；旧版结构化报告兼容读取）
     upload/                              用户上传的参考文件（Agent 用工具读取）
   companies/<id>.json                    公司档案（含调研快照 research + researchedAt）
-  jobs/<id>.json                         岗位（JD 原文 + 匹配度报告 matchReport）
-  applications/<id>.json                 投递（jobId + 状态时间线 + Offer 字段）
-  applications/pipeline.json             工作区级状态流水线：有序阶段 + 终态标记（可增删改名）
+  jobs/<id>.json                         岗位（JD 原文 + 匹配度报告 + 投递时间线 + Offer + 备注）
+  pipeline.json                          工作区级状态流水线：有序阶段 + 终态标记（可增删改名）
   interviews/<id>.json                   模拟面试（P3 M1）：config { rounds, mode } + 结构化
                                          逐轮记录 + 总评；问答消息本体在 conversations/ 的
                                          interview:<id> 会话里
@@ -71,7 +70,7 @@ workspaces/<id>/
   memory.md  cache/  logs/
 ```
 
-- 领域实体 ID：`co_` / `job_` / `app_` / `iv_` + 12 位 hex；一个实体一个 JSON 文件（0600），
+- 领域实体 ID：`co_` / `job_` / `iv_` + 12 位 hex；一个实体一个 JSON 文件（0600），
   全量载内存（`src/main/stores/json-collection.ts` 的通用底座 + `src/main/stores/domain/`
   下的实体 store；`stores/domain/interviews.ts` 复用同一底座）。
   引用存名不存内容，删除不级联，悬空引用由渲染层提示。
@@ -98,7 +97,7 @@ workspaces/<id>/
 - `agent/runtime.ts` 承载 AgentRuntime：自定义 `ChatEvent` 通道迁移为 AI SDK UIMessage
   part 流（硬约束 8）；渲染层消费 `text` / `tool-*` / `data-*` part，工具执行过程同时就是
   浏览器工具条与 `logs/agent.log` 审计的数据源。
-- 会话类型：`ConversationScope` = `"resume" | "companies" | "jobs" | "applications" | \`job:${jobId}\` | \`interview:${id}\``，
+- 会话类型：`ConversationScope` = `"resume" | "companies" | "jobs" | \`job:${jobId}\` | \`interview:${id}\``，
   `ConversationKey` = scope 或 `scope#threadId`。场景决定指令 / 工具 / 上传目录，线程 id 只区分对话；
   旧版不带 `#` 的 key 继续作为默认对话。没有独立「对话」页——产品决策：所有 LLM 交互都发生在
   具体模块里。UIMessage[] 与元数据持久化到 `conversations/`，列表元数据在 `threads.json`。
@@ -150,8 +149,8 @@ Agent 写入以整文件覆盖为主，避免局部补丁错位。
   确认邮件发给用户自己的邮箱，寄出的原信按 Message-ID 排除、不算回信。
 - 对模型的接口只有两个工具：`notify(summary)` 与 `request_confirmation(subject, body)`
   → `"approved" | "timeout"`。实现为长时 async 工具（可 abort，停止 run 即取消门）；
-  并发量大再改票据回调式。两个工具挂在 applications 会话（P4 自动投递接入 job 会话
-  时扩展）；`notify` 挂 `toolApproval` 界面审批（P1 预留位兑现），确认门工具本身即门。
+  并发量大再改票据回调式。两个工具挂在 jobs 会话（岗位与投递合并后，自动投递也在
+  这里）；`notify` 挂 `toolApproval` 界面审批（P1 预留位兑现），确认门工具本身即门。
 - 日报 / 周报 = 调度器到点发起一次 Agent 运行（`AgentRuntime.runDigest`：generateText +
   notify 工具，汇总 P2 实体快照，无内容时如实说）；到点即记账、当日不重试，补发走
   设置页「立即生成」。配置存 `~/.goodjob/notifications.json`（0600，密码 safeStorage
@@ -168,7 +167,7 @@ Agent 写入以整文件覆盖为主，避免局部补丁错位。
 | 工具注册表 | `src/main/agent/tools/index.ts` + `tools/`（conversation / shared / resume / domain / job / interview / skills） |
 | 内置技能库 | `src/main/agent/skills/`（resume-writing / resume-review / interview-prep；SKILL.md + references，`?raw` 内联） |
 | 持久化 | `src/main/stores/json-collection.ts` + `stores/`（conversations / resumes / models / …） |
-| 领域实体 | `src/main/stores/domain/companies.ts`、`jobs.ts`、`applications.ts`、`pipeline.ts`、`interviews.ts` |
+| 领域实体 | `src/main/stores/domain/companies.ts`、`jobs.ts`（岗位 + 投递）、`pipeline.ts`、`interviews.ts` |
 | 通知 / 后台任务 / PDF | `src/main/services/notify.ts`、`tasks.ts`、`pdf-export.ts` |
 | IPC | `src/main/ipc/index.ts` + `browser.ts` / `chat.ts` / `resume.ts` / `domain.ts` / `settings.ts` / `workspace.ts` |
 | 内嵌浏览器 | `src/main/browser/panel.ts` + `browser/automation/`（cli / actions / target / runner / settings-store） |
@@ -176,7 +175,7 @@ Agent 写入以整文件覆盖为主，避免局部补丁错位。
 | 渲染层壳层 | `src/renderer/src/App.tsx`、`components/shell/`、`routes/ExportRoute.tsx` |
 | 对话 UI | `components/chat/`（ChatPanel / Composer / ToolTrace / AssistantMarkdown） |
 | 文档渲染 | `components/document/`（DocumentPreview / render / icons / templates） |
-| 模块页 | `components/modules/{resume,companies,jobs,applications,interview}/` + `modules/shared/` |
+| 模块页 | `components/modules/{resume,companies,jobs,interview}/` + `modules/shared/` |
 
 ## 8. 分期任务
 
@@ -190,7 +189,7 @@ Agent 写入以整文件覆盖为主，避免局部补丁错位。
 > **上传与对话反馈改造（2026-10-25，2026-01 推广到全模块）**：上传不再抽文本直发消息，
 > 而是把文件原样落盘到**当前会话所属模块的 upload/ 目录**（`chat:upload` IPC 带会话 key，
 > main 侧系统选择框 + `src/main/workspace/uploads.ts` 的 `uploadDirFor` 选目录：简历落
-> `resumes/<id>/upload/`，公司 / 岗位 / 投递落各自集合下的 `upload/`，`job:<id>` 与
+> `resumes/<id>/upload/`，公司 / 岗位落各自集合下的 `upload/`，`job:<id>` 与
 > `interview:<id>` 再下一层，GoodJob 落工作区级 `uploads/`），消息只附 `data-upload` part
 > 展示文件名 / 图片缩略图，内容由 Agent 用 `upload_list` / `upload_read` 两个通用工具
 > 按需抽取（unpdf / mammoth 在工具里跑）；图片（png / jpg / jpeg）例外——勾了「视觉输入」
@@ -205,21 +204,24 @@ Agent 写入以整文件覆盖为主，避免局部补丁错位。
 4. 上传：文件落盘 upload/ + Agent 工具读取（旧方案「抽文本直发消息」已废弃）
 5. 定制简历生成（主简历 + JD → tailored/<jobId>.md）
 
-**P2 领域实体 + 手动闭环**：companies / jobs / applications 的 store 与 CRUD 页、
+**P2 领域实体 + 手动闭环**：companies / jobs（含投递状态）的 store 与 CRUD 页、
 投递看板、Offer 对比；scoreIntegrity / scoreJdMatch / genInterviewScript 技能工具
 与评分卡展示。
 > 进展（2026-10-25）：**主进程部分已实现**——`src/main/stores/domain/`（companies / jobs /
-> applications / pipeline，`stores/json-collection.ts` 提供通用底座）、后台任务管理器
+> pipeline，`stores/json-collection.ts` 提供通用底座）、后台任务管理器
 > （job-match / resume-integrity，`task:event`）、`agent/tools/index.ts` 的 `toolsFor(key)`
 > 分发与三模块指令、定制稿工具迁移 jobId 键、话术 scripts + 定稿 sidecar、PDF 导出
 > main 侧（`services/pdf-export.ts`：隐藏窗口 → 渲染层 `#export` 路由 → printToPDF）。
 > **渲染层同日完成**——三张表格页（列头内存排序、行内编辑/删除弹层先让位
 > WebContentsView）、岗位二级工作台（JobWorkbenchPage，复用编辑器卡与 ChatPanel，
-> 无定制稿时进入即带起草指令）、话术管理弹窗（预览/编辑/定稿 sidecar）、投递页
-> 推进 + pipeline 设置 + Offer 对比、评分卡弹层（ScorecardDialog）、顶栏
+> 无定制稿时进入即带起草指令）、话术管理弹窗（预览/编辑/定稿 sidecar）、岗位页
+> 投递推进 + pipeline 设置 + Offer 对比、评分卡弹层（ScorecardDialog）、顶栏
 > 任务角标（TasksBadge）、`#export` 导出路由与编辑器 PDF 按钮、未配置模型的
 > ModelGateDialog 引导。细节与偏差见 `docs/plan/P2-domain-manual-loop.md` 头部
 > 实施记录。看板后置（当前状态列已是可分组字段），PDF 导出自 P5-B 提前并入本期。
+> **2026-11-09 岗位与投递合并**：投递字段（timeline / offer / note）并进
+> `jobs/<id>.json`，删除 `Application` 实体与 `applications` 会话；旧
+> `applications/` 目录在启动时迁移并改名 `applications.migrated` 留档。
 
 **P3 模拟面试 + 通知**：mock 会话类型与面试官 persona（通用 / 专项）；
 NotifyService + 调度 + 确认门。
@@ -229,8 +231,7 @@ NotifyService + 调度 + 确认门。
 > 会话 / 点评卡三栏）。细节与偏差见 `docs/plan/P3-mock-interview-notify.md` 头部实施
 > 记录。**M3 通知同日实现**——`src/main/stores/notify.ts` / `src/main/services/notify.ts`
 > （SMTP 发送 + IMAP 收信监控 + 确认门状态机 + 分钟级调度）、notify / request_confirmation
-> 工具（applications
-> 会话，notify 挂 toolApproval 界面审批）、ChatPanel 批准 / 拒绝按钮（P1 预留位兑现）、
+> 工具（jobs 会话，notify 挂 toolApproval 界面审批）、ChatPanel 批准 / 拒绝按钮（P1 预留位兑现）、
 > 设置窗「通知」节与逐项测试连接。M2 语音等厂商清单；真邮箱联调待凭据。
 
 **P4 浏览器自动化 ✅（2026-10-25）**：按 BROWSER-AGENT.md 接入 agent-browser（0.39.2，
@@ -241,7 +242,7 @@ abort / close+pid 兜底）、`actions.ts`（受控动作枚举 + argv 组装，
 （任务包络 + 审计：每步命令与结果摘要写
 `<workspace>/logs/agent.log`，agent:step 事件推渲染层）。工具面：browser_read
 （只读）/ browser_act（写，逐条界面审批）/ browser_submit（双重门 + 单站每日 ≤10 单、
-≥90s+0–30s 抖动限速，可调），注册进 companies / jobs / applications 三个会话；设置页
+≥90s+0–30s 抖动限速，可调），注册进 companies / jobs 两个会话；设置页
 「浏览器」节管开关与限速；浏览器面板工具条有「让 Agent 接管」与红色「中止 Agent」。
 场景：公司调研、链接抓 JD、自动搜索（只读）与 M4 填表投递（平台适配模板
 `~/.goodjob/browser-playbooks.md`，用户可编辑）。偏差与未做项见 `docs/plan/P4-browser-agent.md`

@@ -5,8 +5,6 @@ import type {
   AgentStepEvent,
   AppearanceSettings,
   AppInfo,
-  Application,
-  ApplicationPatch,
   BrowserAgentSettings,
   BrowserAgentSettingsDraft,
   BrowserState,
@@ -55,6 +53,13 @@ import type {
   TaskType,
   UpdateState,
   UploadedFileMeta,
+  VoiceKind,
+  VoiceListenResult,
+  VoiceModelOption,
+  VoiceSettings,
+  VoiceSettingsDraft,
+  VoiceState,
+  VoiceVoiceCatalog,
   WireMessage,
   WorkflowState,
   WorkspacesState,
@@ -171,15 +176,9 @@ const api: GoodjobApi = {
     create: (patch: JobPatch) => ipcRenderer.invoke(IPC.jobsCreate, patch) as Promise<Job>,
     update: (id: string, patch: JobPatch) =>
       ipcRenderer.invoke(IPC.jobsUpdate, id, patch) as Promise<Job>,
+    advance: (id: string, stage: string, note?: string) =>
+      ipcRenderer.invoke(IPC.jobsAdvance, id, stage, note) as Promise<Job>,
     remove: (id: string) => ipcRenderer.invoke(IPC.jobsDelete, id) as Promise<void>,
-  },
-  applications: {
-    list: () => ipcRenderer.invoke(IPC.applicationsList) as Promise<Application[]>,
-    create: (patch: ApplicationPatch) =>
-      ipcRenderer.invoke(IPC.applicationsCreate, patch) as Promise<Application>,
-    update: (id: string, patch: ApplicationPatch) =>
-      ipcRenderer.invoke(IPC.applicationsUpdate, id, patch) as Promise<Application>,
-    remove: (id: string) => ipcRenderer.invoke(IPC.applicationsDelete, id) as Promise<void>,
   },
   pipeline: {
     get: () => ipcRenderer.invoke(IPC.pipelineGet) as Promise<PipelineConfig>,
@@ -250,6 +249,26 @@ const api: GoodjobApi = {
   },
   skills: {
     list: () => ipcRenderer.invoke(IPC.skillsList) as Promise<SkillInfo[]>,
+  },
+  voice: {
+    getSettings: () => ipcRenderer.invoke(IPC.voiceSettingsGet) as Promise<VoiceSettings>,
+    saveSettings: (draft: VoiceSettingsDraft) =>
+      ipcRenderer.invoke(IPC.voiceSettingsSave, draft) as Promise<VoiceSettings>,
+    listModels: (kind: VoiceKind) =>
+      ipcRenderer.invoke(IPC.voiceListModels, kind) as Promise<VoiceModelOption[]>,
+    listVoices: (model: string) =>
+      ipcRenderer.invoke(IPC.voiceListVoices, model) as Promise<VoiceVoiceCatalog>,
+    requestMicrophone: () =>
+      ipcRenderer.invoke(IPC.voiceRequestMic) as Promise<VoiceSettings>,
+    getState: () => ipcRenderer.invoke(IPC.voiceGetState) as Promise<VoiceState>,
+    preview: (text: string) => ipcRenderer.invoke(IPC.voicePreview, text) as Promise<void>,
+    speak: (text: string) => ipcRenderer.invoke(IPC.voiceSpeak, text) as Promise<void>,
+    stopSpeaking: () => ipcRenderer.send(IPC.voiceStopSpeaking),
+    startListening: () => ipcRenderer.invoke(IPC.voiceStartListening) as Promise<void>,
+    stopListening: () =>
+      ipcRenderer.invoke(IPC.voiceStopListening) as Promise<VoiceListenResult>,
+    stop: () => ipcRenderer.invoke(IPC.voiceStop) as Promise<void>,
+    onState: (listener: (state: VoiceState) => void) => subscribe(IPC.voiceState, listener),
   },
   workspace: {
     get: () => ipcRenderer.invoke(IPC.workspaceGet) as Promise<WorkspacesState>,

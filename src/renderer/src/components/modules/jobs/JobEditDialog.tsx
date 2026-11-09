@@ -20,6 +20,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 
 export function JobEditDialog({
@@ -42,24 +43,36 @@ export function JobEditDialog({
     url: "",
     salaryBand: "",
     jd: "",
+    note: "",
   });
+  const [hasOffer, setHasOffer] = useState(false);
+  const [offer, setOffer] = useState({ salary: "", equity: "", note: "" });
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     if (target === null) return;
     setError(null);
-    setDraft(
-      isNew
-        ? { title: "", companyId: "none", url: "", salaryBand: "", jd: "" }
-        : {
-            title: target.title,
-            companyId: target.companyId ?? "none",
-            url: target.url,
-            salaryBand: target.salaryBand,
-            jd: target.jd,
-          },
-    );
+    if (isNew) {
+      setDraft({ title: "", companyId: "none", url: "", salaryBand: "", jd: "", note: "" });
+      setHasOffer(false);
+      setOffer({ salary: "", equity: "", note: "" });
+      return;
+    }
+    setDraft({
+      title: target.title,
+      companyId: target.companyId ?? "none",
+      url: target.url,
+      salaryBand: target.salaryBand,
+      jd: target.jd,
+      note: target.note,
+    });
+    setHasOffer(target.offer !== null);
+    setOffer({
+      salary: target.offer?.salary ?? "",
+      equity: target.offer?.equity ?? "",
+      note: target.offer?.note ?? "",
+    });
   }, [target, isNew]);
 
   const submit = (): void => {
@@ -75,6 +88,10 @@ export function JobEditDialog({
       url: draft.url.trim(),
       salaryBand: draft.salaryBand.trim(),
       jd: draft.jd,
+      note: draft.note.trim(),
+      offer: hasOffer
+        ? { salary: offer.salary.trim(), equity: offer.equity.trim(), note: offer.note.trim() }
+        : null,
     };
     const request = isNew
       ? window.goodjob.jobs.create(patch)
@@ -102,7 +119,7 @@ export function JobEditDialog({
         <DialogHeader>
           <DialogTitle>{isNew ? "新建岗位" : "编辑岗位"}</DialogTitle>
           <DialogDescription>
-            JD 建议粘贴原文（Markdown）；「简历评估」与定制简历都以它为准。
+            JD 建议粘贴原文（Markdown）；「简历评估」与定制简历都以它为准。投递备注与 Offer 也在这里维护。
           </DialogDescription>
         </DialogHeader>
 
@@ -167,6 +184,41 @@ export function JobEditDialog({
               className="min-h-40 flex-1 resize-none font-mono text-xs leading-relaxed"
               onChange={(event) => setDraft((prev) => ({ ...prev, jd: event.target.value }))}
             />
+          </div>
+
+          <div className="grid gap-2 rounded-xl bg-muted/40 p-3">
+            <div className="grid gap-1.5">
+              <Label htmlFor="job-note">投递备注</Label>
+              <Input
+                id="job-note"
+                value={draft.note}
+                placeholder="如：官网投递 / 内推人 / 渠道备注"
+                onChange={(event) => setDraft((prev) => ({ ...prev, note: event.target.value }))}
+              />
+            </div>
+            <label className="flex items-center gap-2 text-sm font-medium">
+              <Switch checked={hasOffer} onCheckedChange={setHasOffer} />
+              已拿到 Offer
+            </label>
+            {hasOffer && (
+              <div className="grid gap-2">
+                <Input
+                  value={offer.salary}
+                  placeholder="薪资，如：32k·16 薪"
+                  onChange={(event) => setOffer((prev) => ({ ...prev, salary: event.target.value }))}
+                />
+                <Input
+                  value={offer.equity}
+                  placeholder="期权 / 签字费等"
+                  onChange={(event) => setOffer((prev) => ({ ...prev, equity: event.target.value }))}
+                />
+                <Input
+                  value={offer.note}
+                  placeholder="其他条款备注（到岗时间、竞业…）"
+                  onChange={(event) => setOffer((prev) => ({ ...prev, note: event.target.value }))}
+                />
+              </div>
+            )}
           </div>
         </div>
 

@@ -114,7 +114,9 @@ src/main/       index.ts 入口；app/（window / security / context 装配）�
                 browser/（panel.ts 多标签池 + automation/ CLI·动作·tab 锁定·审计·设置）；
                 stores/（json-collection 底座 + conversations/resumes/models/notify/
                   preferences/workspaces/memory + domain/ 一个实体一个文件）；
-                services/（tasks 后台任务、notify 邮件、pdf-export、model-probe）；
+                services/（tasks 后台任务、notify 邮件、pdf-export、model-probe、
+                  voice/ 语音 TTS·ASR：AOQ 引擎 + 协议 + 原生 SDK 加载 +
+                  官方模型 / 音色清单）；
                 ipc/（index + 分域注册）；workspace/（paths 路径登记、uploads）
 src/preload/    contextBridge -> window.goodjob
 src/renderer/   App / main / globals.css；config/modules 左栏菜单；
@@ -134,6 +136,7 @@ scripts/        图标管线（make-icons / render-svg）、dist-mac.sh、p*-smo
   workspaces.json           0600  索引：items[]（id / name / createdAt）+ currentId
   preferences.json          0600  基础设置：界面主题、字号、简历主题、自动检查更新
   models.json               0600  Agent 设置：模型供应商 + safeStorage 加密 Key
+  voice.json                0600  Agent 设置：语音模型 TTS / ASR（阿里云百炼，Key 密文）
   notifications.json        0600  Agent 设置：SMTP / IMAP + 日报 / 周报调度（密码密文）
   agent-browser.json        0600  Agent 设置：开关（默认开）+ 自动通过（默认关）+
                                   提交限速 + 单站提交记账（每日上限按本地日历日重置）
@@ -146,10 +149,9 @@ scripts/        图标管线（make-icons / render-svg）、dist-mac.sh、p*-smo
                                   tailored/<jobId>.md 与 history / scripts 话术含定稿
                                   sidecar / reports 评分报告 / upload 参考文件）
       companies/            0700  一个公司一个 <id>.json（含调研快照）+ upload/
-      jobs/                 0700  一个岗位一个 <id>.json（JD + 匹配度）+ upload/、
-                                  upload/<jobId>/（岗位工作台）
-      applications/         0700  一个投递一个 <id>.json + pipeline.json（工作区级流水线）
-                                  + upload/
+      jobs/                 0700  一个岗位一个 <id>.json（JD + 匹配度 + 投递时间线 /
+                                  Offer / 备注）+ upload/、upload/<jobId>/（岗位工作台）
+      pipeline.json         0600  投递状态流水线（工作区级：有序阶段 + 终态）
       interviews/           0700  一场 <id>.json（config + 逐轮记录 + 总评；问答本体在
                                   conversations/ 的 interview:<id> 会话）+ upload/<id>/
       workflows/            0700  GoodJob 工作流快照：一个对话一个 <key>.json
@@ -160,8 +162,8 @@ scripts/        图标管线（make-icons / render-svg）、dist-mac.sh、p*-smo
                                   chat.log 每次 run 的收发痕迹（都不含 prompt 与正文）
 ```
 
-- 会话 scope：`orchestrator`（GoodJob）/ `resume` / `companies` / `jobs` / `applications` /
-  `job:<jobId>` / `interview:<id>`。
+- 会话 scope：`orchestrator`（GoodJob）/ `resume` / `companies` / `jobs`（岗位 + 投递）/
+  `job:<jobId>` / `interview:<id>`。旧版的 `applications` scope 在启动时迁进 `jobs`。
 - 设置全在根下、所有工作区共用：字号 10–18px，主题 `system | light | dark`，简历主题存模板 id
   （`components/document/templates`：`mint` / `graphite` / `navy`，预览与 PDF 共用）。设置弹窗
   只分「基础设置 / Agent 设置」两组，不展示工作区。
@@ -169,8 +171,10 @@ scripts/        图标管线（make-icons / render-svg）、dist-mac.sh、p*-smo
   不在 `~/.goodjob` 里——既有约定的偏离，设置页已告知，不要试图改 HOME 迁移它。
 - 首次启动索引为空时自动建「默认工作区」。旧版的根目录 `conversations`/`cache`/`logs` 迁进默认
   工作区；旧版放在工作区里的设置文件搬回根目录（不覆盖已有设置）。
-- 实体 ID：`co_` / `job_` / `app_` / `iv_` + 12 位 hex；引用存 id 不存内容，删除不级联
+- 实体 ID：`co_` / `job_` / `iv_` + 12 位 hex；引用存 id 不存内容，删除不级联
   （悬空引用由渲染层提示）。
+- 旧版独立投递（`applications/<id>.json`、`applications/pipeline.json`）在启动时合并进
+  `jobs/<id>.json` 与 `pipeline.json`；旧目录改名 `applications.migrated` 留档。
 - 后台任务注册表只在内存：同 type 同 target 去重，退出 / 切工作区即停，不做断点续跑。
 - 新增持久化数据先登记 `WorkspacePaths` 再由 `ensureWorkspaceDirs()` 建目录——**不要绕过
   工作区往根目录写数据**；设置类反过来登记到 `RootPaths`（`rootPaths(root)`）。

@@ -5,10 +5,10 @@ export const MAX_WORKFLOW_TASKS = 10;
 
 /**
  * GoodJob Agent 可以派发的子 Agent 角色。每个角色对应一个已有模块的能力边界：
- * resume = 简历，companies = 公司档案，jobs = 岗位档案，
- * applications = 投递，job = 某个岗位的二级工作台（定制简历 / 话术）。
+ * resume = 简历，companies = 公司档案，jobs = 岗位档案与投递状态，
+ * job = 某个岗位的二级工作台（定制简历 / 话术）。
  */
-export type SubagentRole = "resume" | "companies" | "jobs" | "applications" | "job";
+export type SubagentRole = "resume" | "companies" | "jobs" | "job";
 
 /**
  * 单个子任务的运行状态。

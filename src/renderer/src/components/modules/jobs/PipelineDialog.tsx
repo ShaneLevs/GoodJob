@@ -16,7 +16,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 
-/** 流水线设置：阶段增删 / 改名 / 排序 / 终态标记（工作区级，存 applications/pipeline.json）。 */
+/** 流水线设置：阶段增删 / 改名 / 排序 / 终态标记（工作区级，存 pipeline.json）。 */
 export function PipelineDialog({
   open,
   config,

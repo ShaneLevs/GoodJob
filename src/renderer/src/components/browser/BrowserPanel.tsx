@@ -23,7 +23,7 @@ const HOME = "https://www.bing.com";
 
 /**
  * 「让 Agent 接管」在当前会话里发起一次浏览器工具调用：具体落点由挂了
- * useBrowserTakeover 的模块会话（companies / jobs / applications）接住，
+ * useBrowserTakeover 的模块会话（companies / jobs）接住，
  * 这里只广播事件（renderer 内，不经 main）。
  */
 const TAKEOVER_EVENT = "goodjob:agent-takeover";
@@ -44,7 +44,7 @@ interface BrowserPanelProps {
   /** 任何浮层（dialog / dropdown）打开时必须挂起原生视图，否则它会盖在浮层上面。 */
   suspended: boolean;
   /**
-   * 当前会话是否接得住「让 Agent 接管」（companies / jobs / applications 三个
+   * 当前会话是否接得住「让 Agent 接管」（companies / jobs 两个
    * 挂了 useBrowserTakeover 的会话）；接不住就不显示按钮，免得点了没反应。
    */
   takeoverAvailable?: boolean;

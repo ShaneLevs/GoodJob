@@ -1,5 +1,5 @@
 /** 技能适用的会话场景（与 ConversationKey 的模块对应，外加岗位工作台）。 */
-export type SkillScenario = "resume" | "job" | "applications" | "companies" | "jobs" | "interview";
+export type SkillScenario = "resume" | "job" | "companies" | "jobs" | "interview";
 
 export interface SkillFileInfo {
   /** 相对技能目录的路径，例如 `SKILL.md` / `references/workflow.md`。 */

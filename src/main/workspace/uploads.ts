@@ -26,8 +26,7 @@ const MAX_IMAGE_BYTES = 20 * 1024 * 1024;
  *   orchestrator   → uploads/（工作区级，GoodJob 会话用）
  *   resume         → 由 ResumeStore 给的当前简历 upload/（resumes/<当前简历>/upload/）
  *   companies      → companies/upload/
- *   jobs           → jobs/upload/
- *   applications   → applications/upload/
+ *   jobs           → jobs/upload/（岗位与投递共用）
  *   job:<jobId>    → jobs/upload/<jobId>/
  *   interview:<id> → interviews/upload/<id>/
  *
@@ -53,8 +52,6 @@ export function uploadDirFor(
       return workspace.companiesUpload;
     case "jobs":
       return workspace.jobsUpload;
-    case "applications":
-      return workspace.applicationsUpload;
     case "resume":
       // 简历会话的路径由 ResumeStore 拼（它才知道哪份是当前简历）。
       if (resumeUploadDir === null) throw new Error("还没有简历，先建一份简历再上传参考文件");

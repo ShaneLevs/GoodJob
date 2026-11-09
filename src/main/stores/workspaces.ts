@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 
 import type { WorkspaceInfo, WorkspacesState } from "@shared/types";
 
+import { migrateApplicationsToJobs } from "../workspace/migrate";
 import {
   createRootPaths,
   ensureDir,
@@ -58,7 +59,9 @@ export class WorkspacesStore {
     if (target === undefined) throw new Error(`工作区不存在：${id}`);
 
     // 索引可能存在、目录却被手动删掉了：切过去先补回骨架。
-    ensureWorkspaceDirs(workspacePaths(this.root.root, target.id));
+    const paths = workspacePaths(this.root.root, target.id);
+    ensureWorkspaceDirs(paths);
+    migrateApplicationsToJobs(paths);
 
     this.doc.currentId = target.id;
     this.persist();
@@ -76,6 +79,7 @@ export class WorkspacesStore {
       this.doc = { version: VERSION, currentId: created.id, items: [created] };
       const paths = workspacePaths(this.root.root, created.id);
       ensureWorkspaceDirs(paths);
+      migrateApplicationsToJobs(paths);
       this.migrateLegacyRoot(paths);
       this.migrateGlobalSettings(paths);
       this.persist();
@@ -88,7 +92,9 @@ export class WorkspacesStore {
       this.doc.currentId = usable[0]?.id ?? null;
     }
     for (const item of usable) {
-      ensureWorkspaceDirs(workspacePaths(this.root.root, item.id));
+      const paths = workspacePaths(this.root.root, item.id);
+      ensureWorkspaceDirs(paths);
+      migrateApplicationsToJobs(paths);
     }
     // 设置改存根目录后：把当前工作区里的旧副本搬到根目录（见 migrateGlobalSettings）。
     this.migrateGlobalSettings(this.currentPaths);

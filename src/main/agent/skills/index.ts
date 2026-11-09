@@ -30,8 +30,6 @@ export function scenarioOf(key: ConversationKey): SkillScenario {
       return "companies";
     case "jobs":
       return "jobs";
-    case "applications":
-      return "applications";
     default:
       return "resume";
   }

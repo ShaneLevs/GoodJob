@@ -1,14 +1,22 @@
-import type { Job, JobMatchReport, JobPatch } from "@shared/types";
+import type {
+  Job,
+  JobMatchReport,
+  JobPatch,
+  JobTimelineEntry,
+  OfferInfo,
+} from "@shared/types";
 
 import type { WorkspacePaths } from "../../workspace/paths";
 import { isRecord, JsonCollectionStore, newId, nullableStr, nowIso, str } from "../json-collection";
 import { CompaniesStore } from "./companies";
+import { PipelineStore } from "./pipeline";
 
-/* ————————————————————————— 岗位 ————————————————————————— */
+/* ————————————————————————— 岗位 + 投递 ————————————————————————— */
 
 /**
- * 岗位档案（`jobs/<id>.json`）。companyId 只在变化时校验；匹配度报告由
- * 后台任务（tasks.ts）经 setMatchReport 写入，不走通用 patch。
+ * 岗位档案（`jobs/<id>.json`）：JD、匹配度与投递过程（状态时间线 / Offer / 备注）
+ * 同一条记录。companyId 只在变化时校验；匹配度报告由后台任务（tasks.ts）经
+ * setMatchReport 写入，不走通用 patch。
  */
 export class JobsStore {
   private readonly store: JsonCollectionStore<Job>;
@@ -16,6 +24,7 @@ export class JobsStore {
   constructor(
     workspace: WorkspacePaths,
     private readonly companies: CompaniesStore,
+    private readonly pipeline: PipelineStore,
   ) {
     this.store = new JsonCollectionStore(workspace, "jobs", "job_", reviveJob);
   }
@@ -45,6 +54,9 @@ export class JobsStore {
       url: (patch.url ?? "").trim(),
       salaryBand: (patch.salaryBand ?? "").trim(),
       matchReport: null,
+      timeline: this.normalizeTimeline(patch.timeline ?? [], []),
+      offer: normalizeOffer(patch.offer),
+      note: patch.note ?? "",
       createdAt: now,
       updatedAt: now,
     };
@@ -66,13 +78,35 @@ export class JobsStore {
     if (patch.jd !== undefined) next.jd = patch.jd;
     if (patch.url !== undefined) next.url = patch.url.trim();
     if (patch.salaryBand !== undefined) next.salaryBand = patch.salaryBand.trim();
+    if (patch.timeline !== undefined) {
+      next.timeline = this.normalizeTimeline(patch.timeline, current.timeline);
+    }
+    if (patch.offer !== undefined) next.offer = normalizeOffer(patch.offer);
+    if (patch.note !== undefined) next.note = patch.note;
+    this.store.put(next);
+    return next;
+  }
+
+  /** 顺流推进：追加一条时间线（阶段必须来自 pipeline，时间取当前时刻）。 */
+  advance(id: string, stage: string, note = ""): Job {
+    const current = this.mustGet(id);
+    const name = stage.trim();
+    if (!this.pipeline.stageNames().includes(name)) {
+      throw new Error(`阶段「${name}」不在流水线里（可用 pipeline_list 查全部阶段）。`);
+    }
+    const now = nowIso();
+    const next: Job = {
+      ...current,
+      timeline: [...current.timeline, { stage: name, at: now, note }],
+      updatedAt: now,
+    };
     this.store.put(next);
     return next;
   }
 
   remove(id: string): void {
     if (!this.store.remove(id)) throw new Error(`岗位不存在：${id}`);
-    // 不级联：定制稿 / 话术 / 投递引用保留，渲染层按悬空引用提示。
+    // 不级联：定制稿 / 话术 / 模拟面试引用保留，渲染层按悬空引用提示。
   }
 
   /** 后台任务专用：整体替换匹配度报告（评分 / 维度 / 结论 / 评分时间）。 */
@@ -92,6 +126,31 @@ export class JobsStore {
       throw new Error(`公司不存在：${trimmed}（先用 ${hint} 查可用 id）`);
     }
     return trimmed;
+  }
+
+  /**
+   * 时间线清洗：补 at / note 默认值；阶段枚举只校验「新增」的条目
+   * （下标 >= 已有条数）——老条目引用了后来被删掉的阶段属于悬空引用，
+   * 由渲染层提示，不在这里拦住整条更新。
+   */
+  private normalizeTimeline(
+    incoming: JobTimelineEntry[],
+    previous: JobTimelineEntry[],
+  ): JobTimelineEntry[] {
+    const valid = this.pipeline.stageNames();
+    return incoming.map((entry, index) => {
+      const stage = str(entry?.stage).trim();
+      if (index >= previous.length && !valid.includes(stage)) {
+        throw new Error(
+          `阶段「${stage || "（空）"}」不在流水线里。可用阶段：${valid.join("、")}（用 pipeline_list 可随时查）。`,
+        );
+      }
+      return {
+        stage,
+        at: str(entry?.at) || nowIso(),
+        note: str(entry?.note),
+      };
+    });
   }
 
   private mustGet(id: string): Job {
@@ -114,9 +173,21 @@ function reviveJob(raw: unknown, file: string): Job | null {
     url: str(raw.url),
     salaryBand: str(raw.salaryBand),
     matchReport: report,
+    timeline: reviveTimeline(raw.timeline),
+    offer: isRecord(raw.offer) ? normalizeOffer(raw.offer) : null,
+    note: str(raw.note),
     createdAt: str(raw.createdAt) || now,
     updatedAt: str(raw.updatedAt) || now,
   };
+}
+
+function reviveTimeline(raw: unknown): JobTimelineEntry[] {
+  if (!Array.isArray(raw)) return [];
+  const now = nowIso();
+  return raw.flatMap((item): JobTimelineEntry[] => {
+    if (!isRecord(item)) return [];
+    return [{ stage: str(item.stage), at: str(item.at) || now, note: str(item.note) }];
+  });
 }
 
 function reviveMatchReport(raw: Record<string, unknown>): JobMatchReport | null {
@@ -140,4 +211,13 @@ function reviveMatchReport(raw: Record<string, unknown>): JobMatchReport | null 
     conclusion: str(raw.conclusion),
     evaluatedAt: str(raw.evaluatedAt) || nowIso(),
   };
+}
+
+function normalizeOffer(value: OfferInfo | Record<string, unknown> | null | undefined): OfferInfo | null {
+  if (value === null || value === undefined || !isRecord(value)) return null;
+  const salary = str(value.salary).trim();
+  const equity = str(value.equity).trim();
+  const note = str(value.note).trim();
+  if (salary === "" && equity === "" && note === "") return null;
+  return { salary, equity, note };
 }

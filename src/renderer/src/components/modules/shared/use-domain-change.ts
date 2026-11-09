@@ -4,7 +4,7 @@ import type { DomainEntity } from "@shared/types";
 
 /**
  * 订阅领域集合变更：Agent 工具（以及任何别的入口）写完 companies / jobs /
- * applications / interviews 之后，main 会广播集合名，这里把它们折算成一次重拉。
+ * interviews 之后，main 会广播集合名，这里把它们折算成一次重拉。
  *
  * 为什么需要：模块页只在挂载时拉一次数据，而 Agent 是在同一页右边的对话里写库的。
  * 没有这个订阅，用户得切一次模块才看得见 Agent 刚建的岗位 / 公司。

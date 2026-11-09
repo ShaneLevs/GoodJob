@@ -2,7 +2,6 @@ import { ipcMain } from "electron";
 
 import {
   IPC,
-  type ApplicationPatch,
   type CompanyPatch,
   type InterviewCreateInput,
   type JobPatch,
@@ -12,7 +11,7 @@ import {
 import type { IpcDeps } from "./deps";
 
 export function registerDomainIpc(deps: IpcDeps): void {
-  const { companies, jobs, applications, pipeline, interviews, runtime, conversations } = deps;
+  const { companies, jobs, pipeline, interviews, runtime, conversations } = deps;
 
   // —— 领域实体 CRUD（P2）：校验在 store 里做，错误经 invoke 拒绝带回渲染层 ——
 
@@ -28,19 +27,11 @@ export function registerDomainIpc(deps: IpcDeps): void {
   ipcMain.handle(IPC.jobsList, () => jobs.list());
   ipcMain.handle(IPC.jobsCreate, (_event, patch: JobPatch) => jobs.create(patch));
   ipcMain.handle(IPC.jobsUpdate, (_event, id: string, patch: JobPatch) => jobs.update(id, patch));
+  ipcMain.handle(IPC.jobsAdvance, (_event, id: string, stage: string, note?: string) =>
+    jobs.advance(id, stage, note ?? ""),
+  );
   ipcMain.handle(IPC.jobsDelete, (_event, id: string) => {
     jobs.remove(id);
-  });
-
-  ipcMain.handle(IPC.applicationsList, () => applications.list());
-  ipcMain.handle(IPC.applicationsCreate, (_event, patch: ApplicationPatch) =>
-    applications.create(patch),
-  );
-  ipcMain.handle(IPC.applicationsUpdate, (_event, id: string, patch: ApplicationPatch) =>
-    applications.update(id, patch),
-  );
-  ipcMain.handle(IPC.applicationsDelete, (_event, id: string) => {
-    applications.remove(id);
   });
 
   // 流水线：设置区 UI（下一期）从这里读写；读取永远给可用配置（缺省时是默认流水线）。

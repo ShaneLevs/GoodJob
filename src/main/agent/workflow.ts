@@ -68,7 +68,7 @@ export interface SubagentRunInput {
   touch?: () => void;
 }
 
-const ROLES: readonly SubagentRole[] = ["resume", "companies", "jobs", "applications", "job"];
+const ROLES: readonly SubagentRole[] = ["resume", "companies", "jobs", "job"];
 const TASK_STATUSES: readonly SubagentStatus[] = [
   "pending",
   "running",
@@ -539,9 +539,13 @@ function reviveWorkflow(raw: unknown, key: ConversationKey): WorkflowState | nul
   const tasks: WorkflowTask[] = [];
   for (const item of raw.tasks) {
     if (!isRecord(item) || typeof item.id !== "string") continue;
-    const role = ROLES.includes(item.agent as SubagentRole)
-      ? (item.agent as SubagentRole)
-      : null;
+    // 旧快照里的 applications 角色已并入 jobs，回放时按新角色处理。
+    const role =
+      item.agent === "applications"
+        ? "jobs"
+        : ROLES.includes(item.agent as SubagentRole)
+          ? (item.agent as SubagentRole)
+          : null;
     if (role === null) continue;
     tasks.push({
       id: item.id,

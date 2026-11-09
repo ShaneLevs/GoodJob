@@ -12,6 +12,7 @@ import { app } from "electron";
  *   workspaces.json           0600  工作区索引：id / name / createdAt / currentId
  *   preferences.json          0600  基础设置：界面主题、字号、简历主题、自动检查更新
  *   models.json               0600  Agent 设置：模型供应商 + 模型（含 safeStorage 密文）
+ *   voice.json                0600  Agent 设置：语音模型 TTS / ASR（阿里云百炼，含密文）
  *   notifications.json        0600  Agent 设置：通知 SMTP / IMAP 账户 + 日报 / 周报调度
  *   agent-browser.json        0600  Agent 设置：浏览器自动化开关 + 提交限速参数
  *   browser-playbooks.md      0600  Agent 设置：投递平台适配指令模板（用户可编辑）
@@ -21,9 +22,9 @@ import { app } from "electron";
  *       resumes/              0700  主简历们：一份一个文件夹（resume.md/history/tailored/
  *                                   scripts 话术/reports 评分报告/upload 上传的参考文件）
  *       companies/            0700  公司档案：一个公司一个 <id>.json + upload/ 上传落点
- *       jobs/                 0700  岗位档案：一个岗位一个 <id>.json + upload/<jobId>/
- *       applications/         0700  投递档案：一个投递一个 <id>.json +
- *                                   pipeline.json 状态流水线定义（工作区级）+ upload/
+ *       jobs/                 0700  岗位档案：一个岗位一个 <id>.json（含投递状态时间线 /
+ *                                   Offer / 备注）+ upload/<jobId>/
+ *       pipeline.json         0600  投递状态流水线定义（工作区级：有序阶段 + 终态）
  *       interviews/           0700  模拟面试：一场面试一个 <id>.json（逐轮问答
  *                                   本体在 conversations/ 的 interview:<id> 会话里）
  *                                   + upload/<interviewId>/
@@ -35,10 +36,10 @@ import { app } from "electron";
  *       logs/                 0700  诊断日志
  * ```
  *
- * 明文密钥永远不会落盘：`models.json` 只存 `safeStorage` 生成的密文。
+ * 明文密钥永远不会落盘：`models.json` / `voice.json` 只存 `safeStorage` 生成的密文。
  *
  * 设置全在根目录、所有工作区共用一份：基础设置（外观 / 简历主题）与 Agent 设置
- * （模型 / 通知 / 浏览器）都不跟着工作区走，切工作区只换数据。
+ * （模型 / 语音 / 通知 / 浏览器）都不跟着工作区走，切工作区只换数据。
  */
 export interface RootPaths {
   root: string;
@@ -48,6 +49,8 @@ export interface RootPaths {
   preferences: string;
   /** Agent 设置：模型供应商 + 模型（含 safeStorage 密文）。 */
   models: string;
+  /** Agent 设置：语音模型 TTS / ASR（阿里云百炼，含 safeStorage 密文）。 */
+  voice: string;
   /** Agent 设置：通知账户 + 日报 / 周报调度（密码 safeStorage 密文）。 */
   notifications: string;
   /** Agent 设置：浏览器自动化开关 + 限速参数 + 单站提交记账。 */
@@ -66,8 +69,8 @@ export interface WorkspacePaths {
   companies: string;
   /** 岗位档案集合：一个岗位一个 `<id>.json`（stores/domain）。 */
   jobs: string;
-  /** 投递档案集合：一个投递一个 `<id>.json` + 工作区级 `pipeline.json`（stores/domain）。 */
-  applications: string;
+  /** 投递状态流水线（工作区级，stores/domain/pipeline）。 */
+  pipeline: string;
   /** 模拟面试记录集合：一场面试一个 `<id>.json`（stores/domain/interviews）。 */
   interviews: string;
   /** GoodJob 工作流快照：一个 GoodJob 对话一个 `<encodeURIComponent(key)>.json`（agent/workflow）。 */
@@ -76,12 +79,11 @@ export interface WorkspacePaths {
   orchestratorUpload: string;
   /**
    * 各模块会话的上传落点（`uploads.ts` 按会话 key 选目录）：
-   * companies/upload、jobs/upload（`job:<id>` 再下一层）、applications/upload、
+   * companies/upload、jobs/upload（`job:<id>` 再下一层）、
    * interviews/upload（`interview:<id>` 再下一层）；简历会话用 resumes/<id>/upload。
    */
   companiesUpload: string;
   jobsUpload: string;
-  applicationsUpload: string;
   interviewsUpload: string;
   /** 工作区级长期记忆，Agent 每次会话自动加载。 */
   memory: string;
@@ -111,6 +113,7 @@ export function rootPaths(root: string): RootPaths {
     index: path.join(root, "workspaces.json"),
     preferences: path.join(root, "preferences.json"),
     models: path.join(root, "models.json"),
+    voice: path.join(root, "voice.json"),
     notifications: path.join(root, "notifications.json"),
     agentBrowser: path.join(root, "agent-browser.json"),
     browserPlaybooks: path.join(root, "browser-playbooks.md"),
@@ -126,13 +129,12 @@ export function workspacePaths(root: string, id: string): WorkspacePaths {
     resumes: path.join(dir, "resumes"),
     companies: path.join(dir, "companies"),
     jobs: path.join(dir, "jobs"),
-    applications: path.join(dir, "applications"),
+    pipeline: path.join(dir, "pipeline.json"),
     interviews: path.join(dir, "interviews"),
     workflows: path.join(dir, "workflows"),
     orchestratorUpload: path.join(dir, "uploads"),
     companiesUpload: path.join(dir, "companies", "upload"),
     jobsUpload: path.join(dir, "jobs", "upload"),
-    applicationsUpload: path.join(dir, "applications", "upload"),
     interviewsUpload: path.join(dir, "interviews", "upload"),
     memory: path.join(dir, "memory.md"),
     cache: path.join(dir, "cache"),
@@ -147,13 +149,11 @@ export function ensureWorkspaceDirs(paths: WorkspacePaths): void {
   ensureDir(paths.resumes);
   ensureDir(paths.companies);
   ensureDir(paths.jobs);
-  ensureDir(paths.applications);
   ensureDir(paths.interviews);
   ensureDir(paths.workflows);
   ensureDir(paths.orchestratorUpload);
   ensureDir(paths.companiesUpload);
   ensureDir(paths.jobsUpload);
-  ensureDir(paths.applicationsUpload);
   ensureDir(paths.interviewsUpload);
   ensureDir(paths.cache);
   ensureDir(paths.logs);

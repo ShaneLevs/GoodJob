@@ -17,12 +17,12 @@ import { MarkdownThemeProvider } from "@/components/document/MarkdownTheme";
 import { getDocumentTemplate } from "@/components/document/templates";
 import { SettingsModal, type SettingsSection } from "@/components/settings/SettingsModal";
 import { Sidebar } from "@/components/shell/Sidebar";
+import { ModuleActiveContext } from "@/components/modules/shared/module-page";
 import { TasksBadge } from "@/components/shell/TasksBadge";
 import { ThemeApplier } from "@/components/shell/ThemeApplier";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-import { ApplicationsPage } from "@/components/modules/applications/ApplicationsPage";
 import { CompaniesPage } from "@/components/modules/companies/CompaniesPage";
 import { InterviewPage } from "@/components/modules/interview/InterviewPage";
 import { JobWorkbenchPage } from "@/components/modules/jobs/JobWorkbenchPage";
@@ -197,6 +197,7 @@ export function App() {
     models,
     onSelectModel: selectModel,
     onOpenModelSettings: () => openSettings("models"),
+    onOpenVoiceSettings: () => openSettings("voice"),
     onOverlayChange: setOverlayOpen,
     onOpenBrowser: () => setBrowserOpen(true),
   };
@@ -258,8 +259,6 @@ export function App() {
           </>
         );
       }
-      case "applications":
-        return <ApplicationsPage key={workspaceVersion} {...moduleProps} />;
       case "interview":
         return (
           <InterviewPage
@@ -300,9 +299,9 @@ export function App() {
   );
 
   // 「让 Agent 接管」只在挂了 useBrowserTakeover 的会话里出现
-  // （companies / jobs / applications；岗位二级工作台的 job:<id> 会话没有浏览器工具）。
+  // （companies / jobs；岗位二级工作台的 job:<id> 会话没有浏览器工具）。
   const takeoverAvailable =
-    (activeModule === "companies" || activeModule === "jobs" || activeModule === "applications") &&
+    (activeModule === "companies" || activeModule === "jobs") &&
     !(activeModule === "jobs" && jobWorkbench !== null);
 
   return (
@@ -351,7 +350,9 @@ export function App() {
                   )}
                   aria-hidden={key !== activeModule}
                 >
-                  {renderModule(key)}
+                  <ModuleActiveContext.Provider value={key === activeModule}>
+                    {renderModule(key)}
+                  </ModuleActiveContext.Provider>
                 </div>
               ))}
               {/*

@@ -3,6 +3,7 @@ import {
   MessageSquareText,
   MoreHorizontal,
   Pencil,
+  Send,
   Sparkles,
   Trash2,
   Users,
@@ -28,6 +29,7 @@ export function JobRowMenu({
   onEvaluate,
   onScript,
   onInterview,
+  onAdvance,
   onEdit,
   onDelete,
   onOverlayChange,
@@ -39,6 +41,7 @@ export function JobRowMenu({
   onEvaluate: () => void;
   onScript: () => void;
   onInterview: () => void;
+  onAdvance: () => void;
   onEdit: () => void;
   onDelete: () => void;
   onOverlayChange: (open: boolean) => void;
@@ -74,6 +77,12 @@ export function JobRowMenu({
         <DropdownMenuItem onSelect={onInterview}>
           <Users />
           模拟面试
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuLabel className="text-xs text-muted-foreground">投递</DropdownMenuLabel>
+        <DropdownMenuItem onSelect={onAdvance}>
+          <Send />
+          {job.timeline.length === 0 ? "标记投递" : "推进状态"}
         </DropdownMenuItem>
         <DropdownMenuSeparator />
         <DropdownMenuLabel className="text-xs text-muted-foreground">数据</DropdownMenuLabel>

@@ -2,16 +2,26 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import {
   CircleAlert,
+  GitCompareArrows,
   LoaderCircle,
   Plus,
+  Settings2,
 } from "lucide-react";
 
-import type { Company, Job, ScorecardTarget, ScriptDoc, TaskState } from "@shared/types";
+import type {
+  Company,
+  Job,
+  PipelineConfig,
+  ScorecardTarget,
+  ScriptDoc,
+  TaskState,
+} from "@shared/types";
 
 import { ChatPanel } from "@/components/chat/ChatPanel";
 import { ConversationPane } from "@/components/chat/conversation-pane";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
 import {
   ResizableHandle,
@@ -26,23 +36,27 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { cn } from "@/lib/utils";
 
+import { AdvanceDialog } from "./AdvanceDialog";
 import { InterviewStartDialog } from "./InterviewStartDialog";
 import { JobEditDialog } from "./JobEditDialog";
 import { JobRowMenu } from "./JobRowMenu";
+import { OfferCompareDialog } from "./OfferCompareDialog";
+import { PipelineDialog } from "./PipelineDialog";
 import { ModelGateDialog } from "../shared/ModelGateDialog";
 import { DeleteDialog } from "../shared/DeleteDialog";
 import type { ModulePageProps } from "../shared/module-page";
 import { useDomainChange } from "../shared/use-domain-change";
 import { ScorecardDialog } from "../shared/ScorecardDialog";
 import { ScriptDialog, ScriptStatusBadge } from "./ScriptDialog";
-import { cmpNumber, cmpText, cmpTime, SortableHead, useTableSort } from "../shared/table-bits";
+import { cmpNumber, cmpText, cmpTime, SortableHead, stageDotClass, useTableSort } from "../shared/table-bits";
 import { formatTime } from "@/lib/format";
 
 const CHAT_MIN_WIDTH = 380;
 const TABLE_MIN_WIDTH = 560;
 
-type JobField = "title" | "company" | "salaryBand" | "match" | "script" | "updatedAt";
+type JobField = "title" | "company" | "salaryBand" | "match" | "script" | "stage" | "updatedAt";
 
 /** 无定制稿时「生成简历」进二级页后自动发给岗位 Agent 的起草指令。 */
 const TAILORED_DRAFT_PROMPT =
@@ -69,15 +83,17 @@ export interface JobsPageProps extends ModulePageProps {
 }
 
 /**
- * 「岗位」模块页（操作枢纽）：左边岗位会话，右边岗位表。
- * 列：标题 / 公司 / 薪资带 / 匹配度 / 话术 / 更新时间。行操作：
+ * 「岗位」模块页（操作枢纽）：左边岗位会话，右边岗位表（岗位 + 投递同一条记录）。
+ * 列：标题 / 公司 / 薪资带 / 匹配度 / 话术 / 投递状态 / 更新时间。行操作：
  * 生成简历（二级页）、简历评估（后台任务，行内 评估中→分数）、
- * 话术管理（定稿 sidecar）、模拟面试（选轮次发起，进面试模块）、编辑 / 删除。
+ * 话术管理（定稿 sidecar）、模拟面试（选轮次发起，进面试模块）、
+ * 标记投递 / 推进状态、编辑（含 Offer / 备注）/ 删除。
  */
 export function JobsPage({
   models,
   onSelectModel,
   onOpenModelSettings,
+  onOpenVoiceSettings,
   onOverlayChange,
   onOpenBrowser,
   onOpenJob,
@@ -85,6 +101,7 @@ export function JobsPage({
 }: JobsPageProps) {
   const [jobs, setJobs] = useState<Job[] | null>(null);
   const [companies, setCompanies] = useState<Company[]>([]);
+  const [pipeline, setPipeline] = useState<PipelineConfig | null>(null);
   const [tailoredKeys, setTailoredKeys] = useState<Set<string>>(new Set());
   const [scripts, setScripts] = useState<ScriptDoc[]>([]);
   const [tasks, setTasks] = useState<TaskState[]>([]);
@@ -93,6 +110,11 @@ export function JobsPage({
   const [deleting, setDeleting] = useState<Job | null>(null);
   const [scriptJob, setScriptJob] = useState<Job | null>(null);
   const [interviewJob, setInterviewJob] = useState<Job | null>(null);
+  const [advancing, setAdvancing] = useState<Job | null>(null);
+  const [pipelineOpen, setPipelineOpen] = useState(false);
+  const [compareOpen, setCompareOpen] = useState(false);
+  /** 勾选了要对比 Offer 的岗位 id（只有含 Offer 的行给勾选框）。 */
+  const [selected, setSelected] = useState<Set<string>>(new Set());
   /** 评分卡弹窗的定位；null = 关着。 */
   const [scorecard, setScorecard] = useState<ScorecardTarget | null>(null);
   const [gateOpen, setGateOpen] = useState(false);
@@ -125,11 +147,12 @@ export function JobsPage({
       .list()
       .then(setCompanies)
       .catch(() => setCompanies([]));
+    void window.goodjob.pipeline.get().then(setPipeline).catch(() => setPipeline(null));
     reloadResumeState();
   }, [reloadResumeState]);
 
   useEffect(() => reload(), [reload]);
-  // Agent 在同一页右边建档：写完就刷新表格 / 公司名 / 定制稿标记，不用切模块。
+  // Agent 在同一页右边建档 / 推进：写完就刷新表格 / 公司名 / 定制稿标记，不用切模块。
   useDomainChange(["jobs", "companies"], reload);
   // Agent 在岗位工作台里写定制稿 / 话术：文件变化直接推过来，表格标记实时更新。
   useEffect(
@@ -177,6 +200,18 @@ export function JobsPage({
     [scripts],
   );
 
+  /** 当前投递状态 = 时间线最后一条；空时间线 = 还没投。 */
+  const stageOf = useCallback(
+    (job: Job): { name: string; index: number; final: boolean; at: string | null } => {
+      const last = job.timeline.at(-1) ?? null;
+      if (last === null) return { name: "未投递", index: -1, final: false, at: null };
+      const stages = pipeline?.stages ?? [];
+      const index = stages.findIndex((stage) => stage.name === last.stage);
+      return { name: last.stage, index, final: stages[index]?.final ?? false, at: last.at };
+    },
+    [pipeline],
+  );
+
   const sorted = useMemo(() => {
     if (jobs === null) return null;
     const rank = (doc: ScriptDoc | null): number =>
@@ -198,12 +233,31 @@ export function JobsPage({
           return cmpNumber(a.matchReport?.score ?? null, b.matchReport?.score ?? null, sort.direction);
         case "script":
           return asc ? rank(scriptOf(a.id)) - rank(scriptOf(b.id)) : rank(scriptOf(b.id)) - rank(scriptOf(a.id));
+        case "stage": {
+          const left = stageOf(a).index;
+          const right = stageOf(b).index;
+          return asc ? left - right : right - left;
+        }
         default:
           return cmpTime(a.updatedAt, b.updatedAt, sort.direction);
       }
     });
     return rows;
-  }, [jobs, sort.sortKey, sort.direction, companyName, scriptOf]);
+  }, [jobs, sort.sortKey, sort.direction, companyName, scriptOf, stageOf]);
+
+  const selectedJobs = useMemo(
+    () => (jobs ?? []).filter((job) => selected.has(job.id) && job.offer !== null),
+    [jobs, selected],
+  );
+
+  const toggleSelected = (id: string): void => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
 
   /** 需要 Agent 的动作先过模型门（不伪造、不静默失败）。 */
   const requireModel = (action: () => void): void => {
@@ -252,7 +306,7 @@ export function JobsPage({
                 errorText={chat.errorText}
                 models={models}
                 emptyTitle="整理你的岗位库"
-                emptyDescription="粘贴 JD 让 Agent 归档岗位；评估匹配度去右边岗位表点「简历评估」。"
+                emptyDescription="粘贴 JD 让 Agent 归档岗位；推进投递状态、评估匹配度去右边岗位表。"
                 placeholder="例如：帮我记录一个岗位，JD 如下：…"
                 onSelectModel={onSelectModel}
                 onOpenModelSettings={onOpenModelSettings}
@@ -283,6 +337,16 @@ export function JobsPage({
               </span>
             )}
             <div className="ml-auto flex items-center gap-1.5">
+              {selectedJobs.length >= 2 && (
+                <Button variant="outline" size="sm" onClick={() => setCompareOpen(true)}>
+                  <GitCompareArrows />
+                  对比 Offer（{selectedJobs.length}）
+                </Button>
+              )}
+              <Button variant="ghost" size="sm" className="text-muted-foreground" onClick={() => setPipelineOpen(true)}>
+                <Settings2 />
+                流水线
+              </Button>
               <Button size="sm" onClick={() => setEditing("new")}>
                 <Plus />
                 新建岗位
@@ -304,7 +368,7 @@ export function JobsPage({
                     </EmptyMedia>
                     <EmptyTitle>还没有岗位</EmptyTitle>
                     <EmptyDescription>
-                      新建一个（顺手粘上 JD），或直接在左边对话里让 Agent 归档。
+                      新建一个（顺手粘上 JD），或直接在左边对话里让 Agent 归档。投递状态也在这张表里推进。
                     </EmptyDescription>
                   </EmptyHeader>
                 </Empty>
@@ -313,12 +377,13 @@ export function JobsPage({
               <Table>
                 <TableHeader>
                   <TableRow className="hover:bg-transparent">
-                    <SortableHead label="标题" sortKey="title" table={sort} className="pl-4" />
+                    <TableHead className="w-8 pl-4" aria-label="勾选对比 Offer" />
+                    <SortableHead label="标题" sortKey="title" table={sort} />
                     <SortableHead label="公司" sortKey="company" table={sort} />
                     <SortableHead label="薪资带" sortKey="salaryBand" table={sort} />
                     <SortableHead label="匹配度" sortKey="match" table={sort} />
                     <SortableHead label="话术" sortKey="script" table={sort} />
-                    <SortableHead label="更新时间" sortKey="updatedAt" table={sort} />
+                    <SortableHead label="投递" sortKey="stage" table={sort} />
                     <TableHead className="w-10 pr-3" />
                   </TableRow>
                 </TableHeader>
@@ -327,9 +392,19 @@ export function JobsPage({
                     const company = companyName(job.companyId);
                     const task = evaluating(job.id);
                     const script = scriptOf(job.id);
+                    const stage = stageOf(job);
                     return (
-                      <TableRow key={job.id}>
-                        <TableCell className="max-w-56 truncate pl-4 font-medium" title={job.title}>
+                      <TableRow key={job.id} data-selected={selected.has(job.id) || undefined}>
+                        <TableCell className="pl-4">
+                          {job.offer !== null && (
+                            <Checkbox
+                              aria-label={`对比「${job.title}」的 Offer`}
+                              checked={selected.has(job.id)}
+                              onCheckedChange={() => toggleSelected(job.id)}
+                            />
+                          )}
+                        </TableCell>
+                        <TableCell className="max-w-56 truncate font-medium" title={job.title}>
                           {job.title}
                         </TableCell>
                         <TableCell
@@ -378,8 +453,42 @@ export function JobsPage({
                             <span className="text-xs text-muted-foreground">未生成</span>
                           )}
                         </TableCell>
-                        <TableCell className="text-xs text-muted-foreground tabular-nums">
-                          {formatTime(job.updatedAt)}
+                        <TableCell className="whitespace-normal">
+                          {job.timeline.length === 0 ? (
+                            <div className="text-xs">
+                              <span className="text-muted-foreground">未投递</span>
+                              {job.offer !== null && (
+                                <div className="text-[11px] text-muted-foreground">
+                                  Offer {job.offer.salary === "" ? "已记录" : job.offer.salary}
+                                </div>
+                              )}
+                            </div>
+                          ) : (
+                            <div className="text-xs">
+                              <span className="inline-flex items-center gap-1.5">
+                                <span className={cn("size-1.5 rounded-full", stageDotClass(stage.index))} />
+                                <span>{stage.name}</span>
+                                {stage.index < 0 && (
+                                  <span className="text-[11px] text-muted-foreground" title="阶段不在流水线里">
+                                    （不在流水线）
+                                  </span>
+                                )}
+                                {stage.final && (
+                                  <span className="text-muted-foreground" title="终态">
+                                    ∎
+                                  </span>
+                                )}
+                              </span>
+                              <div className="mt-0.5 text-[11px] text-muted-foreground tabular-nums">
+                                {formatTime(stage.at)}
+                              </div>
+                              {job.offer !== null && (
+                                <div className="text-[11px] text-muted-foreground">
+                                  Offer {job.offer.salary === "" ? "已记录" : job.offer.salary}
+                                </div>
+                              )}
+                            </div>
+                          )}
                         </TableCell>
                         <TableCell className="pr-3 text-right">
                           <JobRowMenu
@@ -390,6 +499,7 @@ export function JobsPage({
                             onEvaluate={() => evaluate(job)}
                             onScript={() => setScriptJob(job)}
                             onInterview={() => setInterviewJob(job)}
+                            onAdvance={() => setAdvancing(job)}
                             onEdit={() => setEditing(job)}
                             onDelete={() => setDeleting(job)}
                             onOverlayChange={onOverlayChange}
@@ -437,16 +547,45 @@ export function JobsPage({
           setInterviewJob(null);
           if (job !== undefined) setEditing(job);
         }}
+        onOpenVoiceSettings={onOpenVoiceSettings}
         onStarted={onOpenInterview}
+      />
+      <AdvanceDialog
+        job={advancing}
+        pipeline={pipeline}
+        stageOf={stageOf}
+        onClose={() => setAdvancing(null)}
+        onSaved={reload}
+        onOverlayChange={onOverlayChange}
+      />
+      <PipelineDialog
+        open={pipelineOpen}
+        config={pipeline}
+        onClose={() => setPipelineOpen(false)}
+        onSaved={setPipeline}
+        onOverlayChange={onOverlayChange}
+      />
+      <OfferCompareDialog
+        open={compareOpen}
+        selected={selectedJobs}
+        companies={companies}
+        pipeline={pipeline}
+        onClose={() => setCompareOpen(false)}
+        onOverlayChange={onOverlayChange}
       />
       <DeleteDialog
         open={deleting !== null}
         title={`删除「{deleting?.title}」？`}
-        description="删除不做级联：这个岗位的定制简历、话术和投递记录都会保留，显示为悬空引用。"
+        description="只删这个岗位及其投递记录；定制简历、话术和模拟面试都会保留，显示为悬空引用。"
         onClose={() => setDeleting(null)}
         onConfirm={async () => {
           if (deleting === null) return;
           await window.goodjob.jobs.remove(deleting.id);
+          setSelected((prev) => {
+            const next = new Set(prev);
+            next.delete(deleting.id);
+            return next;
+          });
           reload();
         }}
         onOverlayChange={onOverlayChange}

@@ -7,7 +7,7 @@
  */
 
 /** 会被 Agent 工具 / IPC 写入的领域集合（变更事件按集合名广播）。 */
-export type DomainEntity = "companies" | "jobs" | "applications" | "interviews";
+export type DomainEntity = "companies" | "jobs" | "interviews";
 
 /**
  * 领域集合变更事件：main 在任意一次写入（用户操作或 Agent 工具）之后广播，
@@ -53,7 +53,22 @@ export interface JobMatchDimension {
   comment: string;
 }
 
-/** 岗位档案（`jobs/<id>.json`）。 */
+/** 岗位状态时间线：只追加，历史不改写；空数组 = 尚未投递。 */
+export interface JobTimelineEntry {
+  /** 阶段名，必须出现在 pipeline 里（追加时校验）。 */
+  stage: string;
+  at: string;
+  note: string;
+}
+
+/** Offer 信息（进入 Offer 终态后填写，供对比）。 */
+export interface OfferInfo {
+  salary: string;
+  equity: string;
+  note: string;
+}
+
+/** 岗位档案（`jobs/<id>.json`）：JD 与投递过程同一条记录。 */
 export interface Job {
   id: string;
   /** 引用公司；被删的公司会成为悬空引用（渲染层提示），不阻止岗位本身。 */
@@ -66,31 +81,11 @@ export interface Job {
   salaryBand: string;
   /** 匹配度报告；从未评估过为 null。 */
   matchReport: JobMatchReport | null;
-  createdAt: string;
-  updatedAt: string;
-}
-
-/** 投递的状态时间线：只追加，历史不改写。 */
-export interface ApplicationTimelineEntry {
-  /** 阶段名，必须出现在 pipeline 里（追加时校验）。 */
-  stage: string;
-  at: string;
-  note: string;
-}
-
-/** Offer 信息（投递进入 Offer 终态后填写，供对比）。 */
-export interface OfferInfo {
-  salary: string;
-  equity: string;
-  note: string;
-}
-
-/** 投递档案（`applications/<id>.json`）。 */
-export interface Application {
-  id: string;
-  jobId: string | null;
-  timeline: ApplicationTimelineEntry[];
+  /** 投递状态时间线；空数组 = 只建了岗位、还没投。 */
+  timeline: JobTimelineEntry[];
+  /** Offer 信息；没有 Offer 为 null。 */
   offer: OfferInfo | null;
+  /** 投递备注（渠道 / 内推人 / 结果等）。 */
   note: string;
   createdAt: string;
   updatedAt: string;
@@ -113,16 +108,12 @@ export interface JobPatch {
   jd?: string;
   url?: string;
   salaryBand?: string;
-}
-
-export interface ApplicationPatch {
-  jobId?: string | null;
-  timeline?: ApplicationTimelineEntry[];
+  timeline?: JobTimelineEntry[];
   offer?: OfferInfo | null;
   note?: string;
 }
 
-/** 流水线阶段（`applications/pipeline.json`）：有序 + 终态标记，工作区级可配置。 */
+/** 流水线阶段（`pipeline.json`）：有序 + 终态标记，工作区级可配置。 */
 export interface PipelineStage {
   name: string;
   /** 终态（Offer / 未通过…）：到达后不再顺流。保存时至少要有一个终态。 */

@@ -16,5 +16,6 @@ export * from "./resume";
 export * from "./skill";
 export * from "./tasks";
 export * from "./update";
+export * from "./voice";
 export * from "./workflow";
 export * from "./workspace";

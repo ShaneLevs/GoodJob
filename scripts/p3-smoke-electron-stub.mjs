@@ -17,6 +17,11 @@ export const app = {
 export const ipcMain = new Proxy({}, { get: () => () => {} });
 export class BrowserWindow {}
 
+export const systemPreferences = {
+  getMediaAccessStatus: () => "granted",
+  askForMediaAccess: async () => true,
+};
+
 export const safeStorage = {
   isEncryptionAvailable: () => true,
   encryptString(plain) {

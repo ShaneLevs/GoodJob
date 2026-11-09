@@ -1,15 +1,14 @@
 import fs from "node:fs";
-import path from "node:path";
 
 import type { PipelineConfig, PipelineDraft, PipelineStage } from "@shared/types";
 
 import { writeJsonFile, type WorkspacePaths } from "../../workspace/paths";
 import { isRecord, str } from "../json-collection";
 
-/* ————————————————————————— 投递 + 流水线 ————————————————————————— */
+/* ————————————————————————— 投递状态流水线 ————————————————————————— */
 
 /**
- * 投递状态流水线（`applications/pipeline.json`）：有序阶段 + 终态标记，工作区级。
+ * 投递状态流水线（`pipeline.json`）：有序阶段 + 终态标记，工作区级。
  * 保存时校验：至少一个阶段、阶段名唯一非空、至少一个终态。
  */
 export class PipelineStore {
@@ -41,7 +40,7 @@ export class PipelineStore {
   }
 
   private file(): string {
-    return path.join(this.workspace.applications, "pipeline.json");
+    return this.workspace.pipeline;
   }
 
   private read(): PipelineConfig {

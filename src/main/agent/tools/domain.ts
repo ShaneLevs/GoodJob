@@ -71,16 +71,18 @@ export function companyTools(deps: AgentDeps): ToolSet {
 }
 
 export function jobTools(deps: AgentDeps): ToolSet {
-  const { jobs } = deps;
+  const { jobs, pipeline } = deps;
 
   return {
     job_list: tool({
-      description: "列出全部岗位（id / 标题 / 公司 / 薪资带 / 匹配度 / 更新时间）。",
+      description:
+        "列出全部岗位（id / 标题 / 公司 / 薪资带 / 匹配度 / 当前投递状态 / Offer / 更新时间）。" +
+        "岗位与投递是同一条记录：timeline 为空表示还没投。",
       inputSchema: z.object({}),
       execute: () => jobSummaries(deps),
     }),
     job_get: tool({
-      description: "读取一个岗位的完整档案（JD 原文 + 匹配度报告）。",
+      description: "读取一个岗位的完整档案（JD 原文、匹配度报告、投递时间线、Offer、备注）。",
       inputSchema: z.object({ id: z.string() }),
       execute: ({ id }) => {
         const job = jobs.get(id);
@@ -92,7 +94,8 @@ export function jobTools(deps: AgentDeps): ToolSet {
       description:
         "新建岗位（标题必填）。用户粘贴的 JD 整理成 Markdown 存 jd。" +
         "公司优先用 companyName 传你从 JD / 页面识别出的公司名：main 会按名字去重关联，" +
-        "公司库里没有就自动建一条（返回里会说明是新建还是关联）。companyId 只在已经确定要关联哪条档案时用。",
+        "公司库里没有就自动建一条（返回里会说明是新建还是关联）。companyId 只在已经确定要关联哪条档案时用。" +
+        "建完要记录投递时，接着用 job_advance 追加第一个阶段。",
       inputSchema: z.object({
         title: z.string(),
         companyName: z.string().optional(),
@@ -100,6 +103,7 @@ export function jobTools(deps: AgentDeps): ToolSet {
         url: z.string().optional(),
         salaryBand: z.string().optional(),
         jd: z.string().optional(),
+        note: z.string().optional(),
       }),
       execute: ({ companyName, ...patch }) => {
         const company = ensureCompanyByName(deps, companyName);
@@ -110,7 +114,9 @@ export function jobTools(deps: AgentDeps): ToolSet {
     job_update: tool({
       description:
         "更新岗位资料，只传要改的字段。匹配度报告由评估任务写入，不在这里改。" +
-        "给没关联公司的岗位补关联时传 companyName（同名去重，没有就建）。",
+        "给没关联公司的岗位补关联时传 companyName（同名去重，没有就建）。" +
+        "补 Offer 用 offer（salary / equity / note；传 null 清空），投递备注用 note；" +
+        "修正历史时间线用 timeline（只建议在用户明确要求时改）。",
       inputSchema: z.object({
         id: z.string(),
         companyName: z.string().optional(),
@@ -119,6 +125,14 @@ export function jobTools(deps: AgentDeps): ToolSet {
         url: z.string().optional(),
         salaryBand: z.string().optional(),
         jd: z.string().optional(),
+        note: z.string().optional(),
+        offer: z
+          .object({ salary: z.string(), equity: z.string(), note: z.string() })
+          .nullable()
+          .optional(),
+        timeline: z
+          .array(z.object({ stage: z.string(), at: z.string(), note: z.string() }))
+          .optional(),
       }),
       execute: ({ id, companyName, ...patch }) => {
         const company = ensureCompanyByName(deps, companyName);
@@ -126,60 +140,20 @@ export function jobTools(deps: AgentDeps): ToolSet {
         return company === null ? { job } : { job, company };
       },
     }),
+    job_advance: tool({
+      description:
+        "推进一个岗位的投递状态：追加一条时间线（stage 必须是流水线里的名字，先用 pipeline_list 查；" +
+        "时间自动取当前时刻，note 写渠道 / 面试官 / 结果等上下文）。只顺流推进，不改写历史条目。",
+      inputSchema: z.object({ id: z.string(), stage: z.string(), note: z.string().optional() }),
+      execute: ({ id, stage, note }) => jobs.advance(id, stage, note ?? ""),
+    }),
     job_delete: tool({
-      description: "删除岗位。不会级联：定制简历、话术、投递记录保留为悬空引用，删前先和用户确认。",
+      description:
+        "删除岗位（连同它的投递时间线与 Offer）。定制简历、话术、模拟面试会保留为悬空引用；删前先和用户确认。",
       inputSchema: z.object({ id: z.string() }),
       execute: ({ id }) => {
         jobs.remove(id);
-        return "已删除。相关的定制简历 / 话术 / 投递会显示为悬空引用。";
-      },
-    }),
-  };
-}
-
-export function applicationTools(deps: AgentDeps): ToolSet {
-  const { applications, pipeline } = deps;
-
-  return {
-    application_list: tool({
-      description: "列出全部投递（含状态时间线与 Offer 字段）。",
-      inputSchema: z.object({}),
-      execute: () => applications.list(),
-    }),
-    application_create: tool({
-      description: "新建投递（jobId 必须来自 job_list 的真实 id）。",
-      inputSchema: z.object({ jobId: z.string(), note: z.string().optional() }),
-      execute: (patch) => applications.create(patch),
-    }),
-    application_advance: tool({
-      description:
-        "推进一条投递的状态：追加一条时间线（stage 必须是流水线里的名字，先用 pipeline_list 查；时间自动取当前时刻）。",
-      inputSchema: z.object({ id: z.string(), stage: z.string(), note: z.string().optional() }),
-      execute: ({ id, stage, note }) => applications.advance(id, stage, note ?? ""),
-    }),
-    application_update: tool({
-      description:
-        "更新投递：补 Offer 字段（salary / equity / note）、改备注或修正时间线。只传要改的字段。",
-      inputSchema: z.object({
-        id: z.string(),
-        jobId: z.string().nullable().optional(),
-        timeline: z
-          .array(z.object({ stage: z.string(), at: z.string(), note: z.string() }))
-          .optional(),
-        offer: z
-          .object({ salary: z.string(), equity: z.string(), note: z.string() })
-          .nullable()
-          .optional(),
-        note: z.string().optional(),
-      }),
-      execute: ({ id, ...patch }) => applications.update(id, patch),
-    }),
-    application_delete: tool({
-      description: "删除投递。删前先和用户确认。",
-      inputSchema: z.object({ id: z.string() }),
-      execute: ({ id }) => {
-        applications.remove(id);
-        return "已删除。";
+        return "已删除。相关的定制简历 / 话术 / 模拟面试会显示为悬空引用。";
       },
     }),
     pipeline_list: tool({

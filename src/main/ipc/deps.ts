@@ -7,9 +7,9 @@ import type { BrowserAgentSettingsStore } from "../browser/automation/settings-s
 import type { BrowserPanel } from "../browser/panel";
 import type { NotifyService } from "../services/notify";
 import type { TaskManager } from "../services/tasks";
+import type { VoiceService } from "../services/voice";
 import type { UpdateService } from "../services/updater";
 import type { ConversationsStore } from "../stores/conversations";
-import type { ApplicationsStore } from "../stores/domain/applications";
 import type { CompaniesStore } from "../stores/domain/companies";
 import type { InterviewsStore } from "../stores/domain/interviews";
 import type { JobsStore } from "../stores/domain/jobs";
@@ -19,6 +19,7 @@ import type { ModelsStore } from "../stores/models";
 import type { NotifyStore } from "../stores/notify";
 import type { PreferencesStore } from "../stores/preferences";
 import type { ResumeStore } from "../stores/resumes";
+import type { VoiceSettingsStore } from "../stores/voice";
 import type { WorkspacesStore } from "../stores/workspaces";
 
 export type SendToUi = (channel: string, payload: unknown) => void;
@@ -36,12 +37,14 @@ export interface IpcDeps {
   workspaces: WorkspacesStore;
   companies: CompaniesStore;
   jobs: JobsStore;
-  applications: ApplicationsStore;
   pipeline: PipelineStore;
   interviews: InterviewsStore;
   tasks: TaskManager;
   notify: NotifyService;
   notifyStore: NotifyStore;
+  /** 语音模型设置与语音会话（TTS / ASR，原生 AOQ 引擎只在 main）。 */
+  voice: VoiceService;
+  voiceSettings: VoiceSettingsStore;
   /** 浏览器自动化（P4）：审计日志 / 中止 / 重放 + 设置读写。 */
   browser: BrowserAgentService;
   browserSettings: BrowserAgentSettingsStore;

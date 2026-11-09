@@ -10,7 +10,7 @@ import {
 import type { AgentDeps } from "../deps";
 import { jobSummaries } from "../instructions";
 
-const roleSchema = z.enum(["resume", "companies", "jobs", "applications", "job"]);
+const roleSchema = z.enum(["resume", "companies", "jobs", "job"]);
 
 const subagentTaskSchema = z.object({
   id: z
@@ -20,7 +20,7 @@ const subagentTaskSchema = z.object({
     .regex(/^[A-Za-z0-9_-]+$/)
     .describe("任务 id：短英文 / 数字 / 连字符，dependsOn 用它引用"),
   agent: roleSchema.describe(
-    "执行角色：resume=简历，companies=公司档案，jobs=岗位档案，applications=投递，job=某个岗位的定制简历 / 话术",
+    "执行角色：resume=简历，companies=公司档案，jobs=岗位档案与投递状态，job=某个岗位的定制简历 / 话术",
   ),
   title: z.string().min(1).max(80).describe("给用户看的短标题"),
   instruction: z
@@ -72,18 +72,6 @@ export function orchestratorTools(
             updatedAt,
           })),
           jobs: jobSummaries(deps),
-          applications: deps.applications.list().map((application) => {
-            const job =
-              application.jobId === null ? null : deps.jobs.get(application.jobId);
-            return {
-              id: application.id,
-              jobId: application.jobId,
-              jobTitle: job?.title ?? null,
-              stage: application.timeline.at(-1)?.stage ?? null,
-              hasOffer: application.offer !== null,
-              updatedAt: application.updatedAt,
-            };
-          }),
           interviews: deps.interviews.list().map(({ id, jobId, status, review, createdAt }) => ({
             id,
             jobId,

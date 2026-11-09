@@ -35,6 +35,9 @@ importers:
       ai:
         specifier: ^7.0.152
         version: 7.0.152(zod@4.6.7)
+      aoq-electron-sdk:
+        specifier: 1.4.0-59463182
+        version: 1.4.0-59463182
       class-variance-authority:
         specifier: ^0.7.1
         version: 0.7.1
@@ -1505,6 +1508,12 @@ packages:
     resolution: {integrity: sha512-zbB9rCJAT1rbjiVDb2hqKFHNYLxgtk8NURxZ3IZwD3F6NtxbXZQCnnSi1Lkx+IDohdPlFp222wVALIheZJQSEg==}
     engines: {node: '>=8'}
 
+  aoq-electron-sdk@1.4.0-59463182:
+    resolution: {integrity: sha512-NVxTr2JiFwVwuToOhleJR7zVfK+46hIFaJK5xRs2Mo1IBDU5Wov9ECAJ+Y4GLv5d7/wK+ATT51PjuwEwlgASQA==}
+    engines: {node: '>= 16.0.0'}
+    cpu: [arm64, x64]
+    os: [darwin, win32]
+
   app-builder-lib@26.15.3:
     resolution: {integrity: sha512-2VnyWkqsP5v5XbBhL3tD5Syx8iNPBYsoU7kY4S2fz7wg8Rj/nztWKCUzGKaFRTv0Xwf3/H058CR1Kvtd/3lRow==}
     engines: {node: '>=14.0.0'}
@@ -1903,6 +1912,9 @@ packages:
 
   estree-util-is-identifier-name@3.0.0:
     resolution: {integrity: sha512-hFtqIDZTIUZ9BXLb8y4pYGyk6+wekIivNVTcmvk8NoOh+VeRn5y6cEHzbURrWbfp1fIqdVipilzj+lfaadNZmg==}
+
+  eventemitter3@5.0.4:
+    resolution: {integrity: sha512-mlsTRyGaPBjPedk6Bvw+aqbsXDtoAyAzm5MO7JgU+yVRyMQ5O8bD4Kcci7BS85f93veegeCPkL8R4GLClnjLFw==}
 
   eventsource-parser@3.1.1:
     resolution: {integrity: sha512-EKN1vKAMcZ8MlYMpaNuxN6R9yakzH6uajHcHVTqWJzvu5pWw9DyhbP35HH8MVBQ+dZjAfDxk+A8NiR9KWaXiyQ==}
@@ -3332,6 +3344,12 @@ packages:
   yocto-queue@0.1.0:
     resolution: {integrity: sha512-rVksvsnNCdJ/ohGc6xgPwyN8eheCxsiLM8mxuE/t/mOVqJewPuO1miLpTHQiRgTKCLexL4MeAFVagts7HmNZ2Q==}
     engines: {node: '>=10'}
+
+  yuv-buffer@1.0.0:
+    resolution: {integrity: sha512-5r5u7g7Dbdrwao/z8c4harQIpZwaNuzXjQXtgdFxTjr5Pm2eMmxIuckkKOONEM7fkiMNkeffXs6EPNESvAVzVg==}
+
+  yuv-canvas@1.2.6:
+    resolution: {integrity: sha512-luNSFyGOPIJP4L8LUSgaBwWoAdmm45lCY44jhDgyREHcjnAtnR5Poj0C821UJ2CPD5GVIlfHOeFO2PDRCl2w/A==}
 
   zod@4.6.7:
     resolution: {integrity: sha512-g8W2D2kU6a8untc053fX1uVBKzM7yqAxW/3zwk83+6RyF2+SKOuV+c0wBDhUwzV1PaGapmZH+rmcUzPf+3CGwg==}
@@ -4852,6 +4870,12 @@ snapshots:
     dependencies:
       color-convert: 2.0.1
 
+  aoq-electron-sdk@1.4.0-59463182:
+    dependencies:
+      eventemitter3: 5.0.4
+      yuv-buffer: 1.0.0
+      yuv-canvas: 1.2.6
+
   app-builder-lib@26.15.3(dmg-builder@26.15.3)(electron-builder-squirrel-windows@26.15.3)(supports-color@7.2.0):
     dependencies:
       '@electron/asar': 3.4.1
@@ -5325,6 +5349,8 @@ snapshots:
   escape-string-regexp@5.0.0: {}
 
   estree-util-is-identifier-name@3.0.0: {}
+
+  eventemitter3@5.0.4: {}
 
   eventsource-parser@3.1.1: {}
 
@@ -7026,6 +7052,10 @@ snapshots:
       yargs-parser: 21.1.1
 
   yocto-queue@0.1.0: {}
+
+  yuv-buffer@1.0.0: {}
+
+  yuv-canvas@1.2.6: {}
 
   zod@4.6.7: {}
 

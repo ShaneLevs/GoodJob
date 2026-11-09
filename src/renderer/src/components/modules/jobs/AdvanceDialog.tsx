@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 
-import type { Application, PipelineConfig } from "@shared/types";
+import type { Job, PipelineConfig } from "@shared/types";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -21,50 +21,52 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 
-/** 推进状态：只能顺流（选当前阶段之后的阶段），时间自动取当前时刻。 */
+/** 标记 / 推进投递状态：只能顺流（选当前阶段之后的阶段），时间自动取当前时刻。 */
 export function AdvanceDialog({
-  app,
+  job,
   pipeline,
   stageOf,
   onClose,
   onSaved,
   onOverlayChange,
 }: {
-  app: Application | null;
+  job: Job | null;
   pipeline: PipelineConfig | null;
-  stageOf: (app: Application) => { name: string; index: number; final: boolean; at: string | null };
+  stageOf: (job: Job) => { name: string; index: number; final: boolean; at: string | null };
   onClose: () => void;
   onSaved: () => void;
   onOverlayChange: (open: boolean) => void;
 }) {
   const stages = pipeline?.stages ?? [];
-  const current = app === null ? null : stageOf(app);
+  const current = job === null ? null : stageOf(job);
+  const isNew = job !== null && job.timeline.length === 0;
   const nextStages =
     current === null
       ? []
-      : current.index < 0
+      : isNew
         ? stages
-        : stages.slice(current.index + 1);
+        : current.index < 0
+          ? []
+          : stages.slice(current.index + 1);
   const [stage, setStage] = useState("");
   const [note, setNote] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    if (app === null) return;
+    if (job === null) return;
     setError(null);
     setNote("");
     setStage(nextStages[0]?.name ?? "");
     // eslint-disable-next-line react-hooks/exhaustive-deps -- 只在换目标行时重置。
-  }, [app]);
+  }, [job]);
 
   const submit = (): void => {
-    if (app === null || stage === "") return;
+    if (job === null || stage === "") return;
     setSaving(true);
     setError(null);
-    const entry = { stage, at: new Date().toISOString(), note: note.trim() };
-    void window.goodjob.applications
-      .update(app.id, { timeline: [...app.timeline, entry] })
+    void window.goodjob.jobs
+      .advance(job.id, stage, note.trim())
       .then(() => {
         onClose();
         onSaved();
@@ -77,7 +79,7 @@ export function AdvanceDialog({
 
   return (
     <Dialog
-      open={app !== null}
+      open={job !== null}
       onOpenChange={(next) => {
         onOverlayChange(next);
         if (!next) onClose();
@@ -85,18 +87,24 @@ export function AdvanceDialog({
     >
       <DialogContent className="sm:max-w-sm">
         <DialogHeader>
-          <DialogTitle>推进状态</DialogTitle>
+          <DialogTitle>{isNew ? "标记投递" : "推进状态"}</DialogTitle>
           <DialogDescription>
             {current === null
               ? ""
-              : current.index < 0
-                ? "还没有状态，选择第一个阶段。"
-                : `当前是「${current.name}」${current.final ? "（终态，不再顺流）" : ""}。`}
+              : isNew
+                ? "还没投递，选择第一个阶段。"
+                : current.index < 0
+                  ? `当前阶段「${current.name}」不在流水线里，去「流水线」设置里补上。`
+                  : `当前是「${current.name}」${current.final ? "（终态，不再顺流）" : ""}。`}
           </DialogDescription>
         </DialogHeader>
 
         {current !== null && current.final ? (
-          <p className="text-sm text-muted-foreground">已在终态；如需修正请用「编辑」改时间线。</p>
+          <p className="text-sm text-muted-foreground">已在终态，不再顺流推进。</p>
+        ) : !isNew && current !== null && current.index < 0 ? (
+          <p className="text-sm text-muted-foreground">
+            当前阶段不在流水线里；补进流水线后才能继续顺流推进。
+          </p>
         ) : nextStages.length === 0 ? (
           <p className="text-sm text-muted-foreground">
             流水线里没有更后面的阶段了；要加阶段去「流水线」设置里维护。
@@ -138,7 +146,7 @@ export function AdvanceDialog({
             取消
           </Button>
           <Button disabled={saving || stage === ""} onClick={submit}>
-            推进
+            {isNew ? "标记" : "推进"}
           </Button>
         </DialogFooter>
       </DialogContent>

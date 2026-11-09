@@ -6,7 +6,7 @@ import { ensureDir, writeJsonFile, type WorkspacePaths } from "../workspace/path
 
 
 /** 实体集合目录（路径先在 paths.ts 的 WorkspacePaths 登记过；interviews 由 stores/domain/interviews 复用）。 */
-type CollectionDir = "companies" | "jobs" | "applications" | "interviews";
+type CollectionDir = "companies" | "jobs" | "interviews";
 
 /**
  * 集合写入监听：装配时由 main/app/context 注册一次，广播给渲染层。
@@ -101,7 +101,7 @@ export class JsonCollectionStore<T extends { id: string; createdAt: string }> {
     return path.join(this.workspace[this.dir], `${id}.json`);
   }
 
-  /** 只认本集合 id 惯例的文件：applications/ 里的 pipeline.json 等同名文件不会被误读。 */
+  /** 只认本集合 id 惯例的文件：jobs/ 里手工放入的非实体文件不会被误读。 */
   private reload(): void {
     this.items.clear();
     const dir = this.workspace[this.dir];

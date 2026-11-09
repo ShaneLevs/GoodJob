@@ -72,6 +72,8 @@ interface ChatPanelProps {
    */
   initialDraft?: string | null;
   onInitialDraftConsumed?: () => void;
+  /** 输入框上方的附加条（语音面试的状态 / 麦克风控制）。 */
+  aboveComposer?: React.ReactNode;
 }
 
 /** `data-upload` part 的宽松视图（UploadedFileMeta 的线上形态）。 */
@@ -150,6 +152,7 @@ export function ChatPanel({
   conversation,
   initialDraft = null,
   onInitialDraftConsumed,
+  aboveComposer,
 }: ChatPanelProps) {
   const busy = status === "submitted" || status === "streaming";
 
@@ -185,8 +188,10 @@ export function ChatPanel({
 
   const empty = messages.length === 0;
 
+  // min-h-0：带头部的卡片里（面试）本面板是 flex 子项，默认的 auto 最小高度
+  // 会按 h-full 撑满，把底部的输入框顶出卡片；允许收缩后才能让消息区先让位。
   return (
-    <div className="relative flex h-full min-w-0 flex-1 flex-col bg-card">
+    <div className="relative flex h-full min-h-0 min-w-0 flex-1 flex-col bg-card">
       {conversation !== undefined && (
         <ConversationToolbar control={conversation} onOverlayChange={onOverlayChange} />
       )}
@@ -361,6 +366,7 @@ export function ChatPanel({
 
       <div className="px-4 pb-4">
         <div className="mx-auto w-full max-w-3xl">
+          {aboveComposer}
           <Composer
             models={models}
             busy={busy}

@@ -9,6 +9,7 @@ import type { IpcDeps, SendToUi } from "./deps";
 import { registerResumeIpc } from "./resume";
 import { registerSettingsIpc } from "./settings";
 import { registerUpdateIpc } from "./update";
+import { registerVoiceIpc } from "./voice";
 import { registerWorkspaceIpc } from "./workspace";
 
 export type { IpcDeps } from "./deps";
@@ -27,6 +28,7 @@ export function registerIpc(deps: IpcDeps): void {
   registerResumeIpc(deps);
   registerDomainIpc(deps);
   registerSettingsIpc(deps);
+  registerVoiceIpc(deps);
   registerWorkspaceIpc(deps, sendToUi);
   registerUpdateIpc(deps);
 }

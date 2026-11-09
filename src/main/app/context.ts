@@ -1,3 +1,5 @@
+import path from "node:path";
+
 import { BrowserWindow } from "electron";
 
 import { IPC, type ConversationKey } from "@shared/types";
@@ -11,9 +13,9 @@ import { BrowserAgentSettingsStore } from "../browser/automation/settings-store"
 import type { BrowserPanel } from "../browser/panel";
 import { NotifyService } from "../services/notify";
 import { TaskManager } from "../services/tasks";
+import { VoiceService } from "../services/voice";
 import { UpdateService } from "../services/updater";
 import { ConversationsStore } from "../stores/conversations";
-import { ApplicationsStore } from "../stores/domain/applications";
 import { CompaniesStore } from "../stores/domain/companies";
 import { InterviewsStore } from "../stores/domain/interviews";
 import { JobsStore } from "../stores/domain/jobs";
@@ -24,6 +26,7 @@ import { ModelsStore } from "../stores/models";
 import { NotifyStore } from "../stores/notify";
 import { PreferencesStore } from "../stores/preferences";
 import { ResumeStore } from "../stores/resumes";
+import { VoiceSettingsStore } from "../stores/voice";
 import { WorkspacesStore } from "../stores/workspaces";
 import { uploadDirFor } from "../workspace/uploads";
 
@@ -36,12 +39,13 @@ export interface AppContext {
   memory: MemoryStore;
   companies: CompaniesStore;
   jobs: JobsStore;
-  applications: ApplicationsStore;
   pipeline: PipelineStore;
   interviews: InterviewsStore;
   tasks: TaskManager;
   notify: NotifyService;
   notifyStore: NotifyStore;
+  voice: VoiceService;
+  voiceSettings: VoiceSettingsStore;
   browser: BrowserAgentService;
   browserSettings: BrowserAgentSettingsStore;
   runtime: AgentRuntime;
@@ -78,8 +82,8 @@ export function createAppContext({
   const conversations = new ConversationsStore(workspaces.currentPaths);
   const memory = new MemoryStore(workspaces.currentPaths);
 
-  // 领域实体（P2）：pipeline 先建（投递的时间线校验要用），再 companies → jobs →
-  // applications（引用校验的方向：投递引岗位、岗位引公司）。
+  // 领域实体（P2）：pipeline 先建（岗位的投递时间线校验要用），再 companies → jobs
+  // （引用校验的方向：岗位引公司）。
   const pipeline = new PipelineStore(workspaces.currentPaths);
   // 领域集合写入广播：Agent 工具与 IPC 走同一套 store，所以在这里注册一次就够——
   // 页面表格不必等切模块重挂载才看到 Agent 刚建的岗位 / 公司。
@@ -89,8 +93,7 @@ export function createAppContext({
     win.webContents.send(IPC.domainChanged, { entity });
   });
   const companies = new CompaniesStore(workspaces.currentPaths);
-  const jobs = new JobsStore(workspaces.currentPaths, companies);
-  const applications = new ApplicationsStore(workspaces.currentPaths, jobs, pipeline);
+  const jobs = new JobsStore(workspaces.currentPaths, companies, pipeline);
 
   // 简历文件变化直接推给渲染层编辑器（Agent 写入 / 用户保存都会触发）。
   const resumes = new ResumeStore(workspaces.currentPaths, (event) => {
@@ -105,6 +108,24 @@ export function createAppContext({
   // 通知（P3 M3）：设置是全局的（不跟工作区走）；调度到点经 AgentRuntime.runDigest 发日报 / 周报。
   const notifyStore = new NotifyStore(workspaces.root);
   const notify = new NotifyService({ store: notifyStore });
+
+  // 语音模型（TTS / ASR）：设置全局一份；原生 AOQ 引擎懒加载，只在真正朗读 / 聆听时建。
+  let voice!: VoiceService;
+  const voiceSettings = new VoiceSettingsStore(
+    workspaces.root,
+    () => voice.sdkStatus(),
+    () => voice.microphoneAccess(),
+  );
+  voice = new VoiceService({
+    settings: voiceSettings,
+    // 引擎日志 / 临时文件跟着当前工作区的 cache 走，切工作区后下一次连接自动换目录。
+    workDir: () => path.join(workspaces.currentPaths.cache, "voice"),
+    emit: (state) => {
+      const win = getWindow();
+      if (win === null || win.isDestroyed()) return;
+      win.webContents.send(IPC.voiceState, state);
+    },
+  });
 
   // 浏览器自动化（P4）：agent-browser CLI 宿主 + 设置（开关 / 限速）+ 任务执行器。
   // CLI 只进 devDependencies，二进制在打包时由 extraResources 带进去。
@@ -175,7 +196,6 @@ export function createAppContext({
     memory,
     companies,
     jobs,
-    applications,
     pipeline,
     interviews,
     tasks,
@@ -208,12 +228,13 @@ export function createAppContext({
     memory,
     companies,
     jobs,
-    applications,
     pipeline,
     interviews,
     tasks,
     notify,
     notifyStore,
+    voice,
+    voiceSettings,
     browser,
     browserSettings,
     runtime,

@@ -9,7 +9,7 @@ import type { ToolSet } from "ai";
 
 import type { AgentDeps } from "../deps";
 import { conversationTools } from "./conversation";
-import { applicationTools, companyTools, jobTools } from "./domain";
+import { companyTools, jobTools } from "./domain";
 import { interviewSessionTools } from "./interview";
 import { jobWorkbenchTools } from "./job";
 import { orchestratorTools } from "./orchestrator";
@@ -78,24 +78,14 @@ export function toolsFor(
         ...browserTools(deps, key, lastActivityAt),
       };
     case "jobs":
-      // 链接抓 JD / 自动搜索（P4）：只读浏览，回填岗位档案。
+      // 岗位 + 投递合并在同一个会话：抓 JD / 搜索（只读浏览）、状态推进、
+      // 通知与邮件确认门、填表投递（browser_act / browser_submit 双重门 + 限速）。
       return {
         ...conversation,
         ...memory,
         ...upload,
         ...skills,
         ...jobTools(deps),
-        ...browserTools(deps, key, lastActivityAt),
-      };
-    case "applications":
-      // 投递会话拿通知工具（P3 M3）：外发 / 邮件确认门都以「用户自己的邮箱」为准。
-      // 填表投递（P4 M4）：browser_act / browser_submit 双重门 + 限速也在这里。
-      return {
-        ...conversation,
-        ...memory,
-        ...upload,
-        ...skills,
-        ...applicationTools(deps),
         ...notifyTools(deps),
         ...browserTools(deps, key, lastActivityAt),
       };
@@ -144,8 +134,6 @@ export function subagentToolsFor(
       return { ...companyTools(deps), ...common };
     case "jobs":
       return { ...jobTools(deps), ...common };
-    case "applications":
-      return { ...applicationTools(deps), ...common };
     case "resume":
       return { ...resumeTools(deps), ...skillTools(deps), ...common };
   }

@@ -129,12 +129,12 @@ const seed = await evaluate(`(async () => {
   const co = await g.companies.create({ name: "字节跳动", industry: "互联网", city: "北京", scale: "10000+ 人", source: "官网" });
   const co2 = await g.companies.create({ name: "蔚来汽车", industry: "智能汽车", city: "上海", scale: "20000+ 人", source: "招聘平台" });
   await g.companies.update(co.id, { research: "## 调研\\n- 视频化业务为主，海外增长快（来源：官网，2026-10）" });
-  const job = await g.jobs.create({ title: "资深前端工程师", companyId: co.id, salaryBand: "35-60k·15薪", jd: "## 职责\\n- 负责跨端编辑器\\n## 要求\\n- 5 年以上前端经验" });
-  const job2 = await g.jobs.create({ title: "前端架构师", companyId: co2.id, salaryBand: "45-70k", jd: "负责基础设施" });
-  const app = await g.applications.create({ jobId: job.id, note: "官网投递" });
-  const app2 = await g.applications.create({ jobId: job2.id, note: "内推" });
-  await g.applications.update(app.id, { timeline: [{ stage: "已投递", at: new Date().toISOString(), note: "官网" }, { stage: "简历通过", at: new Date().toISOString(), note: "HR 电话" }] });
-  await g.applications.update(app2.id, { timeline: [{ stage: "已投递", at: new Date().toISOString(), note: "内推人小王" }], offer: { salary: "50k·16薪", equity: "RSU $120k", note: "月底给答复" } });
+  const job = await g.jobs.create({ title: "资深前端工程师", companyId: co.id, salaryBand: "35-60k·15薪", jd: "## 职责\\n- 负责跨端编辑器\\n## 要求\\n- 5 年以上前端经验", note: "官网投递" });
+  const job2 = await g.jobs.create({ title: "前端架构师", companyId: co2.id, salaryBand: "45-70k", jd: "负责基础设施", note: "内推" });
+  await g.jobs.advance(job.id, "已投递", "官网");
+  await g.jobs.advance(job.id, "简历通过", "HR 电话");
+  await g.jobs.advance(job2.id, "已投递", "内推人小王");
+  await g.jobs.update(job2.id, { offer: { salary: "50k·16薪", equity: "RSU $120k", note: "月底给答复" } });
   await g.resume.scripts.save(job.id, "# 自我介绍\\n五年前端，做过编辑器。");
   await g.resume.scripts.finalize(job.id);
   return "seeded";
@@ -166,31 +166,28 @@ await pickMenuItem("话术管理");
 await shot("4b-script");
 await evaluate(`document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }))`);
 
-// 4. 投递页 + 推进弹窗
-await clickByText("button", "投递");
-await sleep(400);
-await openRowMenu("的操作");
-await shot("5-app-rowmenu");
+// 4. 岗位页 + 推进弹窗 + 流水线设置
+await openRowMenu("资深前端");
+await shot("5-job-rowmenu");
 await pickMenuItem("推进状态");
 await shot("6-advance");
 await evaluate(`document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }))`);
 await sleep(300);
-// 流水线设置
 await clickByText("button", "流水线");
 await shot("7-pipeline");
 await evaluate(`document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }))`);
 
 // 5. Offer 勾选 + 对比：再补一条 Offer，重载后两条都可勾选
 await evaluate(`(async () => {
-  const apps = await window.goodjob.applications.list();
-  const first = apps.find((a) => a.offer === null);
-  if (first) await window.goodjob.applications.update(first.id, { offer: { salary: "38k·16薪", equity: "签字费 5 万", note: "要求两周内答复" } });
+  const jobs = await window.goodjob.jobs.list();
+  const first = jobs.find((j) => j.offer === null);
+  if (first) await window.goodjob.jobs.update(first.id, { offer: { salary: "38k·16薪", equity: "签字费 5 万", note: "要求两周内答复" } });
   return "ok";
 })()`);
 await send("Page.reload");
 await sleep(1800);
 await evaluate(TAP_SETUP);
-await clickByText("button", "投递");
+await clickByText("button", "岗位");
 await sleep(500);
 await evaluate(`(() => {
   const boxes = [...document.querySelectorAll('[role="checkbox"]')];
@@ -203,7 +200,7 @@ await clickByText("button", "对比 Offer");
 await shot("8-offer-compare");
 await evaluate(`document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }))`);
 
-// 6. 岗位编辑弹窗
+// 6. 岗位编辑弹窗（含投递备注 / Offer）
 await clickByText("button", "岗位");
 await sleep(400);
 await openRowMenu("资深前端");

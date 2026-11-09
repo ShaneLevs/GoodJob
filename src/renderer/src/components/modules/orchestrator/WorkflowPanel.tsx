@@ -24,8 +24,7 @@ import { cn } from "@/lib/utils";
 const AGENT_LABELS: Record<SubagentRole, string> = {
   resume: "简历",
   companies: "公司",
-  jobs: "岗位",
-  applications: "投递",
+  jobs: "岗位与投递",
   job: "岗位定制",
 };
 

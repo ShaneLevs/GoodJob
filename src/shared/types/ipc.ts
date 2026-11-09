@@ -14,8 +14,6 @@ import type {
 import type { Rect } from "./common";
 import type { MarkdownSettings } from "./document";
 import type {
-  Application,
-  ApplicationPatch,
   Company,
   CompanyPatch,
   DomainChangedEvent,
@@ -48,6 +46,15 @@ import type {
 import type { SkillInfo } from "./skill";
 import type { TaskEvent, TaskState, TaskType } from "./tasks";
 import type { UpdateState } from "./update";
+import type {
+  VoiceKind,
+  VoiceListenResult,
+  VoiceModelOption,
+  VoiceSettings,
+  VoiceSettingsDraft,
+  VoiceState,
+  VoiceVoiceCatalog,
+} from "./voice";
 import type { WorkflowState } from "./workflow";
 import type { AppearanceSettings, AppInfo, WorkspacesState } from "./workspace";
 
@@ -90,7 +97,7 @@ export const IPC = {
   resumePhoto: "resume:photo",
   resumeTailoredList: "resume:tailored-list",
   resumeFileChanged: "resume:file-changed",
-  // 领域集合变更（companies / jobs / applications / interviews）：单向 main → 渲染层。
+  // 领域集合变更（companies / jobs / interviews）：单向 main → 渲染层。
   domainChanged: "domain:changed",
   resumeScriptList: "resume:script-list",
   resumeScriptRead: "resume:script-read",
@@ -104,11 +111,8 @@ export const IPC = {
   jobsList: "jobs:list",
   jobsCreate: "jobs:create",
   jobsUpdate: "jobs:update",
+  jobsAdvance: "jobs:advance",
   jobsDelete: "jobs:delete",
-  applicationsList: "applications:list",
-  applicationsCreate: "applications:create",
-  applicationsUpdate: "applications:update",
-  applicationsDelete: "applications:delete",
   pipelineGet: "pipeline:get",
   pipelineSave: "pipeline:save",
   tasksList: "tasks:list",
@@ -141,6 +145,20 @@ export const IPC = {
   markdownGet: "markdown:get",
   markdownSave: "markdown:save",
   skillsList: "skills:list",
+  // 语音模型（TTS / ASR）：设置读写 + 语音会话（朗读 / 聆听 / 停止）。
+  voiceSettingsGet: "voice:settings-get",
+  voiceSettingsSave: "voice:settings-save",
+  voiceListModels: "voice:list-models",
+  voiceListVoices: "voice:list-voices",
+  voiceRequestMic: "voice:request-mic",
+  voiceGetState: "voice:get-state",
+  voiceState: "voice:state",
+  voicePreview: "voice:preview",
+  voiceSpeak: "voice:speak",
+  voiceStopSpeaking: "voice:stop-speaking",
+  voiceStartListening: "voice:start-listening",
+  voiceStopListening: "voice:stop-listening",
+  voiceStop: "voice:stop",
   workspaceGet: "workspace:get",
   workspaceSwitch: "workspace:switch",
   workspaceChanged: "workspace:changed",
@@ -264,12 +282,8 @@ export interface GoodjobApi {
     list: () => Promise<Job[]>;
     create: (patch: JobPatch) => Promise<Job>;
     update: (id: string, patch: JobPatch) => Promise<Job>;
-    remove: (id: string) => Promise<void>;
-  };
-  applications: {
-    list: () => Promise<Application[]>;
-    create: (patch: ApplicationPatch) => Promise<Application>;
-    update: (id: string, patch: ApplicationPatch) => Promise<Application>;
+    /** 顺流推进投递状态：追加一条时间线（阶段必须在流水线里）。 */
+    advance: (id: string, stage: string, note?: string) => Promise<Job>;
     remove: (id: string) => Promise<void>;
   };
   /** 投递状态流水线（工作区级）；设置区 UI 维护，读取方渲染下拉与校验。 */
@@ -356,6 +370,37 @@ export interface GoodjobApi {
   /** 内置技能库（设置 → Skill 管理）：只读列表，含 SKILL.md 与 references 正文。 */
   skills: {
     list: () => Promise<SkillInfo[]>;
+  };
+  /**
+   * 语音模型（TTS / ASR）：设置读写 + 一场语音面试要用的朗读 / 聆听。
+   * 原生 AOQ 引擎只在 main；渲染层只收状态与定稿文本。
+   */
+  voice: {
+    getSettings: () => Promise<VoiceSettings>;
+    saveSettings: (draft: VoiceSettingsDraft) => Promise<VoiceSettings>;
+    /**
+     * 用已保存的接入域名与 API Key 调百炼的模型列表接口。
+     * TTS 取实时语音合成模型，ASR 取 AOQ 可用的实时识别模型。
+     */
+    listModels: (kind: VoiceKind) => Promise<VoiceModelOption[]>;
+    /** 读某个 TTS 模型的官方音色列表；取不到时回落到内置快照。 */
+    listVoices: (model: string) => Promise<VoiceVoiceCatalog>;
+    /** 显式请求麦克风权限（macOS 会弹系统框）；返回带最新 `microphone` 的设置。 */
+    requestMicrophone: () => Promise<VoiceSettings>;
+    /** 当前语音会话快照：页面挂载时补齐（其余变更走 onState）。 */
+    getState: () => Promise<VoiceState>;
+    /** 设置页「试听」：用已存 TTS 配置朗读一句。 */
+    preview: (text: string) => Promise<void>;
+    /** 朗读一段文本（面试官这一轮的回复），结束后相位回到 idle。 */
+    speak: (text: string) => Promise<void>;
+    stopSpeaking: () => void;
+    /** 打开麦克风，开始一轮流式识别。 */
+    startListening: () => Promise<void>;
+    /** 结束这一轮聆听，返回定稿文本。 */
+    stopListening: () => Promise<VoiceListenResult>;
+    /** 立刻停采集 / 停止朗读 / 断开连接（切换面试、结束面试、关窗时调）。 */
+    stop: () => Promise<void>;
+    onState: (listener: (state: VoiceState) => void) => () => void;
   };
   workspace: {
     get: () => Promise<WorkspacesState>;

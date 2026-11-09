@@ -40,6 +40,8 @@ function createWindow(): void {
     onClosed: () => {
       browserPanel = null;
       mainWindow = null;
+      // 窗口关掉后（macOS 应用还活着）也必须停麦克风 / 断开语音连接。
+      context?.voice.dispose();
     },
   });
   mainWindow = win;
@@ -116,6 +118,8 @@ if (!app.requestSingleInstanceLock()) {
     context?.tasks.stopAll();
     // 通知调度与 IMAP 长连接同样退出即停；等待中的确认门按取消处理。
     context?.notify.stopAll();
+    // 语音：停麦克风 / 断连 / 销毁 AOQ 引擎（不等 Promise，退出流程不能挂住）。
+    context?.voice.dispose();
     browserPanel?.dispose();
   });
 }

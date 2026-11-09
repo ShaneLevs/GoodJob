@@ -5,7 +5,6 @@ import type { BrowserAgentSettingsStore } from "../browser/automation/settings-s
 import type { NotifyService } from "../services/notify";
 import type { TaskManager } from "../services/tasks";
 import type { ConversationsStore } from "../stores/conversations";
-import type { ApplicationsStore } from "../stores/domain/applications";
 import type { CompaniesStore } from "../stores/domain/companies";
 import type { InterviewsStore } from "../stores/domain/interviews";
 import type { JobsStore } from "../stores/domain/jobs";
@@ -22,7 +21,6 @@ export interface AgentDeps {
   memory: MemoryStore;
   companies: CompaniesStore;
   jobs: JobsStore;
-  applications: ApplicationsStore;
   pipeline: PipelineStore;
   interviews: InterviewsStore;
   tasks: TaskManager;

@@ -11,9 +11,8 @@ import { cn } from "@/lib/utils";
 const SCENARIO_LABELS: Record<SkillScenario, string> = {
   resume: "简历",
   job: "岗位工作台",
-  applications: "投递",
   companies: "公司",
-  jobs: "岗位库",
+  jobs: "岗位与投递",
   interview: "模拟面试",
 };
 

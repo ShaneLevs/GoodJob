@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 
 import { MessageSquareText, Mic, Users } from "lucide-react";
 
-import type { Job } from "@shared/types";
+import type { InterviewMode, Job } from "@shared/types";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -23,7 +23,9 @@ import {
 } from "@/components/ui/select";
 
 /**
- * 发起模拟面试（P3 M1）：选轮次与模式。文本可用；语音置灰提示（M2 等厂商清单）。
+ * 发起模拟面试：选轮次与模式（文本 / 语音）。
+ * 语音模式要先把「设置 → Agent 设置 → 语音模型」的 TTS 与 ASR 都配好；
+ * 没配好时给出直达设置的入口，不把按钮置灰（用户得先知道差什么）。
  * 前置校验在弹窗里给引导：无定制稿 → 去二级页生成；无 JD → 去编辑补上。
  * 真正的发起过模型门（建记录本身不调模型，但进场第一步就是面试官开始提问）。
  */
@@ -35,6 +37,7 @@ export function InterviewStartDialog({
   requireModel,
   onOpenJobWorkbench,
   onEditJob,
+  onOpenVoiceSettings,
   onStarted,
 }: {
   job: Job | null;
@@ -44,17 +47,39 @@ export function InterviewStartDialog({
   requireModel: (action: () => void) => void;
   onOpenJobWorkbench: (jobId: string) => void;
   onEditJob: (jobId: string) => void;
+  onOpenVoiceSettings: () => void;
   onStarted: (interviewId: string) => void;
 }) {
   const [rounds, setRounds] = useState("5");
+  const [mode, setMode] = useState<InterviewMode>("text");
+  const [voiceReady, setVoiceReady] = useState<boolean | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (job === null) return;
     setRounds("5");
+    setMode("text");
     setError(null);
     setBusy(false);
+  }, [job]);
+
+  // 语音可用性是全局设置：每次打开都重新读，用户刚去设置里填完 Key 回来就能选。
+  useEffect(() => {
+    if (job === null) return;
+    let alive = true;
+    setVoiceReady(null);
+    void window.goodjob.voice
+      .getSettings()
+      .then((settings) => {
+        if (alive) setVoiceReady(settings.ready.interview);
+      })
+      .catch(() => {
+        if (alive) setVoiceReady(false);
+      });
+    return () => {
+      alive = false;
+    };
   }, [job]);
 
   const jdMissing = job !== null && job.jd.trim() === "";
@@ -62,11 +87,15 @@ export function InterviewStartDialog({
 
   const start = (): void => {
     if (job === null) return;
+    if (mode === "voice" && voiceReady !== true) {
+      setError("语音模型还没配置完：在 设置 → Agent 设置 → 语音模型 里填好 TTS 与 ASR 的 API Key。");
+      return;
+    }
     requireModel(() => {
       setBusy(true);
       setError(null);
       void window.goodjob.interviews
-        .create({ jobId: job.id, rounds: Number(rounds), mode: "text" })
+        .create({ jobId: job.id, rounds: Number(rounds), mode })
         .then((interview) => {
           onClose();
           onStarted(interview.id);
@@ -130,26 +159,46 @@ export function InterviewStartDialog({
           )}
 
           <div className="grid grid-cols-2 gap-3">
-            <button
-              type="button"
-              aria-pressed="true"
-              className="flex flex-col items-start gap-1 rounded-xl border border-ring bg-muted/60 p-3 text-left outline-none focus-visible:ring-[3px] focus-visible:ring-ring/30"
-            >
-              <MessageSquareText className="size-4" />
-              <span className="text-sm font-medium">文本面试</span>
-              <span className="text-xs text-muted-foreground">打字问答</span>
-            </button>
-            <button
-              type="button"
-              disabled
-              title="待接入语音供应商"
-              className="flex flex-col items-start gap-1 rounded-xl border border-dashed border-border/60 p-3 text-left opacity-60"
-            >
-              <Mic className="size-4" />
-              <span className="text-sm font-medium">语音面试</span>
-              <span className="text-xs text-muted-foreground">待接入语音供应商</span>
-            </button>
+            <ModeButton
+              selected={mode === "text"}
+              icon={<MessageSquareText className="size-4" />}
+              title="文本面试"
+              hint="打字问答"
+              onClick={() => setMode("text")}
+            />
+            <ModeButton
+              selected={mode === "voice"}
+              icon={<Mic className="size-4" />}
+              title="语音面试"
+              hint={
+                voiceReady === null
+                  ? "检查语音配置…"
+                  : voiceReady
+                    ? "面试官朗读 · 你说回答"
+                    : "语音模型未配置"
+              }
+              onClick={() => setMode("voice")}
+            />
           </div>
+
+          {mode === "voice" && voiceReady === false && (
+            <div className="flex items-start justify-between gap-3 rounded-lg border border-warning/30 bg-warning/10 px-3 py-2.5">
+              <p className="text-xs leading-relaxed text-warning">
+                语音面试需要 TTS（朗读提问）与 ASR（识别回答）两份配置。配好后回来重新发起即可。
+              </p>
+              <Button
+                size="sm"
+                variant="outline"
+                className="shrink-0"
+                onClick={() => {
+                  onClose();
+                  onOpenVoiceSettings();
+                }}
+              >
+                去设置
+              </Button>
+            </div>
+          )}
 
           <div className="grid gap-1.5">
             <Label>轮次</Label>
@@ -188,5 +237,38 @@ export function InterviewStartDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+function ModeButton({
+  selected,
+  icon,
+  title,
+  hint,
+  onClick,
+}: {
+  selected: boolean;
+  icon: React.ReactNode;
+  title: string;
+  hint: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      aria-pressed={selected}
+      onClick={onClick}
+      className={
+        selected
+          ? "flex flex-col items-start gap-1 rounded-xl border border-ring bg-muted/60 p-3 text-left outline-none focus-visible:ring-[3px] focus-visible:ring-ring/30"
+          : "flex flex-col items-start gap-1 rounded-xl border border-dashed border-border/60 p-3 text-left text-muted-foreground outline-none hover:bg-muted/30 focus-visible:ring-[3px] focus-visible:ring-ring/30"
+      }
+    >
+      {icon}
+      <span className={selected ? "text-sm font-medium text-foreground" : "text-sm font-medium"}>
+        {title}
+      </span>
+      <span className="text-xs text-muted-foreground">{hint}</span>
+    </button>
   );
 }

@@ -19,7 +19,7 @@ import { createIpcChatTransport } from "./ipc-chat-transport";
 
 /**
  * 浏览器面板工具条「让 Agent 接管」的落点（P4）：BrowserPanel 广播
- * `goodjob:agent-takeover`，挂了这个 hook 的会话（companies / jobs / applications）
+ * `goodjob:agent-takeover`，挂了这个 hook 的会话（companies / jobs）
  * 用自己的 chat 发一条起手指令——等于在当前会话发起 browser 工具调用。
  */
 const AGENT_TAKEOVER_EVENT = "goodjob:agent-takeover";

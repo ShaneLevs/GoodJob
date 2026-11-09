@@ -59,7 +59,7 @@ export type AgentStepEvent =
 
 /** 浏览器自动化设置（<workspace>/agent-browser.json 的公开投影）。 */
 export interface BrowserAgentSettings {
-  /** 总开关：关闭时 companies / jobs / applications 会话不注册浏览器工具。默认开启。 */
+  /** 总开关：关闭时 companies / jobs 会话不注册浏览器工具。默认开启。 */
   enabled: boolean;
   /**
    * 自动通过所有需要审批的工具（浏览器写动作、提交、外发邮件）。默认关闭：

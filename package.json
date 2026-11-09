@@ -1,9 +1,10 @@
 {
   "name": "goodjob",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "GoodJob — 带内嵌浏览器的求职助手桌面端",
   "author": "GoodJob",
   "private": true,
+  "license": "MIT",
   "type": "module",
   "main": "./out/main/index.js",
   "scripts": {
@@ -24,6 +25,7 @@
     "@shadcn/react": "^0.3.1",
     "@uiw/react-codemirror": "^4.25.12",
     "ai": "^7.0.152",
+    "aoq-electron-sdk": "1.4.0-59463182",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "dompurify": "^3.4.17",

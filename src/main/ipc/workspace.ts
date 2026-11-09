@@ -17,7 +17,6 @@ export function registerWorkspaceIpc(deps: IpcDeps, sendToUi: SendToUi): void {
     memory,
     companies,
     jobs,
-    applications,
     pipeline,
     interviews,
   } = deps;
@@ -41,7 +40,6 @@ export function registerWorkspaceIpc(deps: IpcDeps, sendToUi: SendToUi): void {
     memory.useWorkspace(paths);
     companies.useWorkspace(paths);
     jobs.useWorkspace(paths);
-    applications.useWorkspace(paths);
     pipeline.useWorkspace(paths);
     interviews.useWorkspace(paths);
     workflow.useWorkspace(paths);
